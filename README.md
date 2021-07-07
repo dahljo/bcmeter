@@ -1,4 +1,4 @@
-Thank you for your interest! In this git you find everything you need to build your own bcmeter. 
+Thank you for your interest! In this git you find everything you need to build your own bcmeter. For more informations visit www.bcmeter.org
 
 in /stl you find the files for 3d printing. as of july 2021 there is one case for the bigger pumps and pcb. 
 in /gerbers there are two versions of the pcb available. there is a general purpose pcb for use with 12v and one smaller which is powered by the raspberry pi directly.

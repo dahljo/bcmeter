@@ -1,7 +1,7 @@
 find everything you need to build your own bcmeter. 
 
-in /stl you find the files for 3d printing
-in /gerbers there are two versions of the pcb available
+in /stl you find the files for 3d printing. as of july 2021 there is one case for the bigger pumps and pcb. 
+in /gerbers there are two versions of the pcb available. there is a general purpose pcb for use with 12v and one smaller which is powered by the raspberry pi directly.
 bcMeter.py is the python script which saves the data as csv
 /interface contains a simple d3.js interface for reading out the csv file
 

@@ -26,15 +26,16 @@ echo "Downloading/Updating interface"
 wget -N -r -nH --cut-dirs=1  bcmeter.org/interface-test/ -P /home/pi/logs/
 
 
-if ! grep -q "bcMeter.py" /home/pi/.bashrc
- read -p "Do you wish to autostart the script?" yn
+if ! grep -q "bcMeter.py" /home/pi/.bashrc; then
+ read -p "Do you wish to autostart the script with every bootup?" yn
     case $yn in
         [Yy]* ) echo -e "if ! pgrep -f "bcMeter.py" > /dev/null \n then sudo screen python3 /home/pi/bcMeter.py \n fi" >> /home/pi/.bashrc; break;;
-        [Nn]* ) exit;;
+        [Nn]* ) break;;
         * ) echo "Please answer yes or no.";;
     esac
 fi
- read -p "Do you wish to start the script now?" yn
+
+read -p "Do you wish to start the script NOW?" yn
     case $yn in
         [Yy]* ) screen python3 /home/pi/bcMeter.py; break;;
         [Nn]* ) exit;;

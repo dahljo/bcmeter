@@ -1,4 +1,13 @@
-Thank you for your interest! In this git you find everything you need to build your own bcmeter. For more informations visit www.bcmeter.org
+Thank you for your interest! In this git you find everything you need to build your own bcMeter. 
+
+either download the recent disk image to clone onto your microSD card for raspberry from bcMeter.org or do it manually as mentioned on  https://bcmeter.org/wiki/index.php?title=Software, the basic procedure is:
+
+1. write raspberry lite image to micro sd card (do not use the raspberry os desktop imagefile!). 
+2. create empty ssh file on /boot to be able to log in via ssh later
+3. create wpa_supplicant.conf with your WiFi credentials on /boot (see bcmeter.org/wiki if you dont know what this means)
+4. download and run install script
+5. run bcMeter script
+
 
 in /gerbers there are two versions of the pcb available. there is a general purpose pcb for use with 12v and one smaller which is powered by the raspberry pi directly.
 

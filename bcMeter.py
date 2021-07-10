@@ -203,14 +203,14 @@ try:
 	print(str(header).replace(";","\t\t"))
 	while(True):
 		with open("/home/pi/logs/" + logFileName, "a") as log:
-			bcmSenTmp=bcmRefTmp=temperatureTmp=0
+			bcmSenTmp=bcmRefTmp=temperatureTmp=1
 			for i in range(5):
 				bcmSenRaw = getSenRaw(0) #get actual bias by environmental light change with LED OFF
 				bcmSenTmp = bcmSenTmp + bcmSenRaw[0]
 				bcmRefTmp = bcmRefTmp + bcmSenRaw[1]
 			bcmSenBias=int(bcmSenTmp/(i+1))
 			bcmRefBias=int(bcmRefTmp/(i+1))
-			bcmSenTmp=bcmRefTmp=temperatureTmp=0
+			bcmSenTmp=bcmRefTmp=temperatureTmp=1
 			for i in range(9):
 				bcmSenRaw = getSenRaw(1)
 				#temperatureTmp = temperatureTmp + (bmp.read_temperature()) #uncomment for use with  temperature sensor 
@@ -219,10 +219,12 @@ try:
 				#sleep(0.1) 
 			if (temperatureTmp == 0):
 				temperatureTmp=1
-			bcmSenNew=int(bcmSenTmp/(i+1))-bcmSenBias
-			bcmRefNew=int(bcmRefTmp/(i+1))-bcmRefBias
+			bcmSenNew=int(bcmSenTmp/(i+1))-bcmSenBias #true attenuation is without light bias
+			bcmRefNew=int(bcmRefTmp/(i+1))-bcmRefBias #true reference is without light bias
 			if (bcmRefNew == 0):
-				bcmRefNew = 1 #avoid divide by 0
+				bcmRefNew = 1 #avoid later divide by 0; just for debug
+			if (bcmSenNew == 0):
+				bcmSenNew = 1#avoid later divide by 0; just for debug
 			if (bcmRefNew < 100) and (bcmRefFallback == 1): #when there is no reference signal, use first sensor signal as reference fallback. suitable for stable environments
 				bcmRefFallback = bcmSenNew
 			if (bcmRefNew < 100) and (bcmRefFallback > 100):

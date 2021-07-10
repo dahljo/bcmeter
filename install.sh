@@ -5,13 +5,12 @@ if (( $EUID != 0 )); then
     exit
 fi
 echo "Installing/Updating software packages needed to run bcMeter. This will take a while and is dependent on your internet connection. "
-#apt update && apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio  python3-numpy nginx screen && pip3 install gpiozero adafruit-blinka &&  systemctl enable zramswap.service
+apt update && apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio  python3-numpy nginx screen && pip3 install gpiozero adafruit-blinka &&  systemctl enable zramswap.service
 
 raspi-config nonint get_autologin
 echo "enabled autologin - you can disable this with sudo rasp-config anytime"
 raspi-config nonint do_i2c 0
 echo "enabled i2c"
-read -p "Now configuring webserver. Press any key to continue... " -n1 -s
 
 replace='root /home/pi/logs;'
 search='root /var/www/html;'
@@ -21,7 +20,7 @@ sed -i "s#$search#$replace#" $filename
 
 
 echo "Downloading/Updating Script"
-wget -N -nH bcmeter.org/bcMeter.py -P /home/pi/
+wget -N -nH https://raw.githubusercontent.com/bcmeter/bcmeter/main/bcMeter.py -P /home/pi/
 
 echo "Downloading/Updating interface"
 wget -N -r -nH --cut-dirs=1  bcmeter.org/interface-test/ -P /home/pi/logs/

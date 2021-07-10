@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+#bcMeter script 1.0 21-07-10
 import os
 os.chdir('/home/pi')
 

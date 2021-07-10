@@ -4,6 +4,8 @@ in /gerbers there are two versions of the pcb available. there is a general purp
 
 in /stl you find the files for 3d printing. as of july 2021 there is one case for the general purpose circuit board (PCB) but the smaller PCB fits as well. We will create a smaller case as well to reduce the costs to print, if the big case is not necessary. 
 
+for convenience there is a basic install script. 
+
 bcMeter.py is the python script which saves the data as csv
 
 /interface contains a simple d3.js interface for reading out the csv file

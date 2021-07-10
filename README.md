@@ -1,6 +1,18 @@
 Thank you for your interest! In this git you find everything you need to build your own bcMeter. 
 
-either download the recent disk image to clone onto your microSD card for raspberry from bcMeter.org or do it manually as mentioned on  https://bcmeter.org/wiki/index.php?title=Software, the basic procedure is:
+in /gerbers there are two versions of the pcb available. there is a general purpose pcb for use with 12v and one smaller which is powered by the raspberry pi directly.
+
+in /stl you find the files for 3d printing. as of july 2021 there is one case for the general purpose circuit board (PCB) but the smaller PCB fits as well. We will create a smaller case as well to reduce the costs to print, if the big case is not necessary. 
+
+bcMeter.py is the python script which saves the data as csv
+
+/interface contains a simple d3.js interface for reading out the csv file
+
+
+after the hardware assembly, configure the pi and either download the recent disk image to clone onto your microSD card for raspberry from bcMeter.org 
+
+
+... or do it manually as mentioned on  https://bcmeter.org/wiki/index.php?title=Software, the basic procedure is:
 
 1. write raspberry lite image to micro sd card (do not use the raspberry os desktop imagefile!). 
 2. create empty ssh file on /boot to be able to log in via ssh later
@@ -9,13 +21,8 @@ either download the recent disk image to clone onto your microSD card for raspbe
 5. run bcMeter script
 
 
-in /gerbers there are two versions of the pcb available. there is a general purpose pcb for use with 12v and one smaller which is powered by the raspberry pi directly.
 
-in /stl you find the files for 3d printing. as of july 2021 there is one case for the general purpose circuit board (PCB) but the smaller PCB fits as well. We will create a smaller case as well to reduce the costs to print, if the big case is not necessary. 
 
-bcMeter.py is the python script which saves the data as csv
-
-/interface contains a simple d3.js interface for reading out the csv file
 
 renderings of the pcb and case
 

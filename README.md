@@ -14,10 +14,10 @@ install.sh is a just a batch to configure the raspberry for the use as bcMeter
 bcMeter.py is the python script which saves the data as csv
 /interface contains a simple d3.js interface for reading out the csv file
 
-** recommended: ** 
+**recommended:** 
 download bcMeter.img from bcmeter.org and clone that to a microSD card - change WiFi credentials and you're ready
 
-** manual installation: **
+**manual installation:**
 
 see https://bcmeter.org/wiki/index.php?title=Software for instructions, the basic procedure is:
 

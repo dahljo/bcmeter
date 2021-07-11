@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#bcMeter script 1.0 21-07-10
 import os
 os.chdir('/home/pi')
 
@@ -84,6 +83,7 @@ mode = MCP3426_CONF_MODE_CONTINUOUS
 rate = MCP3426_CONF_SIZE_12BIT
 gain = MCP3426_CONF_GAIN_1X
 VRef = 2.048
+ver = "bcMeter A/DC evaluation script v 0.9 21-07-11"
 
 
 
@@ -199,7 +199,7 @@ try:
 	logFileName = str("log_" + str(today) + "_" + str(now) + ".csv").replace(':','')
 	header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;Bias"
 	createLog(logFileName,header)
-	print(today, now, "bcM 1.0 10.07.21 - STARTED NEW LOG", logFileName)
+	print(today, now, ver, "STARTED NEW LOG", logFileName)
 	print(str(header).replace(";","\t\t"))
 	while(True):
 		with open("/home/pi/logs/" + logFileName, "a") as log:

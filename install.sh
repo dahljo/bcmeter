@@ -7,7 +7,7 @@ fi
 echo "Installing/Updating software packages needed to run bcMeter. This will take a while and is dependent on your internet connection. "
 apt update && apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio  python3-numpy nginx screen && pip3 install gpiozero adafruit-blinka &&  systemctl enable zramswap.service
 
-raspi-config  nonint do_boot_behaviour B2
+raspi-config nonint do_boot_behaviour B2
 echo "enabled autologin - you can disable this with sudo rasp-config anytime"
 raspi-config nonint do_i2c 0
 echo "enabled i2c"

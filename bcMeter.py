@@ -197,14 +197,15 @@ try:
 	today = str(datetime.now().strftime("%y-%m-%d"))
 	now = str(datetime.now().strftime("%H:%M:%S"))
 	logFileName = str("log_" + str(today) + "_" + str(now) + ".csv").replace(':','')
-	header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;rawSen"
+	header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;Bias"
 	createLog(logFileName,header)
 	print(today, now, "bcM 1.0 10.07.21 - STARTED NEW LOG", logFileName)
 	print(str(header).replace(";","\t\t"))
 	while(True):
 		with open("/home/pi/logs/" + logFileName, "a") as log:
+			start = time()
 			bcmSenTmp=bcmRefTmp=temperatureTmp=1
-			for i in range(5):
+			for i in range(9):
 				bcmSenRaw = getSenRaw(0) #get actual bias by environmental light change with LED OFF
 				bcmSenTmp = bcmSenTmp + bcmSenRaw[0]
 				bcmRefTmp = bcmRefTmp + bcmSenRaw[1]
@@ -227,8 +228,15 @@ try:
 				bcmSenNew = 1#avoid later divide by 0; just for debug
 			if (bcmRefNew < 100) and (bcmRefFallback == 1): #when there is no reference signal, use first sensor signal as reference fallback. suitable for stable environments
 				bcmRefFallback = bcmSenNew
+				flag=flag+"RefFallback-"
 			if (bcmRefNew < 100) and (bcmRefFallback > 100):
 				bcmRefNew = bcmRefFallback
+				flag=flag+"noRef-"
+			if (bcmRefFallback < bcmSenNew):
+				bcmRefFallback=bcmRefNew
+				flag=flag+"SetNewRef-"
+			if (bcmSenNew < 1000):
+				flag="checkLED-" 
 			#bcmTemperatureNew = round(temperatureTmp/(i+1),1) # uncomment for use with  temperature sensor 
 			if (bcmSenOld==1):
 				bcmSenOld = bcmSenNew
@@ -236,18 +244,22 @@ try:
 				bcmRefOld = bcmRefNew
 
 			if (bcmTemperatureOld/bcmTemperatureNew != 1):
-				flag = flag + "tempChange;" + str(bcmSenNew)
+				flag = flag + "tempChange-"
 			if  ((bcmSenNew/bcmSenOld) < 0.999):
-				flag="E;" + str(bcmSenNew) #"safe" attenuation for moderate pollution
+				flag=flag+"E" #"safe" attenuation for moderate pollution
 			else:
-				flag="U;" + str(bcmSenNew) #very low (unsure) attenuation - observe the trend / rolling average. 
+				flag=flag+"U" # low (unsure) attenuation - observe the trend / rolling average. 
+			
 			bcmATNnew=round((numpy.log(bcmSenNew/bcmRefNew)*-100),4)
+			if (numpy.isnan(bcmATNnew) == True):
+				bcmATNnew = bcmATNold
+				flag=flag+"noATN"
 			if (bcmATNold == 1):
 				bcmATNold = bcmATNnew
 			bcRelativeLoad=round(((bcmATNnew-bcmATNold)/SG),4)
 			BCngm3 = int(bcRelativeLoad * (spotArea / airVolume)) #bc nanograms per m3
-			logString = str(datetime.now().strftime("%y-%m-%d")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag)
-			print(str(logString).replace(";","\t\t"))
+			logString = str(datetime.now().strftime("%y-%m-%d")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag) + ";" + str(bcmSenBias)
+			print(str(logString).replace(";","\t\t").replace("-","").replace(":",""))
 			log.write(logString+"\n")
 			with open("/home/pi/logs/current.csv", "a") as logfileCurrent: #logfile for web interface. will be deleted every time a new measurement starts
 				logfileCurrent.write(logString+"\n")
@@ -257,13 +269,12 @@ try:
 			bcmTemperatureOld = bcmTemperatureNew
 
 			flag=""
-						
-			#sleep(240.1) #whole run takes about 20s so sleep for 4 minutes and 40 seconds to have 5 minutes time samples. adjust for other timebase here and also in "sampleTime" variable
-			sleep(1) #for debugging
+			delay = time() - start
+			sleep((sampleTime*60)-delay)
+			#sleep(1) #for debugging
 except KeyboardInterrupt: 
 	#traceback.print_exc()
 	print("Exit")
 	GPIO.output(POWERPIN, 0)
 	pass
-	#print("Save to switch off in 30s!")
 

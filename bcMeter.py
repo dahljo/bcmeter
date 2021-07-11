@@ -246,9 +246,9 @@ try:
 			if (bcmTemperatureOld/bcmTemperatureNew != 1):
 				flag = flag + "tempChange-"
 			if  ((bcmSenNew/bcmSenOld) < 0.999):
-				flag=flag+"E" #"safe" attenuation for moderate pollution
+				flag=flag+"E-" #"safe" attenuation for moderate pollution
 			else:
-				flag=flag+"U" # low (unsure) attenuation - observe the trend / rolling average. 
+				flag=flag+"U-" # low (unsure) attenuation - observe the trend / rolling average. 
 			
 			bcmATNnew=round((numpy.log(bcmSenNew/bcmRefNew)*-100),4)
 			if (numpy.isnan(bcmATNnew) == True):

@@ -2,6 +2,7 @@
 import os
 os.chdir('/home/pi')
 
+import sys
 import smbus
 import time, traceback
 import datetime
@@ -10,26 +11,43 @@ import subprocess
 import numpy
 import os
 import busio
+import csv
+from tabulate import tabulate
 from pathlib import Path
 from board import SCL, SDA
 from time import sleep, strftime, time
 from datetime import datetime
 from threading import Thread
 from gpiozero import Button
-#import Python_BMP.BMP085 as BMP085 #uncomment for use with  temperature sensor 
 
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1)
+
+
+#customization for BMP Temperature Sensor:
+
+#import Python_BMP.BMP085 as BMP085 #uncomment for use with  temperature sensor 
 #bmp = BMP085.BMP085() #uncomment for use with  temperature sensor 
+#uncomment line 218
+
+
+
+#uncomment for DHT Sensor connected to M2 Header
+import MyPyDHT
+#import board
+#import adafruit_dht
+#dhtDevice = adafruit_dht.DHT22(board.D13, use_pulseio=False)
+
 
 
 #parameters for calculation of bc
-sampleTime=5 #time between samples in minutes
+sampleTime=600 #time in seconds between samples
 airFlow=0.360 #airflow per minute in liter
 SG = 0.0000125 * 1.7 #specific attenuation cross section in m2/ng - .0000125 is base as used for standard paper, 1.7 is correction for pallflex t60a20
 spotArea=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 5mm
 airVolume=sampleTime*airFlow #liters of air between samples	
-
+sampleCycles = 249 #higher = accurate but takes more time. starting from 0 (9 here means 10 cycles). 
+debug = False #no need to change here
 
 
 BUTTON = 16
@@ -38,7 +56,7 @@ POWERPIN = 26
 
 # MCP3426 I2C 16-Bit 1-Channel Analog to Digital Converter I2C Mini Module initialization by  Amanpal Singh
 
-MCP3426_DEFAULT_ADDRESS			= 0x68
+MCP3426_DEFAULT_ADDRESS			= 0x6A
 MCP3426_CONF_A0GND_A1GND		= 0x68
 MCP3426_CONF_A0GND_A1FLT		= 0x69
 MCP3426_CONF_A0GND_A1VCC		= 0x6A
@@ -83,11 +101,7 @@ mode = MCP3426_CONF_MODE_CONTINUOUS
 rate = MCP3426_CONF_SIZE_12BIT
 gain = MCP3426_CONF_GAIN_1X
 VRef = 2.048
-ver = "bcMeter A/DC evaluation script v 0.9 21-07-11"
-
-
-
-
+ver = "bcMeter A/DC evaluation script v 0.9.4 2021-10-07"
 
 
 def initialise():
@@ -104,28 +118,27 @@ def initialise():
 
 
 def debugging():
-
-    bus.write_byte(MCP3426_DEFAULT_ADDRESS, channelSen)
-    sleep(0.1)
-    data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
-    raw_adc = (data[0] * 256) + data[1]
-    if raw_adc > 32767 :
-            raw_adc -= 65536
-    bcmSenRaw = (raw_adc/2**12)
-    os.system('clear')
-    print ("ADC bcmSenRaw Output channel 1 : %.2f" %bcmSenRaw) #sensor
-    sleep(0.1)
-    bus.write_byte(MCP3426_DEFAULT_ADDRESS, channelRef)
-    sleep(0.1)
-    data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
-    raw_adc = (data[0] * 256) + data[1]
-    if raw_adc > 32767 :
-            raw_adc -= 65536
-    bcmSenRaw = (raw_adc/2**12)
+	bus.write_byte(MCP3426_DEFAULT_ADDRESS, channelSen)
+	sleep(0.1)
+	data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
+	raw_adc = (data[0] * 256) + data[1]
+	if raw_adc > 32767 :
+			raw_adc -= 65536
+	bcmSenRaw = (raw_adc/2**12)
+	os.system('clear')
+	print ("ADC bcmSenRaw Output channel 1 : %.2f" %bcmSenRaw) #sensor
+	sleep(0.1)
+	bus.write_byte(MCP3426_DEFAULT_ADDRESS, channelRef)
+	sleep(0.1)
+	data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
+	raw_adc = (data[0] * 256) + data[1]
+	if raw_adc > 32767 :
+			raw_adc -= 65536
+	bcmSenRaw = (raw_adc/2**12)
 	# Output data to screen
-    print ("ADC bcmSenRaw Output channel 2 : %.2f" %bcmSenRaw) #reference
-    GPIO.output(POWERPIN, 0)
-    sleep(0.5)
+	print ("ADC bcmSenRaw Output channel 2 : %.2f" %bcmSenRaw) #reference
+	GPIO.output(POWERPIN, 0)
+	sleep(0.5)
 
 
 
@@ -136,14 +149,13 @@ def debugging():
 def readADC(channel, light):	
 	if (light == 1):
 		GPIO.output(POWERPIN, 1)
-	#sleep(0.01) #wait for led to be at full brightness
+		sleep(0.01) #wait for led to be at full brightness
 	bus.write_byte(MCP3426_DEFAULT_ADDRESS, channel)
-	#debugging()
-	sleep(0.1)
+	sleep(0.1) #slower makes readings unstable. 
 	data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
 	if (light == 1):
 		GPIO.output(POWERPIN, 0)
-	sleep(0.2)
+	sleep(0.05)
 	value = ((data[0] << 8) | data[1])
 	if (value >= 32768):
 		value = 65536 -value
@@ -158,7 +170,7 @@ def getSenRaw(light):
 	if (light == 1): #LED on 
 		adcOutSen = readADC(channelSen,1)
 		adcOutRef = readADC(channelRef,1)
-	else: #Check light bias
+	else: #Check light/sensor bias
 		adcOutSen = readADC(channelSen,0)
 		adcOutRef = readADC(channelRef,0)
 	N = 12 # resolution,number of bits
@@ -173,8 +185,8 @@ initialise()
 
 
 def pressed():
-    #start / stop measuring, reboot, etc. - to be implemented
-    sleep(0.2)
+	#start / stop measuring, reboot, etc. - to be implemented
+	sleep(0.2)
 
 sw1 = Button(BUTTON)
 sw1.when_pressed = pressed
@@ -190,93 +202,122 @@ def createLog(log,header):
 		logfileCurrent.write(header + "\n\n")
 
 
-try:
-	bcmRefBias=bcmSenBias=bcmRefFallback=bcmSenRef=bcmRefTmp=bcmRef=bcmRefOld=bcmRefNew=bcmSenNew=bcmSenOld=bcmATNnew=bcmATNold=BCngm3=BCngm3pos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=bcmTemperatureNew=bcmTemperatureOld=1
-	flag = ""
-	calibrated = bcmSen = absorb = bcmSenRaw = attenuation = 0.000
-	today = str(datetime.now().strftime("%y-%m-%d"))
-	now = str(datetime.now().strftime("%H:%M:%S"))
-	logFileName = str("log_" + str(today) + "_" + str(now) + ".csv").replace(':','')
-	header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;Bias"
-	createLog(logFileName,header)
-	print(today, now, ver, "STARTED NEW LOG", logFileName)
-	print(str(header).replace(";","\t\t"))
-	while(True):
-		with open("/home/pi/logs/" + logFileName, "a") as log:
-			start = time()
-			bcmSenTmp=bcmRefTmp=temperatureTmp=1
-			for i in range(49):
-				bcmSenRaw = getSenRaw(0) #get actual bias by environmental light change with LED OFF
-				bcmSenTmp = bcmSenTmp + bcmSenRaw[0]
-				bcmRefTmp = bcmRefTmp + bcmSenRaw[1]
-			bcmSenBias=int(bcmSenTmp/(i+1))
-			bcmRefBias=int(bcmRefTmp/(i+1))
-			bcmSenTmp=bcmRefTmp=temperatureTmp=1
-			for i in range(49):
-				bcmSenRaw = getSenRaw(1)
+if __name__ == '__main__':
+	if (len(sys.argv)==2):
+		if (sys.argv[1] == "debug"):
+			sampleTime = 0 
+			sampleCycles = 999
+			debug = True
+	try:
+		bcmRefBias=bcmSenBias=bcmRefFallback=bcmSenRef=bcmRefTmp=bcmRef=bcmRefOld=bcmRefNew=bcmSenNew=bcmSenOld=bcmATNold=BCngm3=BCngm3pos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=bcmTemperatureNew=bcmTemperatureOld=1
+		flag = ""
+		calibrated = bcmSen = absorb = bcmSenRaw = attenuation = bcmATNnew = bcRelativeLoad = 0.0000
+		today = str(datetime.now().strftime("%y-%m-%d"))
+		now = str(datetime.now().strftime("%H:%M:%S"))
+		logFileName = str("log_" + str(today) + "_" + str(now) + ".csv").replace(':','')
+		header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;bcmSenBias;bcmRefBias"
+		if (debug == False):
+			createLog(logFileName,header)
+			print(today, now, ver, "STARTED NEW LOG", logFileName)
+		else:
+			print(today, now + " - happy debugging")
+		while(True):
+			with open("/home/pi/logs/" + logFileName, "a") as log:
+				start = time()
+				bcmSenTmp=bcmRefTmp=bcmSenBiasTmp=bcmRefBiasTmp=temperatureTmp=1
+				for i in range(sampleCycles):
+					bcmSenRaw = getSenRaw(1)
+					bcmSenTmp = bcmSenTmp + bcmSenRaw[0]
+					bcmRefTmp = bcmRefTmp + bcmSenRaw[1]
+					bcmSenRawBias = getSenRaw(0) #get actual bias by environmental light change with LED OFF
+					bcmSenBiasTmp = bcmSenBiasTmp + bcmSenRawBias[0]
+					bcmRefBiasTmp = bcmRefBiasTmp + bcmSenRawBias[1]
+
+					if (debug == True):
+						print(str(i) + " - BIAS (sen,ref): " + str(bcmSenRawBias) + ", RAW (sen, ref): " + str(bcmSenRaw))
+
+				#uncomment following line for temperature sensor BMP180
 				#temperatureTmp = temperatureTmp + (bmp.read_temperature()) #uncomment for use with  temperature sensor 
-				bcmSenTmp = bcmSenTmp + bcmSenRaw[0]
-				bcmRefTmp = bcmRefTmp + bcmSenRaw[1]
-				#sleep(0.1) 
-			if (temperatureTmp == 0):
-				temperatureTmp=1
-#			bcmSenNew=int(bcmSenTmp/(i+1))-bcmSenBias #true attenuation is without light bias
-#			bcmRefNew=int(bcmRefTmp/(i+1))-bcmRefBias #true reference is without light bias
-			bcmSenNew=int(bcmSenTmp/(i+1)) #true attenuation is without light bias
-			bcmRefNew=int(bcmRefTmp/(i+1)) #true reference is without light bias
-			if (bcmRefNew == 0):
-				bcmRefNew = 1 #avoid later divide by 0; just for debug
-			if (bcmSenNew == 0):
-				bcmSenNew = 1#avoid later divide by 0; just for debug
-			if (bcmRefNew < 100) and (bcmRefFallback == 1): #when there is no reference signal, use first sensor signal as reference fallback. suitable for stable environments
-				bcmRefFallback = bcmSenNew
-				flag=flag+"RefFallback-"
-			if (bcmRefNew < 100) and (bcmRefFallback > 100):
-				bcmRefNew = bcmRefFallback
-				flag=flag+"noRef-"
-			if (bcmRefFallback < bcmSenNew):
-				bcmRefFallback=bcmRefNew
-				flag=flag+"SetNewRef-"
-			if (bcmSenNew < 1000):
-				flag="checkLED-" 
-			#bcmTemperatureNew = round(temperatureTmp/(i+1),1) # uncomment for use with  temperature sensor 
-			if (bcmSenOld==1):
-				bcmSenOld = bcmSenNew
-			if (bcmRefOld ==1):
-				bcmRefOld = bcmRefNew
+				#uncomment the following line for use with DHT22
+				temperatureTmp = int(MyPyDHT.sensor_read(MyPyDHT.Sensor.DHT22, 13, reading_attempts=10, use_cache=True)[1]*10)/10
+				bcmSenBias=int(bcmSenBiasTmp/(i+1))
+				bcmRefBias=int(bcmRefBiasTmp/(i+1))
+				bcmSenNew=int(bcmSenTmp/(i+1))-bcmSenBias
+				bcmRefNew=int(bcmRefTmp/(i+1))-bcmRefBias
+				if (temperatureTmp == 0):
+					temperatureTmp=1
+				bcmTemperatureNew = round(temperatureTmp,2) 
+				if (bcmRefNew == 0):
+					bcmRefNew = 1 #avoid later divide by 0; just for debug
+				if (bcmSenNew == 0):
+					bcmSenNew = 1#avoid later divide by 0; just for debug
+				if (bcmRefNew < 100) and (bcmRefFallback == 1): #when there is no reference signal, use first sensor signal as reference fallback. suitable for stable environments
+					bcmRefFallback = bcmSenNew
+					flag=flag+"RefFallback-"
+				if (bcmRefNew < 100) and (bcmRefFallback > 100):
+					bcmRefNew = bcmRefFallback
+					flag=flag+"noRef-"
+				if (bcmRefFallback < bcmSenNew):
+					bcmRefFallback=bcmRefNew
+					flag=flag+"SetNewRef-"
+				if (bcmSenNew < 1000):
+					flag="checkLED-" 
+				if (bcmSenOld==1):
+					bcmSenOld = bcmSenNew
+				if (bcmRefOld ==1):
+					bcmRefOld = bcmRefNew
 
-			if (bcmTemperatureOld/bcmTemperatureNew != 1):
-				flag = flag + "tempChange-"
-			if  ((bcmSenNew/bcmSenOld) < 0.999):
-				flag=flag+"E-" #"safe" attenuation for moderate pollution
-			else:
-				flag=flag+"U-" # low (unsure) attenuation - observe the trend / rolling average. 
-			
-			bcmATNnew=round((numpy.log(bcmSenNew/bcmRefNew)*-100),4)
-			if (numpy.isnan(bcmATNnew) == True):
-				bcmATNnew = bcmATNold
-				flag=flag+"noATN"
-			if (bcmATNold == 1):
-				bcmATNold = bcmATNnew
-			bcRelativeLoad=round(((bcmATNnew-bcmATNold)/SG),4)
-			BCngm3 = int(bcRelativeLoad * (spotArea / airVolume)) #bc nanograms per m3
-			logString = str(datetime.now().strftime("%y-%m-%d")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag) + ";" + str(bcmSenBias)
-			print(str(logString).replace(";","\t\t").replace("-","").replace(":",""))
-			log.write(logString+"\n")
-			with open("/home/pi/logs/current.csv", "a") as logfileCurrent: #logfile for web interface. will be deleted every time a new measurement starts
-				logfileCurrent.write(logString+"\n")
-			flag=""
-			bcmSenOld=bcmSenNew 
-			bcmATNold=bcmATNnew
-			bcmTemperatureOld = bcmTemperatureNew
+				if (bcmTemperatureOld/bcmTemperatureNew != 1):
+					flag = flag + "tempChange-"
+				if  ((bcmSenNew/bcmSenOld) < 0.999):
+					flag=flag+"SA-" #"safe" attenuation for moderate pollution
+				else:
+					flag=flag+"LA-" # low (unsure) attenuation - observe the trend / rolling average. 
+				
+				bcmATNnew=round((numpy.log(bcmSenNew/bcmRefNew)*-100),5)
+				if (numpy.isnan(bcmATNnew) == True):
+					bcmATNnew = bcmATNold
+					flag=flag+"noATN"
+				if (bcmATNold == 1):
+					bcmATNold = bcmATNnew
+				bcRelativeLoad=round(((bcmATNnew-bcmATNold)/SG),5)
+				BCngm3 = int(bcRelativeLoad * (spotArea / airVolume)) #bc nanograms per m3
+				logString = str(datetime.now().strftime("%y-%m-%d")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag) + ";" + str(bcmSenBias)  + ";" + str(bcmRefBias)
+				if (debug == False):
+					log.write(logString+"\n")
+					with open("/home/pi/logs/current.csv", "a") as logfileCurrent: #logfile for web interface. will be deleted every time a new measurement starts
+						logfileCurrent.write(logString+"\n")
+				#else:
+					#print(header.replace(";","\t"))
+					#print(logString.replace(";","\t"))
+				flag=""
+				bcmSenOld=bcmSenNew 
+				bcmATNold=bcmATNnew
+				bcmTemperatureOld = bcmTemperatureNew
 
-			flag=""
+				flag=""
 			delay = time() - start
-			sleep((sampleTime*60)-delay)
-			#sleep(1) #for debugging
-except KeyboardInterrupt: 
-	#traceback.print_exc()
-	print("Exit")
-	GPIO.output(POWERPIN, 0)
-	pass
+			if (debug == False):
+				with open('logs/current.csv','r') as csv_file:
+					os.system('clear')
+					print(today, now, ver, logFileName)
+					headers=[]
+					with open('logs/current.csv','r') as csv_file:
+						csv_reader = list(csv.reader(csv_file, delimiter=';'))
+						print(tabulate(csv_reader, headers, tablefmt="fancy_grid"))
+						print("You may always go to terminal by pressing ctrl + c (measurement continues in background)")
+
+
+			#else:
+				#print("cycle took " + str(round(delay,2)) + " seconds")
+			if ((sampleTime)-delay <= 0):
+				sleep(sampleTime)
+			else:
+				sleep((sampleTime)-delay)
+
+	except KeyboardInterrupt: 
+		#traceback.print_exc()
+		print("\nWhen ready again, you may restart the script with 'python3 output.py'")
+		GPIO.output(POWERPIN, 0)
+		pass
 

@@ -138,7 +138,7 @@
      Save data as:
     <span class="btn" id="svg"> SVG</span>
     <span class="btn" id="png"> PNG</span>
-    <span class="btn"><a href="current.csv"> CSV</a></span>
+    <span class="btn"><a href="../logs/current.csv"> CSV</a></span>
 </div><br />
 _6 and _12 refers to the number of samples taken as rolling average (30 vs 60 minutes on a 5 minute time base)
   <!-- load the d3.js library -->
@@ -452,7 +452,7 @@ _6 and _12 refers to the number of samples taken as rolling average (30 vs 60 mi
             d.bcmATN = +d.bcmATN;
             d.relativeLoad = +d.relativeLoad;
             d.BCngm3 = +d.BCngm3;
-            d.temperature = +d.temperature;
+            d.Temperature = +d.Temperature;
             data.push(d)
 
             /* MOVING AVERAGE = 6 */
@@ -470,7 +470,7 @@ _6 and _12 refers to the number of samples taken as rolling average (30 vs 60 mi
           }
         });
 
-        data["columns"] = ["BCngm3", "BCngm3_6", "BCngm3_12", "bcmATN", "bcmRef", "bcmSen"]
+        data["columns"] = ["BCngm3", "BCngm3_6", "BCngm3_12", "bcmATN", "bcmRef", "bcmSen","Temperature"]
         /* TO MAINTAIN THE SELECTED MENU ON REFRESH */
         if (yColumn == "" || yColumn2 == "") {
           yColumn = data.columns[2];
@@ -482,12 +482,12 @@ _6 and _12 refers to the number of samples taken as rolling average (30 vs 60 mi
 
 
     /* INITIAL LOAD */
-    dataFile("current.csv")
+    dataFile("../logs/current.csv")
     // RELOADING EVERY 10s
     setInterval(() => {
       // SINCE NEW FILE ON EACH REFRESH, I NEED TO CLEAR THE PREVIOUS
       data = [];
-      dataFile("current.csv")
+      dataFile("../logs/current.csv")
     }, 10000);
 
     const serializeData = () => {

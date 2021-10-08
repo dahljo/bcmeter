@@ -1,5 +1,5 @@
 #content of .htaccess file
-
+```
 # DISABLE CACHING
 <IfModule mod_headers.c>
     Header set Cache-Control "no-cache, no-store, must-revalidate"
@@ -22,3 +22,4 @@
         Header set Expires "Thu, 1 Jan 1970 00:00:00 GMT"
     </IfModule>
 </FilesMatch>
+```

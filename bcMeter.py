@@ -41,11 +41,11 @@ import MyPyDHT
 
 
 #parameters for calculation of bc
-sampleTime=600 #time in seconds between samples
+sampleTime=300 #time in seconds between samples
 airFlow=0.360 #airflow per minute in liter
 SG = 0.0000125 * 1.7 #specific attenuation cross section in m2/ng - .0000125 is base as used for standard paper, 1.7 is correction for pallflex t60a20
 spotArea=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 5mm
-airVolume=sampleTime*airFlow #liters of air between samples	
+airVolume=(sampleTime/60)*airFlow #liters of air between samples	
 sampleCycles = 249 #higher = accurate but takes more time. starting from 0 (9 here means 10 cycles). 
 debug = False #no need to change here
 
@@ -101,7 +101,7 @@ mode = MCP3426_CONF_MODE_CONTINUOUS
 rate = MCP3426_CONF_SIZE_12BIT
 gain = MCP3426_CONF_GAIN_1X
 VRef = 2.048
-ver = "bcMeter A/DC evaluation script v 0.9.4 2021-10-07"
+ver = "bcMeter A/DC evaluation script v 0.9.4 2021-10-27"
 
 
 def initialise():
@@ -151,7 +151,7 @@ def readADC(channel, light):
 		GPIO.output(POWERPIN, 1)
 		sleep(0.01) #wait for led to be at full brightness
 	bus.write_byte(MCP3426_DEFAULT_ADDRESS, channel)
-	sleep(0.1) #slower makes readings unstable. 
+	sleep(0.1) #slower makes readings unstable. adc only likes max 15sps
 	data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
 	if (light == 1):
 		GPIO.output(POWERPIN, 0)

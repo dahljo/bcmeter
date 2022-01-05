@@ -14,7 +14,7 @@ import busio
 import csv
 from tabulate import tabulate
 from pathlib import Path
-from board import SCL, SDA
+from board import SCL, SDA, I2C
 from time import sleep, strftime, time
 from datetime import datetime
 from threading import Thread
@@ -23,18 +23,19 @@ from gpiozero import Button
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1)
 
+### show this in admin interface
 
-#customization for BMP Temperature Sensor:
+#uncomment for BMP Temperature Sensor:
 
 #import Python_BMP.BMP085 as BMP085 #uncomment for use with  temperature sensor 
 #bmp = BMP085.BMP085() #uncomment for use with  temperature sensor 
 #uncomment line 218
 
 
+#uncomment for DHT Sensor connected to M2 Header:
 
-#uncomment for DHT Sensor connected to M2 Header
-import MyPyDHT
-#import board
+#import MyPyDHT
+##import board
 #import adafruit_dht
 #dhtDevice = adafruit_dht.DHT22(board.D13, use_pulseio=False)
 
@@ -42,12 +43,17 @@ import MyPyDHT
 
 #parameters for calculation of bc
 sampleTime=300 #time in seconds between samples
+sampleCycles = 199 #higher = more accurate but takes more time. 0 is also a number so if you want 100 cycles use 99 here. 
 airFlow=0.360 #airflow per minute in liter
-SG = 0.0000125 * 1.7 #specific attenuation cross section in m2/ng - .0000125 is base as used for standard paper, 1.7 is correction for pallflex t60a20
+SGBase = 0.0000125 #dont change specific attenuation cross section in m2/ng - .0000125 is base as used for pallflex T60A20
+SGCorrection = 1 #set to correction factor for calibration i.e. 0.75 for AE33 Paper
+SG = SGBase * SGCorrection 
+
+
 spotArea=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 5mm
 airVolume=(sampleTime/60)*airFlow #liters of air between samples	
-sampleCycles = 249 #higher = accurate but takes more time. starting from 0 (9 here means 10 cycles). 
 debug = False #no need to change here
+### hide this in admin interface
 
 
 BUTTON = 16
@@ -56,7 +62,6 @@ POWERPIN = 26
 
 # MCP3426 I2C 16-Bit 1-Channel Analog to Digital Converter I2C Mini Module initialization by  Amanpal Singh
 
-MCP3426_DEFAULT_ADDRESS			= 0x6A
 MCP3426_CONF_A0GND_A1GND		= 0x68
 MCP3426_CONF_A0GND_A1FLT		= 0x69
 MCP3426_CONF_A0GND_A1VCC		= 0x6A
@@ -101,14 +106,24 @@ mode = MCP3426_CONF_MODE_CONTINUOUS
 rate = MCP3426_CONF_SIZE_12BIT
 gain = MCP3426_CONF_GAIN_1X
 VRef = 2.048
-ver = "bcMeter A/DC evaluation script v 0.9.4 2021-10-27"
+ver = "bcMeter A/DC evaluation script v 0.9.5 2022-01-02"
 
 
 def initialise():
+	global MCP3426_DEFAULT_ADDRESS
+	bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
+	for device in range(128):
+		try:
+			adc = bus.read_byte(device)
+			if (hex(device) == "0x68"):
+				MCP3426_DEFAULT_ADDRESS = 0x68
+			elif (hex(device) == "0x6a"):
+				MCP3426_DEFAULT_ADDRESS = 0x6a
+		except: # exception if read_byte fails
+			pass
 	GPIO.setmode(GPIO.BCM)
 	GPIO.setup(POWERPIN, GPIO.OUT)
 	GPIO.setup(BUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP) 
-
 	bus.write_byte(MCP3426_DEFAULT_ADDRESS,ready)
 	bus.write_byte(MCP3426_DEFAULT_ADDRESS,channelSen)
 	bus.write_byte(MCP3426_DEFAULT_ADDRESS,mode)
@@ -178,10 +193,23 @@ def getSenRaw(light):
 	bcmSenRawRef = (2 * VRef* adcOutRef)/ (2**N)
 	return int(bcmSenRawSen*1000),int(bcmSenRawRef*1000)
 
-		
 
-#Initialising the Device.
-initialise()
+def checkRun():
+	cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fv screen | grep python3']
+	process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, 
+	stderr=subprocess.PIPE)
+	my_pid, err = process.communicate()
+	if len(my_pid.splitlines()) > 2:
+		#print(len(my_pid.splitlines()))
+		#print(my_pid)
+		sys.stdout.write("bcMeter Script already running.\n")
+		exit()
+	else:
+		initialise()
+
+		
+checkRun()
+
 
 
 def pressed():
@@ -194,11 +222,11 @@ sw1.when_pressed = pressed
 
 def createLog(log,header):
 	Path("/home/pi/logs").mkdir(parents=True, exist_ok=True)
-	if os.path.isfile("/home/pi/logs/current.csv"):
-		os.remove("/home/pi/logs/current.csv")
+	if os.path.isfile("/home/pi/logs/log_current.csv"):
+		os.remove("/home/pi/logs/log_current.csv")
 	with open("/home/pi/logs/" + log, "a") as logfileArchive: #save this logfile for archive
 		logfileArchive.write(header + "\n\n")
-	with open("/home/pi/logs/current.csv", "a") as logfileCurrent: # temporary current logfile for web interface
+	with open("/home/pi/logs/log_current.csv", "a") as logfileCurrent: # temporary current logfile for web interface
 		logfileCurrent.write(header + "\n\n")
 
 
@@ -212,10 +240,10 @@ if __name__ == '__main__':
 		bcmRefBias=bcmSenBias=bcmRefFallback=bcmSenRef=bcmRefTmp=bcmRef=bcmRefOld=bcmRefNew=bcmSenNew=bcmSenOld=bcmATNold=BCngm3=BCngm3pos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=bcmTemperatureNew=bcmTemperatureOld=1
 		flag = ""
 		calibrated = bcmSen = absorb = bcmSenRaw = attenuation = bcmATNnew = bcRelativeLoad = 0.0000
-		today = str(datetime.now().strftime("%y-%m-%d"))
+		today = str(datetime.now().strftime("%d-%m-%y"))
 		now = str(datetime.now().strftime("%H:%M:%S"))
 		logFileName = str("log_" + str(today) + "_" + str(now) + ".csv").replace(':','')
-		header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;bcmSenBias;bcmRefBias"
+		header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;bcmSenBias;bcmRefBias;sampleDuration"
 		if (debug == False):
 			createLog(logFileName,header)
 			print(today, now, ver, "STARTED NEW LOG", logFileName)
@@ -235,11 +263,13 @@ if __name__ == '__main__':
 
 					if (debug == True):
 						print(str(i) + " - BIAS (sen,ref): " + str(bcmSenRawBias) + ", RAW (sen, ref): " + str(bcmSenRaw))
-
+### show this in admin interface
 				#uncomment following line for temperature sensor BMP180
 				#temperatureTmp = temperatureTmp + (bmp.read_temperature()) #uncomment for use with  temperature sensor 
 				#uncomment the following line for use with DHT22
-				temperatureTmp = int(MyPyDHT.sensor_read(MyPyDHT.Sensor.DHT22, 13, reading_attempts=10, use_cache=True)[1]*10)/10
+				#temperatureTmp = int(MyPyDHT.sensor_read(MyPyDHT.Sensor.DHT22, 13, reading_attempts=10, use_cache=True)[1]*10)/10
+### hide this in admin interface
+
 				bcmSenBias=int(bcmSenBiasTmp/(i+1))
 				bcmRefBias=int(bcmRefBiasTmp/(i+1))
 				bcmSenNew=int(bcmSenTmp/(i+1))-bcmSenBias
@@ -282,10 +312,11 @@ if __name__ == '__main__':
 					bcmATNold = bcmATNnew
 				bcRelativeLoad=round(((bcmATNnew-bcmATNold)/SG),5)
 				BCngm3 = int(bcRelativeLoad * (spotArea / airVolume)) #bc nanograms per m3
-				logString = str(datetime.now().strftime("%y-%m-%d")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag) + ";" + str(bcmSenBias)  + ";" + str(bcmRefBias)
+				delay = time() - start
+				logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag) + ";" + str(bcmSenBias)  + ";" + str(bcmRefBias) + ";" + str(round(delay,1))
 				if (debug == False):
 					log.write(logString+"\n")
-					with open("/home/pi/logs/current.csv", "a") as logfileCurrent: #logfile for web interface. will be deleted every time a new measurement starts
+					with open("/home/pi/logs/log_current.csv", "a") as logfileCurrent: #logfile for web interface. will be deleted every time a new measurement starts
 						logfileCurrent.write(logString+"\n")
 				#else:
 					#print(header.replace(";","\t"))
@@ -296,16 +327,16 @@ if __name__ == '__main__':
 				bcmTemperatureOld = bcmTemperatureNew
 
 				flag=""
-			delay = time() - start
+			
 			if (debug == False):
-				with open('logs/current.csv','r') as csv_file:
+				with open('logs/log_current.csv','r') as csv_file:
 					os.system('clear')
 					print(today, now, ver, logFileName)
 					headers=[]
-					with open('logs/current.csv','r') as csv_file:
+					with open('logs/log_current.csv','r') as csv_file:
 						csv_reader = list(csv.reader(csv_file, delimiter=';'))
 						print(tabulate(csv_reader, headers, tablefmt="fancy_grid"))
-						print("You may always go to terminal by pressing ctrl + c (measurement continues in background)")
+						print("Exit script with ctrl+c")
 
 
 			#else:
@@ -317,7 +348,7 @@ if __name__ == '__main__':
 
 	except KeyboardInterrupt: 
 		#traceback.print_exc()
-		print("\nWhen ready again, you may restart the script with 'python3 output.py'")
+		print("\nWhen ready again, you may restart the script with 'python3 bcMeter.py' or just reboot the device itself")
 		GPIO.output(POWERPIN, 0)
 		pass
 

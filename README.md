@@ -1,10 +1,10 @@
 ## Thank you for your interest! In this git you find everything you need to build your own bcMeter:
 
 
-**recommended:** 
-download bcMeter.img from bcmeter.org and clone that to a microSD card - change WiFi credentials and you're ready
+## Recommended setup:
+download bcMeter.img from https://bcmeter.org and clone that to a microSD card - change WiFi credentials and you're ready
 
-**manual installation:**
+## manual installation:
 
 see https://bcmeter.org/wiki/index.php?title=Installation#Alternative:_Manual_Set_Up_the_microSD_Card for instructions, the basic procedure is:
 

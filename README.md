@@ -11,7 +11,7 @@ see https://bcmeter.org/wiki/index.php?title=Installation#Alternative:_Manual_Se
 1. write raspberry LITE(!) image to micro sd card  
 2. create empty ssh file on /boot to be able to log in via ssh later
 3. create wpa_supplicant.conf with your WiFi credentials on /boot (see https://bcmeter.org/wiki/index.php?title=Installation#Enable_WiFi_access if you dont know what this means)
-4. start raspi and log into it via ssh, download and run install.sh script (wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh && sudo bash install.sh)
+4. bootup raspberry pi and log into it via ssh, download and run install.sh script (wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh && sudo bash install.sh)
 5. run bcMeter script 
 
 

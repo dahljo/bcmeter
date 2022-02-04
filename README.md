@@ -38,5 +38,5 @@ in /stl you find the files for 3d printing. as of july 2021 there is one case fo
 ![bcMeter-5V](https://user-images.githubusercontent.com/87074315/152612590-75ef60a8-828f-4d69-82bb-b6b03c55a555.png)
 
 12V option
-![bcmeter-tht](https://user-images.githubusercontent.com/87074315/124761537-337b2780-df32-11eb-83bd-753e4972f371.jpg)
 ![bcmeter-general-purpose-case](https://user-images.githubusercontent.com/87074315/124761546-3413be00-df32-11eb-8138-fc08c174cbb7.jpg)
+![bcmeter-tht](https://user-images.githubusercontent.com/87074315/124761537-337b2780-df32-11eb-83bd-753e4972f371.jpg)

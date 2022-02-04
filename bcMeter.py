@@ -39,178 +39,363 @@ bus = smbus.SMBus(1)
 #import adafruit_dht
 #dhtDevice = adafruit_dht.DHT22(board.D13, use_pulseio=False)
 
-
+MCP3426_DEFAULT_ADDRESS = 0x68
 
 #parameters for calculation of bc
 sampleTime=300 #time in seconds between samples
-sampleCycles = 199 #higher = more accurate but takes more time. 0 is also a number so if you want 100 cycles use 99 here. 
+sampleCycles = 5000 #samples x 4 taken for sensor, reference, sensor bias and reference bias 
 airFlow=0.360 #airflow per minute in liter
 SGBase = 0.0000125 #dont change specific attenuation cross section in m2/ng - .0000125 is base as used for pallflex T60A20
 SGCorrection = 1 #set to correction factor for calibration i.e. 0.75 for AE33 Paper
 SG = SGBase * SGCorrection 
+oneRunOnly = "false"
+noBias = "false"
 
 
-spotArea=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 5mm
+spotArea=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 0.50cm
 airVolume=(sampleTime/60)*airFlow #liters of air between samples	
 debug = False #no need to change here
 ### hide this in admin interface
 
-
-BUTTON = 16
 POWERPIN = 26
+BUTTON = 16
+
+ver = "bcMeter A/DC evaluation script v 0.9.5 2022-01-20"
 
 
-# MCP3426 I2C 16-Bit 1-Channel Analog to Digital Converter I2C Mini Module initialization by  Amanpal Singh
+class ADCPi:
+    # internal variables
 
-MCP3426_CONF_A0GND_A1GND		= 0x68
-MCP3426_CONF_A0GND_A1FLT		= 0x69
-MCP3426_CONF_A0GND_A1VCC		= 0x6A
-MCP3426_CONF_A0FLT_A1GND		= 0x6B
-MCP3426_CONF_A0VCC_A1GND		= 0x6C
-MCP3426_CONF_A0VCC_A1FLT		= 0x6D
-MCP3426_CONF_A0VCC_A1VCC		= 0x6E
-MCP3426_CONF_A0FLT_A1VCC		= 0x6F
+    __address = 0x68  # default address for adc 1 on adc pi and delta-sigma pi
+    __config1 = 0x9C  # PGAx1, 18 bit, continuous conversion, channel 1
+    __currentchannel1 = 1  # channel variable for adc 1
+    __config2 = 0x9C  # PGAx1, 18 bit, continuous-shot conversion, channel 1
+    __currentchannel2 = 1  # channel variable for adc2
+    __bitrate = 12  # current bitrate
+    __conversionmode = 1 # Conversion Mode
+    __pga = float(0.5)  # current pga setting
+    __lsb = float(0.0000078125)  # default lsb value for 18 bit
 
-# /RDY bit definition
-MCP3426_CONF_NO_EFFECT			= 0x38
-MCP3426_CONF_RDY				= 0x80
+    # create byte array and fill with initial values to define size
+    __adcreading = bytearray()
+    __adcreading.append(0x00)
+    __adcreading.append(0x00)
+    __adcreading.append(0x00)
+    __adcreading.append(0x00)
 
-# Conversion mode definitions
-MCP3426_CONF_MODE_ONESHOT		= 0x00
-MCP3426_CONF_MODE_CONTINUOUS	= 0x10
+    global _bus
 
-# Channel definitions
-#MCP3425 have only the one channel
-#MCP3426 & MCP3427 have two channels and treat 3 & 4 as repeats of 1 & 2 respectively
-#MCP3428 have all four channels
-MCP3426_CONF_CHANNEL_1			= 0x18
-MCP3426_CONF_CHANNEL_2			= 0x38
+    # local methods
 
-MCP3426_CONF_SIZE_12BIT			= 0x00
-MCP3426_CONF_SIZE_14BIT			= 0x04
-MCP3426_CONF_SIZE_16BIT			= 0x08
-#MCP342X_CONF_SIZE_18BIT		= 0x0C
+    def __updatebyte(self, byte, bit, value):
+            # internal method for setting the value of a single bit within a
+            # byte
+        if value == 0:
+            return byte & ~(1 << bit)
+        elif value == 1:
+            return byte | (1 << bit)
 
-# Programmable Gain definitions
-MCP3426_CONF_GAIN_1X			= 0x00
-MCP3426_CONF_GAIN_2X			= 0x01
-MCP3426_CONF_GAIN_4X			= 0x02
-MCP3426_CONF_GAIN_8X			= 0x03
+    def __checkbit(self, byte, bit):
+            # internal method for reading the value of a single bit within a
+            # byte
+        bitval = ((byte & (1 << bit)) != 0)
+        if (bitval == 1):
+            return True
+        else:
+            return False
 
-#Default values for the sensor
-ready = MCP3426_CONF_RDY
-#channel = MCP3426_CONF_CHANNEL_1
-channelSen = MCP3426_CONF_CHANNEL_1
-channelRef = MCP3426_CONF_CHANNEL_2
-mode = MCP3426_CONF_MODE_CONTINUOUS
-rate = MCP3426_CONF_SIZE_12BIT
-gain = MCP3426_CONF_GAIN_1X
-VRef = 2.048
-ver = "bcMeter A/DC evaluation script v 0.9.5 2022-01-02"
+    def __twos_comp(self, val, bits):
+        if((val & (1 << (bits - 1))) != 0):
+            val = val - (1 << bits)
+        return val
+
+    def __setchannel(self, channel):
+        # internal method for updating the config to the selected channel
+        if channel != self.__currentchannel1:
+            if channel == 1:
+                self.__config1 = self.__updatebyte(self.__config1, 5, 0)
+                self.__config1 = self.__updatebyte(self.__config1, 6, 0)
+                self.__currentchannel1 = 1
+            if channel == 2:
+                self.__config1 = self.__updatebyte(self.__config1, 5, 1)
+                self.__config1 = self.__updatebyte(self.__config1, 6, 0)
+                self.__currentchannel1 = 2
+            if channel == 3:
+                self.__config1 = self.__updatebyte(self.__config1, 5, 0)
+                self.__config1 = self.__updatebyte(self.__config1, 6, 1)
+                self.__currentchannel1 = 3
+            if channel == 4:
+                self.__config1 = self.__updatebyte(self.__config1, 5, 1)
+                self.__config1 = self.__updatebyte(self.__config1, 6, 1)
+                self.__currentchannel1 = 4
+
+        return
+
+    # init object with i2caddress, default is 0x68, 0x69 for ADCoPi board
+    def __init__(self, bus, address=0x68, rate=12):
+        self._bus = bus
+        self.__address = address
+        self.set_bit_rate(rate)
+
+    def read_voltage(self, channel):
+        # returns the voltage from the selected adc channel - channels 1 to
+        # 8
+        raw = self.read_raw(channel)
+        if (self.__signbit):
+            return float(0.0)  # returned a negative voltage so return 0
+        else:
+            voltage = float(
+                (raw * (self.__lsb / self.__pga)) * 2.471)
+            return float(voltage)
+
+    def read_raw(self, channel):
+        # reads the raw value from the selected adc channel - channels 1 to 8
+        h = 0
+        l = 0
+        m = 0
+        s = 0
+
+        # get the config and i2c address for the selected channel
+        self.__setchannel(channel)
+        if (channel < 5):            
+            config = self.__config1
+            address = self.__address
+        else:
+            config = self.__config2
+            address = self.__address2
+            
+        # if the conversion mode is set to one-shot update the ready bit to 1
+        if (self.__conversionmode == 0):
+                config = self.__updatebyte(config, 7, 1)
+                self._bus.write_byte(address, config)
+                config = self.__updatebyte(config, 7, 0)
+        # keep reading the adc data until the conversion result is ready
+        while True:
+            
+            __adcreading = self._bus.read_i2c_block_data(address, config, 4)
+            if self.__bitrate == 18:
+                h = __adcreading[0]
+                m = __adcreading[1]
+                l = __adcreading[2]
+                s = __adcreading[3]
+            else:
+                h = __adcreading[0]
+                m = __adcreading[1]
+                s = __adcreading[2]
+            if self.__checkbit(s, 7) == 0:
+                break
+
+        self.__signbit = False
+        t = 0.0
+        # extract the returned bytes and combine in the correct order
+        if self.__bitrate == 18:
+            t = ((h & 0b00000011) << 16) | (m << 8) | l
+            self.__signbit = bool(self.__checkbit(t, 17))
+            if self.__signbit:
+                t = self.__updatebyte(t, 17, 0)
+
+        if self.__bitrate == 16:
+            t = (h << 8) | m
+            self.__signbit = bool(self.__checkbit(t, 15))
+            if self.__signbit:
+                t = self.__updatebyte(t, 15, 0)
+
+        if self.__bitrate == 14:
+            t = ((h & 0b00111111) << 8) | m
+            self.__signbit = self.__checkbit(t, 13)
+            if self.__signbit:
+                t = self.__updatebyte(t, 13, 0)
+
+        if self.__bitrate == 12:
+            t = ((h & 0b00001111) << 8) | m
+            self.__signbit = self.__checkbit(t, 11)
+            if self.__signbit:
+                t = self.__updatebyte(t, 11, 0)
+
+        return t
+
+    def set_pga(self, gain):
+        """
+        PGA gain selection
+        1 = 1x
+        2 = 2x
+        4 = 4x
+        8 = 8x
+        """
+
+        if gain == 1:
+            self.__config1 = self.__updatebyte(self.__config1, 0, 0)
+            self.__config1 = self.__updatebyte(self.__config1, 1, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 0, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 1, 0)
+            self.__pga = 0.5
+        if gain == 2:
+            self.__config1 = self.__updatebyte(self.__config1, 0, 1)
+            self.__config1 = self.__updatebyte(self.__config1, 1, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 0, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 1, 0)
+            self.__pga = 1
+        if gain == 4:
+            self.__config1 = self.__updatebyte(self.__config1, 0, 0)
+            self.__config1 = self.__updatebyte(self.__config1, 1, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 0, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 1, 1)
+            self.__pga = 2
+        if gain == 8:
+            self.__config1 = self.__updatebyte(self.__config1, 0, 1)
+            self.__config1 = self.__updatebyte(self.__config1, 1, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 0, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 1, 1)
+            self.__pga = 4
+
+        self._bus.write_byte(self.__address, self.__config1)
+        #self._bus.write_byte(self.__address2, self.__config2)
+        return
+
+    def set_bit_rate(self, rate):
+        """
+        sample rate and resolution
+        12 = 12 bit (240SPS max)
+        14 = 14 bit (60SPS max)
+        16 = 16 bit (15SPS max)
+        18 = 18 bit (3.75SPS max)
+        """
+
+        if rate == 12:
+            self.__config1 = self.__updatebyte(self.__config1, 2, 0)
+            self.__config1 = self.__updatebyte(self.__config1, 3, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 2, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 3, 0)
+            self.__bitrate = 12
+            self.__lsb = 0.0005
+        if rate == 14:
+            self.__config1 = self.__updatebyte(self.__config1, 2, 1)
+            self.__config1 = self.__updatebyte(self.__config1, 3, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 2, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 3, 0)
+            self.__bitrate = 14
+            self.__lsb = 0.000125
+        if rate == 16:
+            self.__config1 = self.__updatebyte(self.__config1, 2, 0)
+            self.__config1 = self.__updatebyte(self.__config1, 3, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 2, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 3, 1)
+            self.__bitrate = 16
+            self.__lsb = 0.00003125
+        if rate == 18:
+            self.__config1 = self.__updatebyte(self.__config1, 2, 1)
+            self.__config1 = self.__updatebyte(self.__config1, 3, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 2, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 3, 1)
+            self.__bitrate = 18
+            self.__lsb = 0.0000078125
+
+        self._bus.write_byte(self.__address, self.__config1)
+        return
+    
+    def set_conversion_mode(self, mode):
+        """
+        conversion mode for adc
+        0 = One shot conversion mode
+        1 = Continuous conversion mode
+        """
+        if (mode == 0):
+            self.__config1 = self.__updatebyte(self.__config1, 4, 0)
+            self.__config2 = self.__updatebyte(self.__config2, 4, 0)
+            self.__conversionmode = 0
+        if (mode == 1):
+            self.__config1 = self.__updatebyte(self.__config1, 4, 1)
+            self.__config2 = self.__updatebyte(self.__config2, 4, 1)
+            self.__conversionmode = 1
+        #self._bus.write_byte(self.__address, self.__config1)
+        #self._bus.write_byte(self.__address2, self.__config2)    
+        return
 
 
-def initialise():
-	global MCP3426_DEFAULT_ADDRESS
-	bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
-	for device in range(128):
-		try:
-			adc = bus.read_byte(device)
-			if (hex(device) == "0x68"):
-				MCP3426_DEFAULT_ADDRESS = 0x68
-			elif (hex(device) == "0x6a"):
-				MCP3426_DEFAULT_ADDRESS = 0x6a
-		except: # exception if read_byte fails
-			pass
-	GPIO.setmode(GPIO.BCM)
-	GPIO.setup(POWERPIN, GPIO.OUT)
-	GPIO.setup(BUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP) 
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS,ready)
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS,channelSen)
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS,mode)
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS,rate)
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS,gain)   
-
-
-
-def debugging():
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS, channelSen)
-	sleep(0.1)
-	data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
-	raw_adc = (data[0] * 256) + data[1]
-	if raw_adc > 32767 :
-			raw_adc -= 65536
-	bcmSenRaw = (raw_adc/2**12)
-	os.system('clear')
-	print ("ADC bcmSenRaw Output channel 1 : %.2f" %bcmSenRaw) #sensor
-	sleep(0.1)
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS, channelRef)
-	sleep(0.1)
-	data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
-	raw_adc = (data[0] * 256) + data[1]
-	if raw_adc > 32767 :
-			raw_adc -= 65536
-	bcmSenRaw = (raw_adc/2**12)
-	# Output data to screen
-	print ("ADC bcmSenRaw Output channel 2 : %.2f" %bcmSenRaw) #reference
-	GPIO.output(POWERPIN, 0)
-	sleep(0.5)
 
 
 
 
-
-#Get the measurement for the ADC values  from the register
-
-def readADC(channel, light):	
-	if (light == 1):
-		GPIO.output(POWERPIN, 1)
-		sleep(0.01) #wait for led to be at full brightness
-	bus.write_byte(MCP3426_DEFAULT_ADDRESS, channel)
-	sleep(0.1) #slower makes readings unstable. adc only likes max 15sps
-	data = bus.read_i2c_block_data(MCP3426_DEFAULT_ADDRESS, 0x00, 2)
-	if (light == 1):
-		GPIO.output(POWERPIN, 0)
-	sleep(0.05)
-	value = ((data[0] << 8) | data[1])
-	if (value >= 32768):
-		value = 65536 -value
-	return value
+def getRawData(sampleChan):
 	
-# The output code is proportional to the bcmSenRaw difference b/w two analog points
-#Checking the conversion value
-#Conversion of the raw data into 
-# Shows the output codes of input level using 16-bit conversion mode
-
-def getSenRaw(light):
-	if (light == 1): #LED on 
-		adcOutSen = readADC(channelSen,1)
-		adcOutRef = readADC(channelRef,1)
-	else: #Check light/sensor bias
-		adcOutSen = readADC(channelSen,0)
-		adcOutRef = readADC(channelRef,0)
-	N = 12 # resolution,number of bits
-	bcmSenRawSen = (2 * VRef* adcOutSen)/ (2**N)
-	bcmSenRawRef = (2 * VRef* adcOutRef)/ (2**N)
-	return int(bcmSenRawSen*1000),int(bcmSenRawRef*1000)
+	#adc.set_pga(4)
+	#adc.set_bit_rate(12)
+	rawData = adc.read_voltage(sampleChan)*10000
+	#sleep(0.1)
+	#if (debug == True): print(sampleChan, str(int(rawData)))
+	return rawData
 
 
-def checkRun():
-	cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fv screen | grep python3']
+
+
+
+def readChannel(sampleChan,sampleCycles):
+	#threshold = 10
+	#if (sampleCycles<threshold): sampleCycles=threshold*2
+	sampleSum=sampledDataSum=0
+	for i in range(sampleCycles): #get the rawdata for the number of times stored in "sampleCycles"
+		#print("starting inner loop",i)
+		sampledDataInner = getRawData(sampleChan) #get the actual rawdata
+		#if (i == threshold): print("Start sampling")
+		#if (i > (threshold-1)): 
+		sampleSum += sampledDataInner #add the data up
+			#print(i,sampleCycles)
+		#if (debug == True): print("Channel ",i,  hex(sampleChan), sampledDataInner)
+	sampledData = sampleSum/(sampleCycles)
+	#print(sampledData)
+	sampledDataSum +=sampledData
+	return int(sampledData)
+
+def startUp():
+	global MCP3426_DEFAULT_ADDRESS, sampleTime, sampleCycles, oneRunOnly, debug, noBias
+	cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3']
 	process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, 
 	stderr=subprocess.PIPE)
 	my_pid, err = process.communicate()
-	if len(my_pid.splitlines()) > 2:
+	if len(my_pid.splitlines()) > 1:
 		#print(len(my_pid.splitlines()))
 		#print(my_pid)
-		sys.stdout.write("bcMeter Script already running.\n")
-		exit()
+		sys.stdout.write("bcMeter Script already running.\n" + str(my_pid.splitlines())+"\n")
+		sys.exit(1)
 	else:
-		initialise()
+		if (len(sys.argv)>=2):
+			if (sys.argv[1] == "debug"):
+				if len(sys.argv)<6:
+					print("use parameters to customize: 'debug 1 200 true true' <- 1=seconds between samples, 200=cycles taken for 1 sample, true: single/continous debug, true=noBias measurement ")
+					sampleTime = 1
+					sampleCycles = 10
+					oneRunOnly = "true"
+					debug = True
+					noBias = "true"
+				else:
+					sampleTime = int(sys.argv[2]) 
+					sampleCycles = int(sys.argv[3])
+					oneRunOnly = str(sys.argv[4])
+					noBias = str(sys.argv[5])
+					debug = True
+		bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
+		for device in range(128):
+			try:
+				adc = bus.read_byte(device)
+				if (hex(device) == "0x68"):
+					MCP3426_DEFAULT_ADDRESS = 0x68
+				elif (hex(device) == "0x6a"):
+					MCP3426_DEFAULT_ADDRESS = 0x6a
+			except: # exception if read_byte fails
+				pass
+		if (debug == True):
+			print("ADC found at:", MCP3426_DEFAULT_ADDRESS)
+		GPIO.setmode(GPIO.BCM)
+		GPIO.setup(POWERPIN, GPIO.OUT)
+		GPIO.setup(BUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP) 
+		
+			#for i in sys.argv:
+			#	print(i)
 
 		
-checkRun()
+startUp()
 
-
+adc = ADCPi(bus, MCP3426_DEFAULT_ADDRESS, 14)
 
 def pressed():
 	#start / stop measuring, reboot, etc. - to be implemented
@@ -231,13 +416,9 @@ def createLog(log,header):
 
 
 if __name__ == '__main__':
-	if (len(sys.argv)==2):
-		if (sys.argv[1] == "debug"):
-			sampleTime = 0 
-			sampleCycles = 999
-			debug = True
+	
 	try:
-		bcmRefBias=bcmSenBias=bcmRefFallback=bcmSenRef=bcmRefTmp=bcmRef=bcmRefOld=bcmRefNew=bcmSenNew=bcmSenOld=bcmATNold=BCngm3=BCngm3pos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=bcmTemperatureNew=bcmTemperatureOld=1
+		bcmRefRaw=bcmRefBias=bcmSenBias=bcmRefFallback=bcmSenRef=bcmRefTmp=bcmRef=bcmRefOld=bcmRefNew=bcmSenNew=bcmSenOld=bcmATNold=BCngm3=BCngm3pos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=bcmTemperatureNew=bcmTemperatureOld=1
 		flag = ""
 		calibrated = bcmSen = absorb = bcmSenRaw = attenuation = bcmATNnew = bcRelativeLoad = 0.0000
 		today = str(datetime.now().strftime("%d-%m-%y"))
@@ -248,103 +429,163 @@ if __name__ == '__main__':
 			createLog(logFileName,header)
 			print(today, now, ver, "STARTED NEW LOG", logFileName)
 		else:
-			print(today, now + " - happy debugging")
+			print(today, now + " - happy debugging\nwhen device case is closed, sen & ref should be over 4000 and both bias close to 0")
 		while(True):
-			with open("/home/pi/logs/" + logFileName, "a") as log:
-				start = time()
-				bcmSenTmp=bcmRefTmp=bcmSenBiasTmp=bcmRefBiasTmp=temperatureTmp=1
-				for i in range(sampleCycles):
-					bcmSenRaw = getSenRaw(1)
-					bcmSenTmp = bcmSenTmp + bcmSenRaw[0]
-					bcmRefTmp = bcmRefTmp + bcmSenRaw[1]
-					bcmSenRawBias = getSenRaw(0) #get actual bias by environmental light change with LED OFF
-					bcmSenBiasTmp = bcmSenBiasTmp + bcmSenRawBias[0]
-					bcmRefBiasTmp = bcmRefBiasTmp + bcmSenRawBias[1]
+			if (debug == False):
+				with open("/home/pi/logs/" + logFileName, "a") as log:
+					start = time()
+					bcmSenTmp=bcmRefTmp=bcmSenBiasTmp=bcmRefBiasTmp=temperatureTmp=1
+					threshold = 10
+					bcmSenRaw = bcmRefRaw = 0
+					start = time()
+					bcmSenTmp=bcmRefTmp=bcmSenBiasTmp=bcmRefBiasTmp=temperatureTmp=1
+					GPIO.output(POWERPIN, 1) 
+					sleep(0.1)
+					#if (debug == True): print("LED on, checking ATN, should be over 4000")
+					for i in range(sampleCycles):
+						a = readChannel(1,1)
 
-					if (debug == True):
-						print(str(i) + " - BIAS (sen,ref): " + str(bcmSenRawBias) + ", RAW (sen, ref): " + str(bcmSenRaw))
-### show this in admin interface
-				#uncomment following line for temperature sensor BMP180
-				#temperatureTmp = temperatureTmp + (bmp.read_temperature()) #uncomment for use with  temperature sensor 
-				#uncomment the following line for use with DHT22
-				#temperatureTmp = int(MyPyDHT.sensor_read(MyPyDHT.Sensor.DHT22, 13, reading_attempts=10, use_cache=True)[1]*10)/10
-### hide this in admin interface
+						b =  readChannel(2,1)
+						if (i>(threshold-1)):
+							bcmSenRaw += a
+							bcmRefRaw += b
+							#print(i, a,b)
+					bcmRefRaw=bcmRefRaw/(sampleCycles-threshold)
+					bcmSenRaw=bcmSenRaw/(sampleCycles-threshold)
+					#print(bcmSenRaw, bcmRefRaw)
+					GPIO.output(POWERPIN, 0) 
+					sleep(0.1)
+					#if (noBias != "true"): 
+					bcmSenBias = readChannel(1,1)
+					bcmRefBias = readChannel(2,1)
+					bcmSenNew=bcmSenRaw#-bcmSenBias
+					bcmRefNew=bcmRefRaw#-bcmRefBias
 
-				bcmSenBias=int(bcmSenBiasTmp/(i+1))
-				bcmRefBias=int(bcmRefBiasTmp/(i+1))
-				bcmSenNew=int(bcmSenTmp/(i+1))-bcmSenBias
-				bcmRefNew=int(bcmRefTmp/(i+1))-bcmRefBias
-				if (temperatureTmp == 0):
-					temperatureTmp=1
-				bcmTemperatureNew = round(temperatureTmp,2) 
-				if (bcmRefNew == 0):
-					bcmRefNew = 1 #avoid later divide by 0; just for debug
-				if (bcmSenNew == 0):
-					bcmSenNew = 1#avoid later divide by 0; just for debug
-				if (bcmRefNew < 100) and (bcmRefFallback == 1): #when there is no reference signal, use first sensor signal as reference fallback. suitable for stable environments
-					bcmRefFallback = bcmSenNew
-					flag=flag+"RefFallback-"
-				if (bcmRefNew < 100) and (bcmRefFallback > 100):
-					bcmRefNew = bcmRefFallback
-					flag=flag+"noRef-"
-				if (bcmRefFallback < bcmSenNew):
-					bcmRefFallback=bcmRefNew
-					flag=flag+"SetNewRef-"
-				if (bcmSenNew < 1000):
-					flag="checkLED-" 
-				if (bcmSenOld==1):
-					bcmSenOld = bcmSenNew
-				if (bcmRefOld ==1):
-					bcmRefOld = bcmRefNew
-
-				if (bcmTemperatureOld/bcmTemperatureNew != 1):
-					flag = flag + "tempChange-"
-				if  ((bcmSenNew/bcmSenOld) < 0.999):
-					flag=flag+"SA-" #"safe" attenuation for moderate pollution
-				else:
-					flag=flag+"LA-" # low (unsure) attenuation - observe the trend / rolling average. 
-				
-				bcmATNnew=round((numpy.log(bcmSenNew/bcmRefNew)*-100),5)
-				if (numpy.isnan(bcmATNnew) == True):
-					bcmATNnew = bcmATNold
-					flag=flag+"noATN"
-				if (bcmATNold == 1):
-					bcmATNold = bcmATNnew
-				bcRelativeLoad=round(((bcmATNnew-bcmATNold)/SG),5)
-				BCngm3 = int(bcRelativeLoad * (spotArea / airVolume)) #bc nanograms per m3
-				delay = time() - start
-				logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag) + ";" + str(bcmSenBias)  + ";" + str(bcmRefBias) + ";" + str(round(delay,1))
-				if (debug == False):
+					if (temperatureTmp == 0): temperatureTmp=1
+					bcmTemperatureNew = round(temperatureTmp,2) 
+					if (bcmRefNew == 0): bcmRefNew = 1 #avoid later divide by 0; just for debug
+					if (bcmSenNew == 0): bcmSenNew = 1#avoid later divide by 0; just for debug
+					if (bcmRefNew < 100) and (bcmRefFallback == 1): #when there is no reference signal, use first sensor signal as reference fallback. suitable for stable environments
+						bcmRefFallback = bcmSenNew
+						flag=flag+"RefFallback-"
+					if (bcmRefNew < 100) and (bcmRefFallback > 100):
+						bcmRefNew = bcmRefFallback
+						flag=flag+"noRef-"
+					if (bcmRefFallback < bcmSenNew):
+						bcmRefFallback=bcmRefNew
+						flag=flag+"SetNewRef-"
+					if (bcmSenNew < 1000): flag="checkLED-" 
+					if (bcmSenOld==1): bcmSenOld = bcmSenNew
+					if (bcmRefOld ==1):  bcmRefOld = bcmRefNew
+					if (bcmTemperatureOld/bcmTemperatureNew != 1): flag = flag + "tempChange-"
+					if ((bcmSenOld/bcmSenNew) < 0.9997):
+						flag=flag+"SA-" #"safe" attenuation for moderate pollution
+					else:
+						flag=flag+"LA-" # low (unsure) attenuation - observe the trend / rolling average. 
+					
+					bcmATNnew=round((numpy.log(bcmSenNew/bcmRefNew)*-100),5)
+					if (numpy.isnan(bcmATNnew) == True):
+						bcmATNnew = bcmATNold
+						flag=flag+"noATN"
+					if (bcmATNold == 1):
+						bcmATNold = bcmATNnew
+					bcRelativeLoad=round(((bcmATNnew-bcmATNold)/SG),5)
+					BCngm3 = int(bcRelativeLoad * (spotArea / airVolume)) #bc nanograms per m3
+					delay = time() - start
+					logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(bcmRefNew) +";"  +str(bcmSenNew) +";" +str(bcmATNnew) + ";"+  str(bcRelativeLoad) +";"+ str(BCngm3) + ";" + str(bcmTemperatureNew) + ";" + str(flag) + ";" + str(bcmSenBias)  + ";" + str(bcmRefBias) + ";" + str(round(delay,1))
 					log.write(logString+"\n")
 					with open("/home/pi/logs/log_current.csv", "a") as logfileCurrent: #logfile for web interface. will be deleted every time a new measurement starts
 						logfileCurrent.write(logString+"\n")
-				#else:
-					#print(header.replace(";","\t"))
-					#print(logString.replace(";","\t"))
-				flag=""
+					#else:
+						#print(header.replace(";","\t"))
+						#print(logString.replace(";","\t"))
+					flag=""
+					bcmSenOld=bcmSenNew 
+					bcmATNold=bcmATNnew
+					bcmTemperatureOld = bcmTemperatureNew
+
+					flag=""
+					if (debug == True):
+						print("sen; " + str(round(bcmSenRaw,3)) +"; ref; " + str(round(bcmRefRaw,3)) + "; senbias; " + str(round(bcmSenBias,3)) + "; refbias; "+ str(round(bcmRefBias,3)) + "; sampleTime; "+ str(round(delay,2)) )
+
+
+				if (oneRunOnly == "true"): 
+					print("cycle of " + str(sampleCycles) + " took " + str(round(delay,2)) + " seconds")
+					print("exiting debug mode")
+					GPIO.output(POWERPIN, 0)
+					sys.exit(1)
+				if (debug == False):
+					with open('logs/log_current.csv','r') as csv_file:
+						os.system('clear')
+						print(today, now, ver, logFileName)
+						headers=[]
+						with open('logs/log_current.csv','r') as csv_file:
+							csv_reader = list(csv.reader(csv_file, delimiter=';'))
+							print(tabulate(csv_reader, headers, tablefmt="fancy_grid"))
+							print("Exit script with ctrl+c")
+
+
+				
+				if ((sampleTime)-delay <= 0):
+					sleep(sampleTime)
+				else:
+					sleep((sampleTime)-delay)
+				
+			else:
+				threshold = 10
+				bcmSenRaw = bcmRefRaw = 0
+				start = time()
+				bcmSenTmp=bcmRefTmp=bcmSenBiasTmp=bcmRefBiasTmp=temperatureTmp=1
+				GPIO.output(POWERPIN, 1) 
+				sleep(0.1)
+				#if (debug == True): print("LED on, checking ATN, should be over 4000")
+				for i in range(sampleCycles):
+					a = readChannel(1,1)
+
+					b =  readChannel(2,1)
+					if (i>(threshold-1)):
+						bcmSenRaw += a
+						bcmRefRaw += b
+						#print(i, a,b)
+				bcmRefRaw=bcmRefRaw/(sampleCycles-threshold)
+				bcmSenRaw=bcmSenRaw/(sampleCycles-threshold)
+				#print(bcmSenRaw, bcmRefRaw)
+				GPIO.output(POWERPIN, 0) 
+				sleep(0.1)
+				#if (noBias != "true"): 
+				bcmSenBias = readChannel(1,1)
+				bcmRefBias = readChannel(2,1)
+				bcmSenNew=bcmSenRaw#-bcmSenBias
+				bcmRefNew=bcmRefRaw#-bcmRefBias
+				bcmATNnew=round((numpy.log(bcmSenNew/bcmRefNew)*-100),5)
+				bcRelativeLoad=round(((bcmATNnew-bcmATNold)/SG),5)
+				BCngm3 = int(bcRelativeLoad * (spotArea / airVolume)) #bc nanograms per m3
+				delay = time() - start
 				bcmSenOld=bcmSenNew 
 				bcmATNold=bcmATNnew
-				bcmTemperatureOld = bcmTemperatureNew
-
-				flag=""
-			
-			if (debug == False):
-				with open('logs/log_current.csv','r') as csv_file:
-					os.system('clear')
-					print(today, now, ver, logFileName)
-					headers=[]
+				print("sen; " + str(round(bcmSenRaw,3)) +"; ref; " + str(round(bcmRefRaw,3)) + "; senbias; " + str(round(bcmSenBias,3)) + "; refbias; "+ str(round(bcmRefBias,3)) + "; sampleTime; "+ str(round(delay,2)) +"; ATN; " + str(bcmATNnew))
+				if (oneRunOnly == "true"): 
+					print("cycle of " + str(sampleCycles) + " took " + str(round(delay,2)) + " seconds")
+					print("exiting debug mode")
+					GPIO.output(POWERPIN, 0)
+					sys.exit(1)
+				if (debug == False):
 					with open('logs/log_current.csv','r') as csv_file:
-						csv_reader = list(csv.reader(csv_file, delimiter=';'))
-						print(tabulate(csv_reader, headers, tablefmt="fancy_grid"))
-						print("Exit script with ctrl+c")
+						os.system('clear')
+						print(today, now, ver, logFileName)
+						headers=[]
+						with open('logs/log_current.csv','r') as csv_file:
+							csv_reader = list(csv.reader(csv_file, delimiter=';'))
+							print(tabulate(csv_reader, headers, tablefmt="fancy_grid"))
+							print("Exit script with ctrl+c")
 
 
-			#else:
-				#print("cycle took " + str(round(delay,2)) + " seconds")
-			if ((sampleTime)-delay <= 0):
-				sleep(sampleTime)
-			else:
-				sleep((sampleTime)-delay)
+				
+				if ((sampleTime)-delay <= 0):
+					sleep(sampleTime)
+				else:
+					sleep((sampleTime)-delay)
+					
 
 	except KeyboardInterrupt: 
 		#traceback.print_exc()

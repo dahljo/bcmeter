@@ -7,7 +7,7 @@ fi
 
 if [ $1 == "update" ]; then
 echo "Updating"
-rm -rf bcmeter/ interface/
+rm -rf /home/pi/bcmeter/ /home/interface/
 git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter
 
 
@@ -76,6 +76,9 @@ read -p "\e[34mDo you wish to start the script NOW? You can always stop it by pr
         [Nn]* ) exit;;
         * ) echo "\e[34mPlease answer yes or no.";;
     esac
+fi
+if [ $1 == "update" ]; then
+screen python3 /home/pi/bcMeter.py
 fi
 chmod -R 777 .
 

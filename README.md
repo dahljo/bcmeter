@@ -29,7 +29,7 @@ in /gerbers there are two versions of the pcb available. there is a general purp
 
 ### STL files for 3D Printing
 
-in /stl you find the files for 3d printing. as of july 2021 there is one case for the general purpose circuit board (PCB) but the smaller PCB fits as well. We will create a smaller case as well to reduce the costs to print, if the big case is not necessary. 
+in /stl you find the files for 3d printing. there are two options for 5V and 12V
 
 
 5V option

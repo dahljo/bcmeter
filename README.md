@@ -32,9 +32,11 @@ in /gerbers there are two versions of the pcb available. there is a general purp
 in /stl you find the files for 3d printing. as of july 2021 there is one case for the general purpose circuit board (PCB) but the smaller PCB fits as well. We will create a smaller case as well to reduce the costs to print, if the big case is not necessary. 
 
 
+5V option
 
-renderings of the pcb and case
+![bcMeter-smallCase](https://user-images.githubusercontent.com/87074315/152612250-c9c2e578-1b18-46d1-ad44-5a189bbf04da.png)
+![bcMeter-5V](https://user-images.githubusercontent.com/87074315/152612590-75ef60a8-828f-4d69-82bb-b6b03c55a555.png)
 
+12V option
 ![bcmeter-tht](https://user-images.githubusercontent.com/87074315/124761537-337b2780-df32-11eb-83bd-753e4972f371.jpg)
-![bcmeter-smd](https://user-images.githubusercontent.com/87074315/124761541-3413be00-df32-11eb-88a7-5631a5a1f0b4.jpg)
 ![bcmeter-general-purpose-case](https://user-images.githubusercontent.com/87074315/124761546-3413be00-df32-11eb-8138-fc08c174cbb7.jpg)

@@ -178,17 +178,18 @@ function clearAddressBar()
 
 function getPID()
 {
-    $grep = shell_exec('ps aux | grep bcMeter.py | grep -Fv grep | grep python3 | grep -Fv sudo');
+  $VERSION =  "0.9.6 04.02.2022";
+    $grep = shell_exec('ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
     preg_match_all('!\d+!', $grep, $numbers);
     $PID = $numbers[0][0];
-
+    $STARTED = $numbers[0][7] . ":" . $numbers[0][8];
     if (!isset($grep))
     {
-        echo "<pre style='text-align:center;'>bcMeter not (yet) running properly. Reload page in two Minutes. If still not running, run debug mode. <br/>
+        echo "<pre style='text-align:center;'>bcMeter not (yet) running properly. After update, start script from administration menu.  <br/>
   Further Information will appear. Copy or screenshot and send to jd@bcmeter.org</pre>";
     }
     else {
-         echo "<h3 style='text-align: center; display: block;'>bcMeter data to show</h3><pre style='text-align:center;'>(Running with PID $PID)</pre>";
+         echo "<h3 style='text-align: center; display: block;'>bcMeter data to show</h3><pre style='text-align:center;'>(Running with PID $PID since $STARTED) v $VERSION </pre>";
     }
     return $PID;
 }
@@ -201,6 +202,7 @@ $PID = getPID();
   <div class="menu" style="display: block; text-align: center;">
     <!-- get the list of log -->
 <?php
+
 $folder_path = '../logs';
 $logString = "<select id = 'logs_select'>";
 $logFiles = scandir($folder_path);
@@ -888,12 +890,15 @@ echo '<span id="logs">' . $logString . '</span>';
 <form style="display: block; text-align:center;">
 <input type="submit" name="shutdown" value="Shutdown"/>
 <input type="submit" name="restart" value="Reboot"/>
+<input type="submit" name="stopbcm" value="Stop sampling"/>
+<input type="submit" name="startbcm" value="Start sampling"/>
 <input type="submit" name="newlog" value="New Logfile"/>
 <input type="submit" name="debug" value="Debug Mode"/>
-<input type="submit" name="debug" value="Normal Mode"/>
-<input type="submit" name="editor" value="Script Editor"/><br/><br />
+<input type="submit" name="editor" value="Script Editor"/>
+<input type="submit" name="update" value="Update Script"/><br/><br />
 
 </form>
+<h3>Messages</h3>
 <?php
 
 
@@ -911,6 +916,8 @@ if (isset($_GET["shutdown"]))
     clearAddressBar();
     echo "<pre style='text-align:center;'>Shutting down bcMeter. Safe to disconnect Power in 20s</pre><br/>";
     $output = shell_exec('sudo shutdown now');
+    sleep(5);
+    echo "<script>window.location.reload()</script>";
 
 }
 
@@ -918,24 +925,37 @@ if (isset($_GET["restart"]))
 {
 
     clearAddressBar();
-    echo "<pre style='text-align:center;'>Rebooting bcMeter. Will be back in a Minute</pre><br/>";
-
+    echo "<pre style='text-align:center;'>Rebooting bcMeter. Will be back in a Minute.</pre><br/>";
+    sleep(5);
+    clearAddressBar();
     $output = shell_exec('sudo reboot now');
+    echo "<script>window.location.reload()</script>";
+
 
 }
+
+if (isset($_GET["stopbcm"]))
+{   
+    clearAddressBar();
+    $output = shell_exec("sudo kill -9 $PID");
+    sleep(5);
+    clearAddressBar();
+    echo "<script>window.location.reload()</script>";
+}
+
 
 if (isset($_GET["debug"]))
 {   
     clearAddressBar();
-    $output = shell_exec('sudo python3 /home/pi/bcMeter.py debug');
+    $output = shell_exec('sudo python3 /home/pi/bcMeter.py debug 1 5 true');
     echo "<pre style='text-align:center;'>$output</pre>";
 }
 
-if (isset($_GET["normal"]))
+if (isset($_GET["startbcm"]))
 {
     echo "<pre style='text-align:center;'>Starting script. Wait approx 2-5 Minutes for the first sample to appear.</pre>";
-    shell_exec("sudo python3 /home/pi/bcMeter.py > /dev/null 2>/dev/null &");
-    sleep(10);
+    shell_exec("sudo screen python3 /home/pi/bcMeter.py");
+    sleep(5);
     clearAddressBar();
     echo "<script>window.location.reload()</script>";
 }
@@ -945,13 +965,37 @@ if (isset($_GET["newlog"]))
 
     $output1 = nl2br(shell_exec("sudo kill -9 $PID"));
     echo "<pre style='text-align:center;'><strong>Sent termination. Wait a bit... </strong></pre>";
-    $output2 = nl2br(shell_exec('sudo python3 /home/pi/bcMeter.py  > /dev/null 2>/dev/null &'));
+    $output2 = nl2br(shell_exec('sudo screen python3 /home/pi/bcMeter.py'));
     echo "<pre style='text-align:center;'>" . str_replace("\n","<br />",$output1) . " <br />" . str_replace("\n","<br />",$output2) . "</pre>";
     sleep(5);
     clearAddressBar();
     echo "<script>window.location.reload()</script>";
 }   
 
+
+if (isset($_GET["update"]))
+{ 
+ shell_exec("sudo kill -9 $PID");
+
+  while (@ ob_end_flush()); // end all output buffers if any
+$cmd = 'cd /home/pi && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P /home/pi/ && sudo bash /home/pi/install.sh update' ;
+$proc = popen($cmd, 'r');
+echo '<pre>';
+while (!feof($proc))
+{
+    echo fread($proc, 4096);
+    @ flush();
+}
+
+echo '</pre>';
+
+sleep(5);
+clearAddressBar();
+echo "<script>window.location.reload()</script>";
+
+
+
+}   
 ?>
 
 </body>

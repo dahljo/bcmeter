@@ -182,7 +182,8 @@ function getPID()
     $grep = shell_exec('ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
     preg_match_all('!\d+!', $grep, $numbers);
     $PID = $numbers[0][0];
-    $STARTED = $numbers[0][7] . ":" . $numbers[0][8];
+    //echo "$grep";
+    $STARTED = $numbers[0][7] . " " . $numbers[0][8]. " " . $numbers[0][9];
     if (!isset($grep))
     {
         echo "<pre style='text-align:center;'>bcMeter not (yet) running properly. After update, start script from administration menu.  <br/>

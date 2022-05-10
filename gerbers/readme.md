@@ -1,4 +1,4 @@
-there are two version: 
+there are two versions, with different difficulties to build - the 12v is using the cheapest components with the cost of accuracy, the 5v variant is as accurate as common industry standard aethalometers while still keeping the costs low: 
 
 the smaller pcb powered directly by the pi via usb. soldered with smd components where possible. 
 ![bcmeter-5v-rev3](https://user-images.githubusercontent.com/87074315/167669558-7007eba8-a761-4816-9e4c-2df5ea00ae97.jpg)

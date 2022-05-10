@@ -25,11 +25,12 @@ bcMeter.py is the python script which saves the data as csv
 
 ### Gerber for PCB Manufactoring
 
-in /gerbers there are two versions of the pcb available. there is a general purpose pcb for use with 12v and one smaller which is powered by the raspberry pi directly.
+in /gerbers there are two versions of the pcb available. there is a general purpose pcb for use with 12v and one smaller which is powered by the raspberry pi directly. 
+if you have no technician to build the pcb, let us know. 
 
 ### STL files for 3D Printing
 
-in /stl you find the files for 3d printing. there are two options for 5V and 12V
+in /stl you find the files for 3d printing. the large case is intended to be used for large internal pumps. the small case is recommended and more flexibile
 
 
 5V option

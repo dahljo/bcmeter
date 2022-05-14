@@ -18,13 +18,13 @@ if [ "$1" != "update" ]; then
 
 echo "\e[34mInstalling software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates and the speed of your pi."
 apt update && apt upgrade -y && apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio python3-numpy nginx php php-fpm php-pear php-common php-cli php-gd screen git && pip3 install gpiozero adafruit-blinka tabulate && systemctl enable zramswap.service  
-git clone https://github.com/bcmeter/bcmeter.git /home/pi
+git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter
   
 fi
 
 
-mv bcmeter/* .
-rm -rf gerbers/ stl/
+mv /home/pi/bcmeter/* /home/pi/
+rm -rf /home/pi/gerbers/ /home/pi/stl/
 if [ "$1" != "update" ]; then
 mkdir /home/pi/logs
 touch /home/pi/logs/log_current.csv
@@ -41,7 +41,7 @@ echo "\e[34menabled autologin - you can disable this with sudo raspi-config anyt
 raspi-config nonint do_i2c 0
 echo "\e[34menabled i2c"
 if [ "$1" != "update" ]; then
-mv nginx-bcMeter.conf /etc/nginx/sites-enabled/default
+mv /home/pi/nginx-bcMeter.conf /etc/nginx/sites-enabled/default
 
 usermod -aG sudo www-data
 usermod -aG sudo pi
@@ -62,7 +62,7 @@ fi
 
 if [ "$1" != "update" ]; then
 if ! grep -q "bcMeter.py" /home/pi/.bashrc; then
- read -p "Do you wish to autostart the script with every bootup?" yn
+ read -p "Do you wish to autostart the script with every bootup? (y/n)" yn
     case $yn in
         [Yy]* ) echo -e "#autostart bcMeter \n if ! pgrep -f "bcMeter.py" > /dev/null \n then sudo screen python3 /home/pi/bcMeter.py \n else python3 /home/pi/output.py \n fi " >> /home/pi/.bashrc; break;;
         [Nn]* ) break;;
@@ -79,6 +79,7 @@ read -p "\e[34mDo you wish to start the script NOW? You can always stop it by pr
 fi
 if [ "$1" == "update" ]; then
 screen python3 /home/pi/bcMeter.py
+rm -rf /home/pi/bcmeter
 fi
 chmod -R 777 /home/pi/
 

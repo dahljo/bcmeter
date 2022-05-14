@@ -65,7 +65,7 @@ debug = False #no need to change here
 POWERPIN = 26
 BUTTON = 16
 
-ver = "bcMeter A/DC evaluation script v 0.9.5 2022-01-20"
+ver = "bcMeter A/DC evaluation script v 0.9.7 2022-05-15"
 
 
 class TemperatureSensor:

@@ -7,7 +7,7 @@ fi
 
 if [ $1 == "update" ]; then
 echo "Updating"
-rm -rf /home/pi/bcmeter/ /home/interface/
+rm -rf /home/pi/bcmeter/ /home/pi/interface/
 git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter
 
 
@@ -80,6 +80,6 @@ fi
 if [ $1 == "update" ]; then
 screen python3 /home/pi/bcMeter.py
 fi
-chmod -R 777 .
+chmod -R 777 /home/pi/
 
 

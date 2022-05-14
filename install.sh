@@ -5,7 +5,7 @@ if (( $EUID != 0 )); then
     exit
 fi
 
-if [ $1 == "update" ]; then
+if [ "$1" == "update" ]; then
 echo "Updating"
 rm -rf /home/pi/bcmeter/ /home/pi/interface/
 git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter
@@ -13,7 +13,7 @@ git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter
 
 fi
 
-if [ $1 != "update" ]; then
+if [ "$1" != "update" ]; then
 
 
 echo "\e[34mInstalling software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates and the speed of your pi."
@@ -25,7 +25,7 @@ fi
 
 mv bcmeter/* .
 rm -rf gerbers/ stl/
-if [ $1 != "update" ]; then
+if [ "$1" != "update" ]; then
 mkdir /home/pi/logs
 touch /home/pi/logs/log_current.csv
 
@@ -40,7 +40,7 @@ raspi-config nonint do_boot_behaviour B2
 echo "\e[34menabled autologin - you can disable this with sudo raspi-config anytime"
 raspi-config nonint do_i2c 0
 echo "\e[34menabled i2c"
-if [ $1 != "update" ]; then
+if [ "$1" != "update" ]; then
 mv nginx-bcMeter.conf /etc/nginx/sites-enabled/default
 
 usermod -aG sudo www-data
@@ -60,7 +60,7 @@ raspi-config nonint do_hostname $hostname
 echo "\e[34mconfiguration complete. default timezone is UTC+0 - you can change it with 'sudo raspi-config'. "
 fi
 
-if [ $1 != "update" ]; then
+if [ "$1" != "update" ]; then
 if ! grep -q "bcMeter.py" /home/pi/.bashrc; then
  read -p "Do you wish to autostart the script with every bootup?" yn
     case $yn in
@@ -77,7 +77,7 @@ read -p "\e[34mDo you wish to start the script NOW? You can always stop it by pr
         * ) echo "\e[34mPlease answer yes or no.";;
     esac
 fi
-if [ $1 == "update" ]; then
+if [ "$1" == "update" ]; then
 screen python3 /home/pi/bcMeter.py
 fi
 chmod -R 777 /home/pi/

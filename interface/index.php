@@ -2,6 +2,8 @@
 
 <!DOCTYPE html>
 <meta charset="utf-8">
+<head>    <link rel="stylesheet" type="text/css" href="css/bootstrap.min.css">
+</head>
 <style>
   html, body{
     font-family: sans-serif;
@@ -178,29 +180,31 @@ function clearAddressBar()
 
 function getPID()
 {
-  $VERSION =  "0.9.6 04.02.2022";
+
     $grep = shell_exec('ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
     preg_match_all('!\d+!', $grep, $numbers);
     $PID = $numbers[0][0];
-    //echo "$grep";
-    $STARTED = $numbers[0][7] . " " . $numbers[0][8]. " " . $numbers[0][9];
-    if (!isset($grep))
-    {
-        echo "<pre style='text-align:center;'>bcMeter not (yet) running properly. After update, start script from administration menu.  <br/>
-  Further Information will appear. Copy or screenshot and send to jd@bcmeter.org</pre>";
-    }
-    else {
-         echo "<h3 style='text-align: center; display: block;'>bcMeter data to show</h3><pre style='text-align:center;'>(Running with PID $PID since $STARTED) v $VERSION </pre>";
-    }
+      $VERSION =  "0.9.6 04.02.2022";
+     
+      //echo "$grep";
+      $STARTED = $numbers[0][8]. ":" . $numbers[0][9];
+      if (!isset($grep))
+      {
+          echo "<pre style='text-align:center;'>bcMeter stopped.<br/></pre>";
+      }
+      else {
+           echo "<pre style='text-align:center;'>Running with PID $PID since $STARTED - VERSION $VERSION </pre>";
+      }
     return $PID;
 }
-$PID = getPID();
+
 ?>
 
 
-
+<img src="bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/>
    <!-- CONTAINER FOR DROP DOWN MENU -->
   <div class="menu" style="display: block; text-align: center;">
+       <h3 style='text-align: center; display: inline;'>Show data:</h3>
     <!-- get the list of log -->
 <?php
 
@@ -215,11 +219,11 @@ foreach ($logFiles as $key => $value)
         $logString .= "<option value='{$value}'>{$value}</option>";
     }
 }
-$logString .= "<option value='combine_logs'>Combine Logs</option></select>";
+$logString .= "<option value='combine_logs'>Combined</option></select>";
 echo '<span id="logs">' . $logString . '</span>';
 ?>
 
-   
+
     <span class="y-menu">
       <select id="y-menu"></select>
     </span>
@@ -233,9 +237,9 @@ echo '<span id="logs">' . $logString . '</span>';
 
   </div>
 
-  <br />  <span style="display:block; text-align:center;font-size: 10px!important;  font-weight: 200;">BCngm3_6 and _12 are rolling averages.<br />Depending on the conditions, the Graph my fluctuate <strong>a lot</strong>. Display the rolling averages, then. They are available after minimum 6 or 12 samples taken (default 1hr)</span>
+  <!-- br />  <span style="display:block; text-align:center;font-size: 10px!important;  font-weight: 200;">BCngm3_6 and _12 are rolling averages.<br />Depending on the conditions, the Graph my fluctuate <strong>a lot</strong>. Display the rolling averages, then. They are available after minimum 6 or 12 samples taken (default 1hr)</span>
 
-  <br />
+  <br /-->
   <!-- CONTAINER FOR CHART -->
   <div class="tooltip"></div>
   <div id="svg-container">
@@ -274,16 +278,25 @@ echo '<span id="logs">' . $logString . '</span>';
 
 
 
-<div class="menu" style="text-align:center!important; display: block; ">
-     <h3>Save Graph</h3>
-    as <span class="btn" id="svg">SVG</span> or 
+<!--div class="menu" style="text-align:center!important; display: block; ">
+     <span style="display: inline; font-weight: 500;">Save Graph as</span>
+    <span class="btn" id="svg">SVG</span> or 
     <span class="btn" id="png"> PNG</span> or 
     <span class="btn" id="csv"> CSV</a></span>
 
-</div>
+</div-->
   
+<form style="display: block; text-align:center;">
+<input type="submit" name="saveGraph" value="Save Graph" class="btn btn-primary bootbox-accept"/>
+</form>
+
+
   <!-- load the d3.js library -->
   <script src="js/d3.min.js"></script>
+  <script src="js/jquery-3.6.0.min.js"></script>
+  <script src="js/bootstrap.min.js"></script>
+  <script src="js/bootbox.min.js"></script>
+
 
   <script>
 
@@ -349,12 +362,13 @@ echo '<span id="logs">' . $logString . '</span>';
     const bisect = d3.bisector(d => d.bcmTime).left;
     const xLabel = "bcmTime";
 
-    
+
     /* PRESET AND PREPOPULATE */
     yMin2Doc.style.opacity = 0
     yMax2Doc.style.opacity = 0
     combineLogs["columns"] = ["BCngm3", "BCngm3_6", "BCngm3_12", "bcmATN", "bcmRef", "bcmSen", "Temperature"]
     data["columns"] = ["BCngm3", "BCngm3_6", "BCngm3_12", "bcmATN", "bcmRef", "bcmSen", "Temperature"]
+
 
     /* FUNCTION AND EVENT LISTENER */
     /* EVENT LISTENER FOR MIN AND MAX VALUES */
@@ -545,8 +559,8 @@ echo '<span id="logs">' . $logString . '</span>';
         .attr("fill", "black")
         .attr("text-anchor", "middle")
 
-        .merge(xAxisG.select('.x-axis-label'))
-        .text(xLabel);
+        .merge(xAxisG.select('.x-axis-label'));
+        //.text(xLabel);
 
       /* LINE CHART GENERATOR */
       const lineGenerator = d3.line()
@@ -752,7 +766,9 @@ echo '<span id="logs">' . $logString . '</span>';
             d.relativeLoad = +d.relativeLoad;
             d.BCngm3 = +d.BCngm3;
             d.Temperature = +d.Temperature;
-         
+            if (!d.bcmTimeRaw) {
+                console.log("STAP");
+            }
             /* MOVING AVERAGE = 6 */
             if (i < 6) {
               d.BCngm3_6 = null;
@@ -771,6 +787,8 @@ echo '<span id="logs">' . $logString . '</span>';
                 combineLogs.push(d)
           }
           }
+
+                  
 
         });
         if(isCombineLogsSelected){
@@ -862,9 +880,7 @@ echo '<span id="logs">' . $logString . '</span>';
       download.click();
     }
 
-    document.getElementById("svg").addEventListener("click", saveSVG);
-    document.getElementById("png").addEventListener("click", savePNG);
-    document.getElementById("csv").addEventListener("click", saveCSV);
+
     
     document.getElementById("hide-y-menu2").addEventListener("click", function() {
       isHidden = !isHidden;
@@ -887,91 +903,138 @@ echo '<span id="logs">' . $logString . '</span>';
     });
   </script>
 <br />
-<h3>Administration</h3>
 <form style="display: block; text-align:center;">
-<input type="submit" name="shutdown" value="Shutdown"/>
-<input type="submit" name="restart" value="Reboot"/>
-<input type="submit" name="stopbcm" value="Stop sampling"/>
-<input type="submit" name="startbcm" value="Start sampling"/>
-<input type="submit" name="newlog" value="New Logfile"/>
-<input type="submit" name="debug" value="Debug Mode"/>
-<input type="submit" name="editor" value="Script Editor"/>
-<input type="submit" name="update" value="Update Script"/><br/><br />
+<input type="submit" name="stopbcm" value="Stop sampling" class="btn btn-info"/>
+<!--input type="submit" name="startbcm" value="Start sampling" class="btn btn-info"/-->
+<input type="submit" name="newlog" value="New Logfile" class="btn btn-info"/>
+<input type="submit" name="debug" value="Debug Mode" class="btn btn-info"/>
+<input type="submit" name="editor" value="Script Editor" class="btn btn-info"/>
+<input type="submit" name="update" value="Download Update" class="btn btn-info"/>
+<input type="submit" name="shutdown" value="Shutdown" class="btn btn-danger"/>
+<input type="submit" name="restart" value="Reboot" class="btn btn-info"/>
 
 </form>
+<br /><br />
 <h3>Messages</h3>
 <?php
-
+$PID = getPID(); 
 
 if (isset($_GET["editor"])) 
 {
-?>
-<script type="text/javascript">
-window.location = "editor-form.php";
-</script>      
-    <?php
+  ?>
+  <script type="text/javascript">
+  window.location = "editor-form.php";
+  </script>      
+  <?php
+
+
 }
+
+
 if (isset($_GET["shutdown"]))
 {
 
     clearAddressBar();
-    echo "<pre style='text-align:center;'>Shutting down bcMeter. Safe to disconnect Power in 20s</pre><br/>";
+   echo "<script>bootbox.alert('Shutting down, you can turn off power in 20 seconds');</script>";
     $output = shell_exec('sudo shutdown now');
-    sleep(5);
-    echo "<script>window.location.reload()</script>";
+    echo "<script>setTimeout(window.location.reload.bind(window.location), 5000);</script>";
 
 }
 
 if (isset($_GET["restart"]))
 {
 
-    clearAddressBar();
-    echo "<pre style='text-align:center;'>Rebooting bcMeter. Will be back in a Minute.</pre><br/>";
-    sleep(5);
+   echo "<script>bootbox.alert('Rebooting, will be back in a minute or two');</script>";
     clearAddressBar();
     $output = shell_exec('sudo reboot now');
-    echo "<script>window.location.reload()</script>";
+    echo "<script>setTimeout(window.location.reload.bind(window.location), 5000);</script>";
 
 
 }
 
 if (isset($_GET["stopbcm"]))
 {   
-    clearAddressBar();
     $output = shell_exec("sudo kill -9 $PID");
-    sleep(5);
     clearAddressBar();
-    echo "<script>window.location.reload()</script>";
+    echo "<script>setTimeout(window.location.reload.bind(window.location), 5000);</script>";
 }
 
 
 if (isset($_GET["debug"]))
 {   
+   echo "<script>bootbox.alert('Running debug, see results below in \'messages\'');</script>";
     clearAddressBar();
-    $output = shell_exec('sudo python3 /home/pi/bcMeter.py debug 1 5 true');
+    $output = shell_exec('sudo python3 /home/pi/bcMeter.py debug 1 20 true true');
     echo "<pre style='text-align:center;'>$output</pre>";
 }
 
 if (isset($_GET["startbcm"]))
 {
-    echo "<pre style='text-align:center;'>Starting script. Wait approx 2-5 Minutes for the first sample to appear.</pre>";
+   echo "<script>bootbox.alert('Starting new log. Wait 10 Minutes for graph to appear');</script>";
     shell_exec("sudo screen python3 /home/pi/bcMeter.py");
-    sleep(5);
     clearAddressBar();
-    echo "<script>window.location.reload()</script>";
+    echo "<script>setTimeout(window.location.reload.bind(window.location), 5000);</script>";
 }
 
 if (isset($_GET["newlog"]))
 {
 
-    $output1 = nl2br(shell_exec("sudo kill -9 $PID"));
-    echo "<pre style='text-align:center;'><strong>Sent termination. Wait a bit... </strong></pre>";
-    $output2 = nl2br(shell_exec('sudo screen python3 /home/pi/bcMeter.py'));
-    echo "<pre style='text-align:center;'>" . str_replace("\n","<br />",$output1) . " <br />" . str_replace("\n","<br />",$output2) . "</pre>";
+    $output=shell_exec("sudo kill -9 $PID");
+    echo "<pre style='text-align:center;'><strong>$output</strong></pre>";
     sleep(5);
-    clearAddressBar();
-    echo "<script>window.location.reload()</script>";
+    $output=shell_exec('sudo screen -dm python3 /home/pi/bcMeter.py 2>&1');
+    echo "<pre style='text-align:center;'><strong>$output</strong></pre>";
+
+  clearAddressBar();
+  
+    echo "<script>setTimeout(window.location.reload.bind(window.location), 5000);</script>";
 }   
+
+
+if (isset($_GET["saveGraph"]))
+{
+
+echo <<<END
+    <script>var dialog = bootbox.dialog({
+    title: 'Save graph as',
+    message: "<p>Choose the type of file you want to save the current measurements as</p>",
+    size: 'large',
+    buttons: {
+        1: {
+            label: "CSV for Excel",
+            className: 'btn-info',
+            callback: function(){
+                saveCSV();
+
+            }
+        },
+        2: {
+            label: "PNG for web/mail",
+            className: 'btn-info',
+            callback: function(){
+                savePNG();
+
+            }
+        },
+        3: {
+            label: "SVG Vector for Print",
+            className: 'btn-info',
+            callback: function(){
+                saveSVG();
+            }
+        }
+    }
+});;</script>
+
+END;
+
+}
+
+
+
+
+
+
 
 
 if (isset($_GET["update"]))
@@ -990,14 +1053,16 @@ while (!feof($proc))
 
 echo '</pre>';
 
-sleep(5);
 clearAddressBar();
-echo "<script>window.location.reload()</script>";
+    echo "<script>setTimeout(window.location.reload.bind(window.location), 5000);</script>";
 
 
 
 }   
-?>
 
+
+
+?>
+<script>setTimeout(window.location.reload.bind(window.location), 300000);</script>
 </body>
 </html>

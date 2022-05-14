@@ -184,7 +184,7 @@ function getPID()
     $grep = shell_exec('ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
     preg_match_all('!\d+!', $grep, $numbers);
     $PID = $numbers[0][0];
-      $VERSION =  "0.9.6 04.02.2022";
+      $VERSION =  "0.9.7 2022-05-15";
      
       //echo "$grep";
       $STARTED = $numbers[0][8]. ":" . $numbers[0][9];

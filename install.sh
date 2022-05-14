@@ -82,7 +82,7 @@ screen python3 /home/pi/bcMeter.py
 
 fi
 rm -rf /home/pi/bcmeter
-chmod -R 777 /home/pi/
+chmod -R 777 /home/pi/*
 
 read -p "Do you wish to finish configuration by rebooting? " yn
     case $yn in

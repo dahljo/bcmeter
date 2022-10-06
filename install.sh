@@ -17,10 +17,21 @@ if [ "$1" != "update" ]; then
 
 
 echo "Installing software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates and the speed of your pi."
-apt update && apt upgrade -y && apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio python3-numpy nginx php php-fpm php-pear php-common php-cli php-gd screen git && pip3 install gpiozero adafruit-blinka tabulate && systemctl enable zramswap.service  
+apt update && apt upgrade -y && apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio python3-numpy nginx php php-fpm php-pear php-common php-cli php-gd screen git openssl && pip3 install gpiozero adafruit-blinka tabulate && systemctl enable zramswap.service  
 git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter
   
 fi
+
+#mkdir /etc/nginx/certificate
+
+#read -p "Enableing HTTPS - do you want to use our Key (Y) or create your own (N)" yn
+#    case $yn in
+#        [Yy]* ) mv /home/pi/nginx.key /etc/nginx/certificate/nginx.key; break;;
+#        [Nn]* ) openssl req -new -newkey rsa:4096 -x509 -sha256 -days 3650 -nodes -out nginx-certificate.crt -keyout /etc/nginx/certificate/nginx.key;;
+#        * ) echo "Please answer yes or no.";;
+#    esac
+
+
 
 
 mv /home/pi/bcmeter/* /home/pi/

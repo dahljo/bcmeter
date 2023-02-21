@@ -1,0 +1,155 @@
+html, body{
+		font-family: sans-serif;
+		margin: 0px;
+		padding: 0px
+	}
+	svg,
+	.menu {
+		padding: 0 20px;
+		display: inline-block;
+		margin: 0px auto;
+	}
+
+	.menu select {
+		height: 35px;
+		margin: 0px 5px;
+		border-radius: 3px;
+		outline: none;
+		font-size: 15px;
+	}
+
+
+
+	.btn:hover, a:hover {
+		color: #000;
+	}
+
+
+	.menu span a {
+		text-decoration: none !important;
+		color: #000;
+	}
+
+	.y-menu select, #y-menu-min, #y-menu-max{
+		border: solid 2px #1f77b4 !important;;
+	}
+
+	 #logs select{
+		border: solid 2px #ccc !important;;
+	}
+
+	.y-menu2 select, #y-menu2-min, #y-menu2-max {
+		border: solid 2px #ff7f0e !important;
+	}
+	#y-menu-min, #y-menu-max, #y-menu2-min, #y-menu2-max{
+		position: absolute;
+		width: 80px;
+		font-size: 15px;
+		height: 28px;
+		text-align: center;
+	}
+
+	#y-menu-max{
+		 margin-left: 0px;
+		 margin-top: 10px
+	}
+
+	#y-menu-min{
+		 margin-left: 0px;
+		 margin-top: 395px
+	}
+
+	#y-menu2-max{
+		 margin-left: 1070px;
+		 margin-top: 10px
+	}
+
+	#y-menu2-min{
+		margin-left: 1070px;
+		 margin-top: 395px
+	}
+
+
+
+
+	#resetZoom {
+		padding: 5px 15px;
+		margin: 0px 10px;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+		border: 2px solid #ccc;
+		cursor: pointer;
+		color: #000;
+		height: 35px;
+		background-color: #eeebeb;
+		cursor: pointer;
+		border: none!important;
+	}
+	#svg-container{
+		width: 1140px;
+		margin: 0px auto;
+		display: block;
+	}
+		#setRange:hover, #resetZoom:hover {
+
+		border: 1px solid #cfffff !important;
+	}
+
+
+	h3 {
+		text-align: center;
+	}
+
+	path {
+
+		stroke-width: 2;
+		fill: none;
+	}
+
+	.tooltip {
+		padding: 3px;
+		background-color: #ccc;
+		border: 1px solid rgb(175, 175, 175);
+		width: auto;
+		border-radius: 3px;
+		position: absolute;
+		left: 0px;
+		font-size: 11px;
+		display: inline-block;
+		opacity: 0;
+	}
+
+	.selected-time-line {
+		stroke-width: 2;
+		stroke: rgb(168, 167, 167);
+		stroke-linecap: round;
+	}
+
+.nav-pills .nav-link {
+border-radius: .25rem;
+background-color: #eee;
+margin: 5px;
+}
+
+
+text {
+	font-size: 11px;
+	font-weight: bold;
+}
+
+#line-chart .tick line,
+#line-chart .domain {
+	stroke: #eeebeb
+}
+
+#line-chart .domain {
+	stroke: #ddd
+}
+
+#line-chart .x-axis-label,
+#line-chart .y-axis-label,
+#line-chart .y-axis-label2 {
+	font-size: 12px;
+	color: #ccc;
+	font-weight: 200;
+
+}

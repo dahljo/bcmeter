@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 os.chdir('/home/pi')
-
 import sys
 import smbus
 import time, traceback
@@ -21,9 +20,15 @@ from board import SCL, SDA, I2C
 from time import sleep, strftime, time
 from datetime import datetime
 from threading import Thread
-from gpiozero import Button
-from bcMeterConf import *
 import socket
+import importlib
+import bcMeterConf
+
+
+compair_upload = bcMeterConf.compair_upload 
+
+if (compair_upload is True):
+	import compair_data_upload
 
 MCP3426_DEFAULT_ADDRESS = 0x68
 i2c = busio.I2C(SCL, SDA)
@@ -33,13 +38,18 @@ sigma_air_880nm = 0.0000000777
 run_once = "false"
 no_bias = "false"
 devicename = socket.gethostname()
-
 useTemp = "DS"
+#pwm for pump:
+GPIO.setup(12,GPIO.OUT)           # initialize as an output.
+#using switch to adjust air volume
+GPIO.setup(16, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+pump_duty = GPIO.PWM(12,10)         #GPIO12 as PWM output, with 10Hz frequency
 
 #uncomment for BMP Temperature Sensor:
 if useTemp == "BMP":
-	import Python_BMP.BMP085 as BMP085 #uncomment for use with  temperature sensor 
-	bmp = BMP085.BMP085() #uncomment for use with  temperature sensor 
+	import Python_BMP.BMP085 as BMP085
+	bmp = BMP085.BMP085() 
 
 if useTemp == "DHT":
 	import MyPyDHT
@@ -54,13 +64,12 @@ if useTemp == "DHT":
 
 
 sample_spot_areasize=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 0.50cm
-volume_air_per_minute=(sample_time/60)*airflow_per_minute #liters of air between samples	
 debug = False #no need to change here
 
 POWERPIN = 26
 BUTTON = 16
 
-ver = "bcMeter A/DC evaluation script v 0.9.8 2022-09-29"
+ver = "bcMeter A/DC evaluation script v 0.9.18 2023-02-21"
 
 
 class TemperatureSensor:
@@ -72,7 +81,7 @@ class TemperatureSensor:
 		GPIO.setup(channel, GPIO.IN)
 		GPIO.setup(1,GPIO.OUT)
 		GPIO.setup(23,GPIO.OUT)
-
+		
 	#def __del__(self):
 		#GPIO.cleanup()
 
@@ -355,11 +364,10 @@ class ADCPi:
 
 def sample_raw_values(sample_channel_number):
 	
-	#adc.set_pga(4)
-	#adc.set_bit_rate(12)
+
 	raw_data = adc.read_voltage(sample_channel_number)*10000
 	#sleep(0.1)
-	#if (debug == True): print(sample_channel_number, str(int(rawData)))
+	if (debug == True): print(sample_channel_number, str(int(raw_data)))
 	return raw_data
 
 
@@ -375,12 +383,40 @@ def read_channel_raw_value(sample_channel_number,sample_count):
 	sampledDataSum +=sampledData
 	return int(sampledData)
 
+def get_location():
+	import json
+	import requests 
+	my_ip = requests.get('https://api.ipify.org').text
+	my_loc = requests.get('https://ipinfo.io/'+my_ip).text
+	my_loc = json.loads(my_loc)
+	my_lat =  float(my_loc['loc'].split(',')[0])
+	my_lon = float(my_loc['loc'].split(',')[1])
+	print(my_lat, my_lon)
+	return [my_lat,my_lon]
+
+
+def check_connection():
+	current_time = 0
+	while current_time < 5:
+		try:
+			socket.setdefaulttimeout(3)
+			socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+			return True
+		except Exception:
+			current_time += 1
+			time.sleep(1)
+
+
 def startUp():
+
+	
 	global MCP3426_DEFAULT_ADDRESS, sample_time, sample_count, run_once, debug, no_bias
 	cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3']
 	process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, 
 	stderr=subprocess.PIPE)
 	my_pid, err = process.communicate()
+
+	pump_duty.start(bcMeterConf.pump_dutycycle)     #generate PWM signal for pump
 	if len(my_pid.splitlines()) > 1:
 		sys.stdout.write("bcMeter Script already running.\n" + str(my_pid.splitlines())+"\n")
 		sys.exit(1)
@@ -400,6 +436,8 @@ def startUp():
 					MCP3426_DEFAULT_ADDRESS = 0x68
 				elif (hex(device) == "0x6a"):
 					MCP3426_DEFAULT_ADDRESS = 0x6a
+				elif (hex(device) == "0x6d"):
+					MCP3426_DEFAULT_ADDRESS = 0x6d
 			except: # exception if read_byte fails
 				pass
 		if (debug == True):
@@ -432,18 +470,29 @@ def get_sensor_values(sample_count):
 	reference_sensor_value=round(reference_sensor_value/(sample_count-threshold),0)
 	main_sensor_value=round(main_sensor_value/(sample_count-threshold),0)
 	GPIO.output(POWERPIN, 0) 
+	if bcMeterConf.swap_channels is True:
+		return reference_sensor_value, main_sensor_value
 	return main_sensor_value, reference_sensor_value
 
 
 
 adc = ADCPi(bus, MCP3426_DEFAULT_ADDRESS, 14)
 
-def pressed():
-	#start / stop measuring, reboot, etc. - to be implemented
-	sleep(0.2)
+def button_pressed():
+	input_state = GPIO.input(16)
+	if input_state == False:
+		if (bcMeterConf.pump_dutycycle<=100) and (increase_duty  == True):
+			bcMeterConf.pump_dutycycle+=5
+		else:
+			bcMeterConf.pump_dutycycle-=5
+		if (bcMeterConf.pump_dutycycle == 100):
+			increase_duty=False
+		if (bcMeterConf.pump_dutycycle==0):
+			increase_duty=True
+		pump_duty.ChangeDutyCycle(bcMeterConf.pump_dutycycle)               #change duty cycle for varying the brightness of LED.
+		time.sleep(0.1)
+		print(bcMeterConf.pump_dutycycle)
 
-sw1 = Button(BUTTON)
-sw1.when_pressed = pressed
 
 
 def createLog(log,header):
@@ -458,10 +507,13 @@ def createLog(log,header):
 
 
 def bcmeter_main():
+	bcMeter_location = bcMeterConf.location
+	filter_status = 0
+	first_value = True
 	samples_taken = 0
-	delay=reference_sensor_value=reference_sensor_bias=main_sensor_bias=bcmRefFallback=bcmSenRef=bcmRef=reference_sensor_value_current=main_sensor_value_current=main_sensor_value_last_run=attenuation_last_run=BCngm3=BCngm3pos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=temperature_current=bcmTemperatureOld=attenuation_coeff=absorption_coeff=0
+	delay=reference_sensor_value=reference_sensor_bias=main_sensor_bias=bcmRefFallback=bcmSenRef=reference_sensor_value_current=main_sensor_value_current=main_sensor_value_last_run=attenuation_last_run=BCngm3=BCngm3pos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=temperature_current=bcm_temperature_last_run=attenuation_coeff=absorption_coeff=0
 	flag = ""
-	calibrated = bcmSen = absorb = main_sensor_value = attenuation = attenuation_current = relative_load_of_bc = 0.0000
+	calibrated = absorb = main_sensor_value = attenuation = attenuation_current = 0.0000
 	today = str(datetime.now().strftime("%y-%m-%d"))
 	now = str(datetime.now().strftime("%H:%M:%S"))
 	logFileName =(str(today) + "_" + str(now) + ".csv").replace(':','')
@@ -469,21 +521,34 @@ def bcmeter_main():
 	if (debug == False):
 		print(today, now, ver, "STARTED NEW LOG", logFileName)
 		createLog(logFileName,header)
-		logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(relative_load_of_bc) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
-		with open("/home/pi/logs/log_current.csv", "a") as temporary_log: #logfile for web interface. will be deleted every time a new measurement starts
-			temporary_log.write(logString+"\n")
+		logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
 	else:
 		print(today, now + " - happy debugging\nwhen device case is closed, sen & ref should be over 4000 and both bias close to 0")
 
+	internet_available = check_connection()
+	if (internet_available  is True) and (bcMeterConf.get_location is True):
+		location = get_location()
+		if not 'location' in open('bcMeterConf.py').read():
+			with open('bcMeterConf.py', 'a') as f:
+				f.write("location=" + str(location) + "#Location of the bcMeter. Keep syntax exactly like that [lat,lon] ")
+		else:
+			with open('bcMeterConf.py', 'r') as f:
+				lines = f.readlines()
+			for i, line in enumerate(lines):
+				if line.startswith('location'):
+					lines[i] = "location=" + str(location) + "#Location of the bcMeter. Keep syntax exactly like that [lat,lon] "
+			with open('bcMeterConf.py', 'w') as f:
+				f.writelines(lines)
+	print("using lat lon", bcMeter_location)
+
 	while(True):
 		if (debug == False):
+			volume_air_per_minute=(bcMeterConf.sample_time/60)*bcMeterConf.airflow_per_minute #liters of air between samples	
 			with open("/home/pi/logs/" + logFileName, "a") as log:
 				samples_taken+=1
-				if (samples_taken==1):
-					log.write(logString+"\n")
 				start = time()
-				threshold = sample_count/10
-				sensor_values=get_sensor_values(sample_count)
+				threshold = bcMeterConf.sample_count/10
+				sensor_values=get_sensor_values(bcMeterConf.sample_count)
 				main_sensor_value = sensor_values[0]
 				reference_sensor_value = sensor_values[1]
 				main_sensor_bias = read_channel_raw_value(1,1)
@@ -496,64 +561,83 @@ def bcmeter_main():
 					temperature_current = 1
 				if (reference_sensor_value_current == 0): reference_sensor_value_current = 1 #avoid later divide by 0; just for debug
 				if (main_sensor_value_current == 0): main_sensor_value_current = 1#avoid later divide by 0; just for debug
-				if (reference_sensor_value_current < 100) and (bcmRefFallback == 1): #when there is no reference signal, use first sensor signal as reference fallback. suitable for stable environments
-					bcmRefFallback = main_sensor_value_current
-					flag=flag+"RefFallback-"
-				if (reference_sensor_value_current < 100) and (bcmRefFallback > 100):
-					reference_sensor_value_current = bcmRefFallback
-					flag=flag+"noRef-"
-				if (bcmRefFallback < main_sensor_value_current):
-					bcmRefFallback=reference_sensor_value_current
-					flag=flag+"SetNewRef-"
-				if (main_sensor_value_current < 1000): flag="LED/PAPER-" 
-				if (main_sensor_value_last_run==1): main_sensor_value_last_run = main_sensor_value_current
-				if (abs(bcmTemperatureOld-temperature_current) > .5): flag = flag + "tempChange-"
+				if (samples_taken == 1) and (reference_sensor_value_current > 8000):
+					if ((main_sensor_value_current) > 8000):
+						filter_status = 5
+					elif (6000 < main_sensor_value_current < 8000):
+						filter_status = 4
+					elif (4000 < main_sensor_value_current < 6000):
+						filter_status = 3
+					elif (4000 < main_sensor_value_current < 6000):
+						filter_status = 2
+					elif (2000 < main_sensor_value_current < 4000):
+						filter_status = 1
+					elif (2000 < main_sensor_value_current < 4000):
+						filter_status = 0
+				if (abs(bcm_temperature_last_run-temperature_current) > .5): flag = flag + "tempChange-"
 				attenuation_current=round((numpy.log(main_sensor_value_current/reference_sensor_value_current)*-100),5)
-				if (numpy.isnan(attenuation_current) == True):
-					attenuation_current = attenuation_last_run
-					flag=flag+"noATN"
-				if (attenuation_last_run == 1):
+				atn_peak = False
+				if (attenuation_last_run != 0) and (samples_taken>1):
+					peakdetection = 1 - abs((attenuation_last_run/attenuation_current))
+					if peakdetection > 0.015:
+						atn_peak = True
+						flag = flag + "PEAK"
+				if (attenuation_last_run == 0):
 					attenuation_last_run = attenuation_current
 				delay = time() - start
 				if (samples_taken<3):
-					volume_air_per_minute=(delay/60)*airflow_per_minute #liters of air between samples	
+					volume_air_per_minute=(delay/60)*bcMeterConf.airflow_per_minute #liters of air between samples	
 				else:
-					volume_air_per_minute=(sample_time/60)*airflow_per_minute #liters of air between samples	
-				attenuation_coeff = sample_spot_areasize*((attenuation_current-attenuation_last_run)/100)/volume_air_per_minute	
-				absorption_coeff = attenuation_coeff/filter_scattering_factor
-				BCngm3 = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
-				logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(relative_load_of_bc) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
-				if (samples_taken >2):
-					log.write(logString+"\n")
-					with open("/home/pi/logs/log_current.csv", "a") as temporary_log: #logfile for web interface. will be deleted every time a new measurement starts
-						temporary_log.write(logString+"\n")
-
+					volume_air_per_minute=(bcMeterConf.sample_time/60)*bcMeterConf.airflow_per_minute #liters of air between samples	
+				if (atn_peak is False):
+					attenuation_coeff = sample_spot_areasize*((attenuation_current-attenuation_last_run)/100)/volume_air_per_minute	
+				else:
+					attenuation_coeff = 0
+				absorption_coeff = attenuation_coeff/bcMeterConf.filter_scattering_factor
+				BCngm3 = int((absorption_coeff / sigma_air_880nm)*bcMeterConf.device_specific_correction_factor) #bc nanograms per m3
+				if (abs(BCngm3)>50000):
+					flag =flag+"toHighBC"
+				logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
+				log.write(logString+"\n")
+				if (compair_upload == True) and (samples_taken > 2):
+					#print("uploading to CompAir Cloud",BCngm3,attenuation_current,main_sensor_value_current,reference_sensor_value_current,temperature_current, bcMeter_location, filter_status)
+					compair_data_upload.upload_sample(BCngm3,attenuation_current,main_sensor_value_current,reference_sensor_value_current,temperature_current, bcMeter_location, filter_status)
 				flag=""
 				main_sensor_value_last_run=main_sensor_value_current 
 				attenuation_last_run=attenuation_current
-				bcmTemperatureOld = temperature_current
+				bcm_temperature_last_run = temperature_current
+				atn_peak = False
 
 				flag=""
 				if (debug == True):
 					print("sen; " + str(round(main_sensor_value,3)) +"; ref; " + str(round(reference_sensor_value,3)) + "; senbias; " + str(round(main_sensor_bias,3)) + "; refbias; "+ str(round(reference_sensor_bias,3)) + "; sample_time; "+ str(round(delay,2)) )
+			if (samples_taken == 2):
+				lines = open("/home/pi/logs/" + logFileName).readlines()
+				lines.pop(2)
+				with open("/home/pi/logs/" + logFileName, "w") as f:
+					#write each line back to the file
+					for line in lines:
+						f.write(line)
+			os.popen("cp /home/pi/logs/" + logFileName + " /home/pi/logs/log_current.csv")
+
 			if (run_once == "true"): 
 				print("cycle of " + str(sample_count) + " took " + str(round(delay,2)) + " seconds")
 				print("exiting debug mode")
 				GPIO.output(POWERPIN, 0)
 				sys.exit(1)
-			if (debug == False) and (samples_taken>2): #output in terminal
+			if (debug == False) and (reference_sensor_value_current !=0) and (main_sensor_value !=0): #output in terminal
 				with open('logs/log_current.csv','r') as csv_file:
-					os.system('clear')
+					#os.system('clear')
 					print(today, now, ver, logFileName)
 					headers=[]
 					with open('logs/log_current.csv','r') as csv_file:
 						csv_reader = list(csv.reader(csv_file, delimiter=';'))
 						print(tabulate(csv_reader, headers, tablefmt="fancy_grid"))
 						print("Exit script with ctrl+c")
-				if ((sample_time)-delay <= 0):
-					sleep(sample_time)
+				if ((bcMeterConf.sample_time)-delay <= 0):
+					sleep(bcMeterConf.sample_time)
 				else:
-					sleep((sample_time)-delay)
+					sleep((bcMeterConf.sample_time)-delay)
 
 			
 		else: #debug mode
@@ -580,33 +664,44 @@ def bcmeter_main():
 			if (run_once == "true"): 
 				print("cycle of " + str(sample_count) + " took " + str(round(delay,2)) + " seconds")
 				print("exiting debug mode")
-				GPIO.output(POWERPIN, 0)
+				GPIO.output(POWERPIN, False)
+				GPIO.output(1,False)
+				GPIO.output(23,False)
 				sys.exit(1)
 
 
 def keep_the_temperature():			
 	if (len(glob.glob('/sys/bus/w1/devices/28*')) > 0):
-		temperature_to_keep = 30
+		temperature_to_keep = 35
 		while (True):
+			#sneak in pwm adjustment for pump because we dont want do have on thread just for that
+			importlib.reload(bcMeterConf)
+			pump_duty.ChangeDutyCycle(bcMeterConf.pump_dutycycle) 
+			#keep going with the temperature 
 			temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
-			if (temperature_to_keep > 45):
-				temperature_to_keep = 45
-				print("adjusted temperature to keep to its max value of 45")
-			if (temperature_to_keep - temperature_current > 10):
-				temperature_to_keep = temperature_current + 10
-				print("adjusted temperature to keep to ", temperature_to_keep)
+			if ((temperature_to_keep - temperature_current) > 10):
+				if (temperature_to_keep > 10):
+					temperature_to_keep = temperature_current - 5
+				GPIO.output(1,True)
+				GPIO.output(23,True)
+				print("adjusted temperature to keep to  ", temperature_to_keep)
 			
-
 			if temperature_current < temperature_to_keep:
 				GPIO.output(1,True)
 				GPIO.output(23,True)
 				#print(temperature, "current, heating up to", temperature_to_keep)
-			else:
-				if (temperature_current > temperature_to_keep+2):
-					temperature_to_keep = temperature_current+5
-					print("adjusted temperature to keep to ", temperature_to_keep)
+
+			if (temperature_current >(temperature_to_keep+1)):
+				if (temperature_to_keep < 40):
+					temperature_to_keep = temperature_current+1
 				GPIO.output(1,False)
 				GPIO.output(23,False)
+				print("adjusted temperature to keep to ", temperature_to_keep)
+
+			if ((temperature_to_keep - temperature_current)<0):
+				GPIO.output(1,False)
+				GPIO.output(23,False)
+
 			sleep(5)
 
 
@@ -618,12 +713,16 @@ if __name__ == '__main__':
 		heating_thread = Thread(target=keep_the_temperature)
 
 		sampling_thread.start()
-		heating_thread.start()
+		if (debug is False):
+			heating_thread.start()
 
 	except KeyboardInterrupt: 
 		print("\nWhen ready again, you may restart the script with 'python3 bcMeter.py' or just reboot the device itself")
 		GPIO.output(POWERPIN, False)
 		GPIO.output(1,False)
 		GPIO.output(23,False)
+		pump_duty.ChangeDutyCycle(0) 
+		sleep(0.1) #sometimes the dutycycle is not transmitted early
+
 		pass
 

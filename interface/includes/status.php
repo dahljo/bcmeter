@@ -13,25 +13,13 @@
 </style>
 
 <body>
-  <a href="" id="download" style="display: none;"></a>
-
-
-
-
-
-<a hreg="../"><img src="bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/></a>
-  <script src="js/d3.min.js"></script>
-  <script src="js/jquery-3.6.0.min.js"></script>
-  <script src="js/bootstrap.min.js"></script>
-  <script src="js/bootbox.min.js"></script>
-
-
-
+<a href="../index.php"><img src="../bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/></a>
+  <script src="../js/d3.min.js"></script>
+  <script src="../js/jquery-3.6.0.min.js"></script>
+  <script src="../js/bootstrap.min.js"></script>
+  <script src="../js/bootbox.min.js"></script>
 <h3 style="text-align: center">
-
 <?php
-
-$PID = getPID(); 
 
 function getPID()
 {
@@ -54,14 +42,37 @@ function getPID()
 }
 
 
-	  
 	if (isset($_GET['status'])) {
 		$status = $_GET['status'];
 	}
 	switch($status) {
+
+case 'deleteOld':
+
+$files = glob('../../logs/*.csv'); 
+
+//sort files by date, newest first
+array_multisort(
+    array_map( 'filemtime', $files ),
+    SORT_NUMERIC,
+    SORT_DESC,
+    $files
+);
+
+$files = array_slice($files, 0, 2);
+
+//delete all other files
+foreach (array_diff(glob('../../logs/*.csv'), $files) as $file) {
+    unlink($file);
+}
+
+echo "<pre style='text-align:center'><h2>Successfully deleted old logs</h2>Returning to Interface in a few seconds or click <a href='/interface/index.php'>here</a></pre>";
+      echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
+break;
+
 	 case 'reboot':
       echo "bcMeter will now reboot and is back online in a minute. <br />You may keep this page open for automatic reload.<br /><br /><pre>";
-      echo "</pre><script>setTimeout(function(){window.location.replace('index.php');}, 60000);</script>";
+      echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 60000);</script>";
       $cmd = 'sudo reboot now';
         while (@ ob_end_flush()); // end all output buffers if any
         $proc = popen($cmd, 'r');
@@ -103,7 +114,7 @@ function getPID()
  case 'update':
       echo "bcMeter will now update<br /><br /><pre>";
 
-       shell_exec("sudo kill -9 $PID");
+       shell_exec("sudo kill -SIGINT $PID");
 
         while (@ ob_end_flush()); // end all output buffers if any
       $cmd = 'cd /home/pi && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P /home/pi/ && sudo bash /home/pi/install.sh update' ;

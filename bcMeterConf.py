@@ -1,6 +1,11 @@
-#parameters for calculation of bc
-sample_time=300 #time in seconds between samples. always keep above the necessary time to take the samples (1000 samples in 35 seconds)
-sample_count = 2000 #datapoints to sample and use their average. 
-airflow_per_minute=0.63 #airflow_per_minute per minute in liter
-filter_scattering_factor = 1.3 #filter specific scattering for black carbon. 1.3 for magee ae33, 1.66 for pallflex t60a20 in aethlabs maeth51
-device_specific_correction_factor = 0.5 #device specific calibration factor (mismatching spotarea size, length of tube).
+run_hotspot =False#False: Do turn off Hotspot mode after 10 Minutes. True: Keep it running when no WiFi will be available 
+sample_time=300 #Time in seconds between to samples. 
+sample_count = 7000 #This many samples are take for each datapoint. 
+airflow_per_minute=0.150 #Airflow per minute (in liter!)
+filter_scattering_factor = 1.3 #Scattering of FIlter. 1.3 for magee ae33, 1.66 for pallflex t60a20 in aethlabs maeth51
+device_specific_correction_factor = 1 #Use a tube? Correct it here. 
+pump_dutycycle=22 #Power 0-100 for the pump
+swap_channels =False#True: if sen and ref were mixed during manufacturing (This will of course never happen)
+compair_upload =False#True: Upload Data to CompAIR and help a globale citizen science network. Needs coordinates.
+get_location =False#True:Automatic rough lookup based on your IP on NEXT measurement. False: Enter Manually below.
+location=[00.0000, 00.0000]#Location of the bcMeter. Keep syntax exactly like that [lat,lon] and keep above value to False

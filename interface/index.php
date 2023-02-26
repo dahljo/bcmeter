@@ -39,16 +39,16 @@ function getPID()
 		$numbers = preg_replace('/^\s+| python3 \/home\/pi\/bcMeter.py/', "", $grep);
 		$numbers = explode(" ", $numbers);
 		$PID = $numbers[0];
-			$VERSION =  "0.9.18 2023-02-21";
+			$VERSION =  "0.9.19 2023-02-26";
 			$STARTED = implode(" ", array_slice($numbers,1));
       $DEVICETIME = shell_exec('date');
-      echo "<pre style='text-align:center;'>Current time set on device: $DEVICETIME </pre>";
+      echo "<div style='text-align:center;'>Current time set on device: $DEVICETIME </div>";
 			if (!isset($grep))
 			{
-					echo "<pre style='text-align:center;'>bcMeter stopped.<br/></pre>";
+					echo "<div style='text-align:center;'>bcMeter stopped.<br/></div>";
 			}
 			else {
-					 echo "<pre style='text-align:center;'>Current Log running with PID $PID since $STARTED <br /> v$VERSION </pre>";
+					 echo "<div style='text-align:center;'>Current Log running with PID $PID since $STARTED <br /> v$VERSION </div>";
 			}
 		return $PID;
 }
@@ -56,8 +56,58 @@ function getPID()
 ?>
 
 <img src="bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/>
+
+<!-- Bootstrap Layout -->
+<div class="container">
+  <div class="row">
+    <div class="col-sm-12">
+        <?php
+      $output = exec('ps -A | grep -i hostapd');
+ 
+// Check if the command returned any output
+        echo "<div class='alert alert-"; 
+
+
+         $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
+                   if(!isset($grep)){echo "warning'";}
+          else {echo "success'";} 
+          echo " role='alert'>";
+          $numbers = preg_replace('/^\s+| python3 \/home\/pi\/bcMeter.py/', "", $grep);
+          $numbers = explode(" ", $numbers);
+          $PID = $numbers[0];
+          $DEVICETIME = shell_exec('date');
+          $STARTED = implode(" ", array_slice($numbers,1));
+       if (!isset($grep))
+      {
+          echo "<div style='text-align:center;'>bcMeter stopped.<br/></div>";
+          if(!empty($output)) {
+                  echo "<div style='text-align:center;' id='devicetime'></div>";
+                ?><div style="text-align: center";>
+                <form method="POST">
+                  <input type="hidden" id="set_time" name="set_time" value="">
+                  <input type="submit" value="Set clock on bcMeter to your time" class="btn btn-primary" >
+                </form>
+              </div>
+              <?php
+                                   echo "<div style='text-align:center;'><strong>You're currently in Hotspot mode! Device may turn off soon, check Parameters for continous Hotspot Operation or setup WiFi below!</strong></div>";
+
+              }
+
+      }
+      else {
+           echo "<div style='text-align:center;'>Sampling since $STARTED</div>";
+                     if(!empty($output)) {
+                     echo "<div style='text-align:center;'><strong>You're currently in Hotspot mode! Device may turn off soon, check Parameters for continous Hotspot Operation or setup WiFi below!</strong></div>";
+                     }
+      }
+      ?>
+      </div>
+    </div>
+  </div>
+</div>
+
   <div id="report-value" style="text-align: center;"></div><br /><br />
-<div style="text-align: center"> Filter: <button type="button" class="btn btn-secondary" id="report-button"></button></div><br />
+<div style="text-align: center"> Filter: <button type="button" class="btn btn-btn-white" id="report-button"></button></div><br />
 
 	 <!-- CONTAINER FOR DROP DOWN MENU -->
 	<div class="menu" style="display: block; text-align: center;">
@@ -154,7 +204,7 @@ function getPID()
       updateCurrentLogs;
 
     /* CONSTANTS */
-    const noData ="<div class='alert alert-warning' role='alert'Graph will appear after measuring 15 Minutes.</div>";
+    const noData ="<div class='alert alert-warning' role='alert'>Not enough data yet. Graph will appear 15 Minutes after start.</div>";
     const svg = d3.select("svg");
     const width = +svg.attr("width");
     const height = +svg.attr("height");
@@ -529,17 +579,12 @@ function getPID()
       data = dataObj[current_file];
       if(data) {
         let len = data.length - 1;
-          render()
+        render()
         document.getElementById("report-value").innerHTML = `<h4>
         ${data[len]["BCngm3"].toFixed(0)} ng/m<sup>3</sup><sub>current</sub> » 
         ${d3.mean([...data].splice(len-12, 12), BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avg60</sub> » 
         ${d3.mean(data, BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avgALL</sub></h4>`;
-          }
-      else {
-        let len=0;
-        document.getElementById("report-value").innerHTML = (noData);
-       }
-      
+      }
 
       if (current_file == 'log_current.csv') {
         updateCurrentLogsFunction()
@@ -610,12 +655,9 @@ data
           if (result == true) { 
 
               let len = data.length - 1;
-              if (len <= 0) {
-                console.log("a");
-                document.getElementById("report-value").innerHTML = (noData);
-              }
-              else {
-              document.getElementById("report-value").innerHTML = `<h4>
+
+              if (len>0) {
+                document.getElementById("report-value").innerHTML = `<h4>
                 ${data[len]["BCngm3"].toFixed(0)} ng/m<sup>3</sup><sub>current</sub> » 
                 ${d3.mean([...data].splice(len-12, 12), BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avg60</sub> » 
                 ${d3.mean(data, BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avgALL</sub></h4>`;
@@ -624,7 +666,6 @@ data
                 let btn = document.getElementById("report-button");
                 if (bcmSen == 0){
                   if (bcmRef == 0) {
-                    let btn = document.getElementById("report-button");
                     btn.className = "btn btn-white";
 
                   }
@@ -644,15 +685,16 @@ data
                   }
                 }
                 }
+              if (len<0) {
+                document.getElementById("report-value").innerHTML = `<h4>Not enough data for graph/averages. Will appear after 15 Minutes after starting.</h4>`;
+              }
+}
 
 
-
-          }
+          
 
 
     
-
-
 
         data.map((d, i) => {
           if (i < 4 || i > data.length - 3) {
@@ -674,6 +716,9 @@ data
           dataObj[file.split("/")[2]] = data
           combineLogs.push(d)
         }
+
+
+
         })
 
   
@@ -796,9 +841,7 @@ data
   <li class="nav-item">
     <a class="nav-link" id="pills-admin-tab" data-toggle="pill" href="#pills-admin" role="tab" aria-controls="pills-admin" aria-selected="false">Administration</a>
   </li>
-  <li class="nav-item">
-    <a class="nav-link" id="pills-syslog-tab" data-toggle="pill" href="#pills-syslog" role="tab" aria-controls="pills-syslog" aria-selected="false">System Log</a>
-  </li>
+
     
 </ul>
 <div class="tab-content" id="pills-tabContent">
@@ -807,6 +850,9 @@ data
       <form style="display: block; text-align:center;" method="post">
               <input type="submit" name="newlog" value="New log" class="btn btn-info"/>  
               <input type="submit" name="stopbcm" value="Stop" class="btn btn-info"/>
+          <button type="button" class="btn btn-warning" data-toggle="modal" data-target="#wifisetup">
+            Add/Change WiFi
+          </button>
               <input type="submit" name="saveGraph" value="Save Log" class="btn btn-secondary bootbox-accept"/>
 
             <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#downloadOld">
@@ -868,9 +914,7 @@ data
 
 
 
-          <input type="submit" name="deleteOld" value="Delete old logs" class="btn btn-dark"/>
-
-                    <input type="submit" name="shutdown" value="Turn off" class="btn btn-danger"/>
+          
 
         </form>
         </div>
@@ -878,33 +922,28 @@ data
     
           <form style="display: block; text-align:center;" method="post">
 
-          <input type="hidden" name="randcheck" />
-            <button type="button" class="btn btn-info" data-toggle="modal" data-target="#editdate">
-              Change time and date
-           </button>
-
-          <input type="submit" name="restart" value="Reboot" class="btn btn-info"/>
-          <button type="button" class="btn btn-info" data-toggle="modal" data-target="#wifisetup">
-            Add/Change WiFi
-          </button>
-
-
-          <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#editparameters">
+          <button type="button" class="btn btn-info" data-toggle="modal" data-target="#editparameters">
             Edit parameters
           </button>
-          <input type="submit" name="debug" value="Debug Mode" class="btn btn-secondary"/><br />
-          <input type="submit" name="update" value="Update bcMeter" class="btn btn-warning"/>
+          <input type="hidden" name="randcheck" />
+            <!--button type="button" class="btn btn-info" data-toggle="modal" data-target="#editdate">
+              Set clock on bcMeter
+           </button-->
+
+
+          <input type="submit" name="deleteOld" value="Delete old logs" class="btn btn-secondary"/>
+
+
+          <input type="submit" name="restart" value="Reboot" class="btn btn-secondary"/>
+
+          <input type="submit" name="update" value="Update bcMeter" class="btn btn-secondary"/>
+          <input type="submit" name="shutdown" value="Shutdown" class="btn btn-danger"/>
+
           </form>
 
 
   </div>
-  <div class="tab-pane fade" id="pills-syslog" role="tabpanel" aria-labelledby="pills-syslog-tab">
-    
-<?php
-$PID = getPID(); 
-  ?>
-
-  </div>
+  
 
 </div>
 
@@ -955,9 +994,9 @@ $PID = getPID();
                       <table class="table table-bordered">
                           <thead>
                               <tr>
-                                  <th scope="col" style="width: 70%;">Description</th>
+                                  <th scope="col" style="width: 60%;">Description</th>
                                   <th scope="col" style="width: 20%;">Value</th>
-                                  <th scope="col">Name of Variable</th>
+                                  <th scope="col" style="width: 20%;">Name of Variable</th>
                               </tr>
                           </thead>
                           <tbody>
@@ -985,7 +1024,7 @@ $PID = getPID();
                                 if ($skipline==0) {
                               ?>
                               <tr>
-                                  <td><input type="text" class="form-control" name="comment[]" value="<?php echo $comment; ?>"></td>
+                                  <td><input type="text" class="form-control" name="comment[]" value="<?php echo $comment; ?>" readonly></td>
 
                                   <?php if ($value == 'True' || $value == 'False') { ?>
                                     <td>
@@ -1060,12 +1099,17 @@ $PID = getPID();
                           var timestamp = (date.getTime()/1000).toFixed(0);
                           var currentDateTime = date.toLocaleString('default', { month: 'short' }) + " " + date.getDate() + " " + date.getFullYear() + " " + date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
                           document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + currentDateTime;
+                           document.getElementById("set_time").value = timestamp;
                            $.ajax({
                             url:"includes/gettime.php",    //the page containing php script
                             type: "post",    //request type,
                             data: {datetime: "now"},
                             success:function(result){
                                document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + result;
+                               if( document.getElementById("devicetime") ) {
+
+                                 document.getElementById("devicetime").innerHTML = "Time on bcMeter: " + result;
+                              }
                             }
                         });
                         }, 1000);
@@ -1078,8 +1122,8 @@ $PID = getPID();
                      <p style="text-align: center;"> If both times are not matching, set the time of your browser to be the time of the bcmMeter now. </p>
                       <pre style='text-align:center;' id='datetime_device'></pre>
                        <pre style='text-align:center;' id='datetime_local'></pre>
-                      <form action="" method="POST">
-                        <input type="hidden" name="set_time" value="<?php echo $timestamp ?>">
+                      <form method="POST">
+                        <input type="hidden" id="set_time" name="set_time" value="">
                         <input type="submit" value="Set Time" class="btn btn-info btn-block" >
                       </form>
         
@@ -1172,6 +1216,8 @@ $PID = getPID();
                           file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
                           
                           $credsUpdated=true;
+
+                          echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
                         }
 
                         // check for existing wifi credentials
@@ -1180,7 +1226,16 @@ $PID = getPID();
                         $currentWifiPwd=$data["wifi_pwd"];
                         $currentWifiPwdHidden=str_repeat("•", strlen($currentWifiPwd));
 
-                     
+                         if (isset($_POST['reset_wifi_json'])) {
+                        $wifiFile='/home/pi/bcMeter_wifi.json';
+                          $wifi_ssid = "";
+                           $wifi_pwd ="";
+                         $data = array("wifi_ssid"=>$wifi_ssid, "wifi_pwd"=>$wifi_pwd);
+                          file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
+                          echo "<script>setTimeout(window.location.reload.bind(window.location), 3000);</script>";
+
+                      }
+
                         $sendBackground=false;
 
                         // send interrupt to bcMeter_ap_control_loop service and try to connect to the wifi network
@@ -1335,7 +1390,9 @@ $PID = getPID();
                                     <div class="submit-container">
                                       <input type="Submit" name="conn_submit" value="<?php echo $language["save_and_connect"]; ?>" class="btn btn-primary">
                                       <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                                       <input type="Submit" name="reset_wifi_json" value="Delete Wifi" class="btn btn-warning">
                                     </div>
+                                    It takes a minute or two for the bcMeter to connect to new wifi. 
                                   </form>
                                 </div> <!-- end entering-the-connection-info -->
                               </div>  <!-- tab-wifi -->
@@ -1396,19 +1453,22 @@ javascript;
 
 
 
-
-
-
-if (isset($_POST["set_time"])) 
+if (isset($_POST["set_time"]))
 {
-    shell_exec('sudo date -s @' . $_POST["set_time"]);
+
+  $set_timestamp_to = $_POST['set_time'];
+
+echo("<script>window.location.href='includes/status.php?status=timestamp&timestamp=$set_timestamp_to'</script>");
+
 }
 
 
-if (isset($_POST["reloadpage"]))
-{
-		echo "<script>setTimeout(window.location.reload.bind(window.location), 100);</script>";
-}
+
+
+
+
+
+
 
 
 if (isset($_POST["shutdown"]))
@@ -1579,7 +1639,7 @@ if (isset($_POST["exec_debug"]))
 
 if (isset($_POST["startbcm"]))
 {
-	 echo "<script>bootbox.alert('Starting new log. Wait 10 Minutes for graph to appear');</script>";
+	 echo "<script>bootbox.alert('Starting new log. Wait 15 Minutes for graph to appear');</script>";
 		shell_exec("sudo screen python3 /home/pi/bcMeter.py");
 		clearAddressBar();
 		echo "<script>setTimeout(window.location.reload.bind(window.location), 30000);</script>";
@@ -1592,7 +1652,7 @@ echo <<<JS
 <script>
 var dialog = bootbox.dialog({
 		title: 'Start new log?',
-		message: "<p>This will start a new log. It may take a few minutes for the new chart to appear. If it doesnt, manually reload the page. </p>",
+		message: "<p>This will start a new log. It takes 15 Minutes for the new chart to appear. </p>",
 		size: 'small',
 		buttons: {
 				cancel: {

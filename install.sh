@@ -108,27 +108,22 @@ fi
 rm -rf /home/pi/bcmeter
 chmod -R 777 /home/pi/*
 
-# resize the root partition when it is smaller than 3GB
 
-FLAG_FILE=/tmp/rootfs_resized
-
-if [ ! -f "$FLAG_FILE" ]; then
-  # Create flag file
-  touch $FLAG_FILE
-
-SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)
-SIZE=$(echo $SIZE | sed 's/[^0-9]//g')
-
-TOCOMPARE=3
-
-if [ $SIZE -lt $TOCOMPARE ]; then
-    raspi-config nonint do_expand_rootfs
-    echo "partition resized, please reboot to have the changes take an effect when this script is finished."
-fi
-fi
 
 touch $BCMINSTALLED 
 if [ "$1" != "update" ]; then
+
+    # resize the root partition when it is smaller than 3GB
+
+        echo >> /home/pi/.bashrc
+        echo "SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)" >> /home/pi/.bashrc
+        echo "SIZE=$(echo $SIZE | sed 's/[^0-9]//g')" >> /home/pi/.bashrc
+        echo "TOCOMPARE=3" >> /home/pi/.bashrc
+        echo "if [ $SIZE -lt $TOCOMPARE ]; then" >> /home/pi/.bashrc
+        echo "    raspi-config nonint do_expand_rootfs" >> /home/pi/.bashrc
+        echo "    echo \"partition resized, please reboot to have the changes take an effect when this script is finished.\"" >> /home/pi/.bashrc
+        echo "fi" >> /home/pi/.bashrc
+
 
     read -p "Basically the bcMeter is now set up. It is recommended to install the WiFi Accesspoint. It will create an own WiFi if no known WiFi is available. Continue? " yn
         case $yn in

@@ -115,14 +115,18 @@ if [ "$1" != "update" ]; then
 
     # resize the root partition when it is smaller than 3GB
 
-        echo >> /home/pi/.bashrc
-        echo "SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)" >> /home/pi/.bashrc
-        echo "SIZE=$(echo $SIZE | sed 's/[^0-9]//g')" >> /home/pi/.bashrc
-        echo "TOCOMPARE=3" >> /home/pi/.bashrc
-        echo "if [ $SIZE -lt $TOCOMPARE ]; then" >> /home/pi/.bashrc
-        echo "    raspi-config nonint do_expand_rootfs" >> /home/pi/.bashrc
-        echo "    echo \"partition resized, please reboot to have the changes take an effect when this script is finished.\"" >> /home/pi/.bashrc
-        echo "fi" >> /home/pi/.bashrc
+
+
+    SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)
+    SIZE=$(echo $SIZE | sed 's/[^0-9]//g')
+
+    TOCOMPARE=3
+
+    if [ $SIZE -lt $TOCOMPARE ]; then
+        raspi-config nonint do_expand_rootfs
+        echo "partition resized, please reboot to have the changes take an effect when this script is finished."
+    fi
+
 
 
     read -p "Basically the bcMeter is now set up. It is recommended to install the WiFi Accesspoint. It will create an own WiFi if no known WiFi is available. Continue? " yn
@@ -132,3 +136,9 @@ if [ "$1" != "update" ]; then
             * ) echo "Please answer yes (y) or no (n).";;
         esac
     fi
+
+
+fi
+
+
+

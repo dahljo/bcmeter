@@ -44,50 +44,80 @@ function getPID()
 
 	if (isset($_GET['status'])) {
 		$status = $_GET['status'];
+
 	}
 	switch($status) {
 
-case 'deleteOld':
+    case 'timestamp':
 
-$files = glob('../../logs/*.csv'); 
+    $timestamp = $_GET['timestamp'];
 
-//sort files by date, newest first
-array_multisort(
-    array_map( 'filemtime', $files ),
-    SORT_NUMERIC,
-    SORT_DESC,
-    $files
-);
+    $DEVICETIME = shell_exec('date');
+    echo "<pre style='text-align:center;'>Old time set on device: $DEVICETIME </pre>";
+    echo "sudo date -s @'" . $timestamp . "'";
+   shell_exec("sudo date -s @'" . $timestamp . "'");
 
-$files = array_slice($files, 0, 2);
+    $DEVICETIME = shell_exec('date');
+    echo "<pre style='text-align:center;'>New time set on device: $DEVICETIME </pre>";
+    echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
 
-//delete all other files
-foreach (array_diff(glob('../../logs/*.csv'), $files) as $file) {
-    unlink($file);
-}
+    break;
 
-echo "<pre style='text-align:center'><h2>Successfully deleted old logs</h2>Returning to Interface in a few seconds or click <a href='/interface/index.php'>here</a></pre>";
-      echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
-break;
+    case 'deleteOld':
+    $files = glob('../../logs/*.csv'); 
+    //sort files by date, newest first
+    array_multisort(
+        array_map( 'filemtime', $files ),
+        SORT_NUMERIC,
+        SORT_DESC,
+        $files
+    );
+
+    $files = array_slice($files, 0, 2);
+
+    //delete all other files
+    foreach (array_diff(glob('../../logs/*.csv'), $files) as $file) {
+        unlink($file);
+    }
+
+    echo "<pre style='text-align:center'><h2>Successfully deleted old logs</h2>Returning to Interface in a few seconds or click <a href='/interface/index.php'>here</a></pre>";
+          echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
+    break;
 
 	 case 'reboot':
-      echo "bcMeter will now reboot and is back online in a minute. <br />You may keep this page open for automatic reload.<br /><br /><pre>";
-      echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 60000);</script>";
+      $wifiFile='/home/pi/bcMeter_wifi.json';
+      $data=json_decode(file_get_contents($wifiFile),TRUE);                     //no pwd given, resubmit of old wifi network
+      $wifi_pwd = $data["wifi_pwd"];
+      $wifi_ssid = $data["wifi_ssid"];
+     $bcMeter_hotspot_address = "http://192.168.18.8";
+      $bcMeter_hostname = gethostname();
+      $bcMeter_wifi_address ="http://$bcMeter_hostname.local";
+      if(empty($wifi_pwd)){ 
+        echo "<pre style='text-align:center'><h2>Rebooting to hotspot mode</h2>";
+       echo "Connect to WiFi called bcMeter when it shows up in a minute before you connect to <a href='$bcMeter_hotspot_address'>$bcMeter_hotspot_address</a>.";  
+
+      }
+      else {
+        echo "<pre style='text-align:center'><h2>Rebooting and logging into WiFi $wifi_ssid</h2>";  
+        echo "You can access your bcMeter then at <br /> <a href='$bcMeter_wifi_address'>$bcMeter_wifi_address</a> <br /> I will try to automatically redirect in about in about a minute.";  
+         
+        echo "</pre><script>setTimeout(function(){window.location.replace('$bcMeter_wifi_address');}, 70000);</script>";
+      }
       $cmd = 'sudo reboot now';
-        while (@ ob_end_flush()); // end all output buffers if any
-        $proc = popen($cmd, 'r');
+      $proc = popen($cmd, 'r');
+        
+/*        while (@ ob_end_flush()); // end all output buffers if any
         echo '<pre>';
         while (!feof($proc))
         {
             echo fread($proc, 4096);
             @ flush();
         }
-        echo '</pre>';
+        echo '</pre>';*/
       break;
     case 'shutdown':
       echo "bcMeter will now shutdown<br />You may disconnect the power source in 20 seconds.<br /><br /><pre>";
       $cmd = 'sudo shutdown now';
-        while (@ ob_end_flush()); // end all output buffers if any
         $proc = popen($cmd, 'r');
         echo '<pre>';
         while (!feof($proc))
@@ -128,10 +158,10 @@ break;
 
       echo '</pre>';
 
-
+break;
   	
     	default:
-	   		echo "no valid status submitted";
+	   		echo "no valid status" . $status;
 		
 
 	}

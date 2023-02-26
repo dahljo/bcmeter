@@ -22,6 +22,7 @@ DNS_TIME_OUT = 3
 #status constants
 STATUS_OK=1
 STATUS_NOK=0
+keep_running=False
 
 # sleep timeintervals
 SERVICE_WAIT_TIME = 3 			
@@ -213,6 +214,7 @@ connection_ok= check_connection()
 
 if(connection_ok is False):
 	status = STATUS_NOK
+	keep_running = False
 	#print_to_file("no connection on startup, so here is the accesspoint!")
 	setup_access_point()
 else:
@@ -226,7 +228,7 @@ else:
 while True:
 	uptime=get_uptime()
 	if (status == STATUS_NOK):
-		if (uptime >=hotspot_maxtime) and (bcMeterConf.run_hotspot is False):
+		if (uptime >=hotspot_maxtime) and (bcMeterConf.run_hotspot is False) and (keep_running is False): #make sure to shutdown after 10 minutes but keep running if connection lost for other reasons
 			print_to_file("up too long go sleep")
 			stop_access_point()
 			stop_bcMeter_service()
@@ -296,9 +298,11 @@ while True:
 					setup_access_point()
 			#print_to_file("exiting through the gift shop")
 	else:
-		time.sleep(60)
+		time.sleep(10)
 		connection_ok= check_connection()
 		if(connection_ok is False):
 			status = STATUS_NOK
+		else:
+		 keep_running= True #if connection set up once, do not stop everything later just because for example weak wifi signal. 
 
 

@@ -69,7 +69,7 @@ debug = False #no need to change here
 POWERPIN = 26
 BUTTON = 16
 
-ver = "bcMeter A/DC evaluation script v 0.9.18 2023-02-21"
+ver = "bcMeter A/DC evaluation script v 0.9.19 2023-02-26"
 
 
 class TemperatureSensor:
@@ -404,12 +404,10 @@ def check_connection():
 			return True
 		except Exception:
 			current_time += 1
-			time.sleep(1)
+			sleep(1)
 
 
 def startUp():
-
-	
 	global MCP3426_DEFAULT_ADDRESS, sample_time, sample_count, run_once, debug, no_bias
 	cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3']
 	process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, 
@@ -579,7 +577,7 @@ def bcmeter_main():
 				atn_peak = False
 				if (attenuation_last_run != 0) and (samples_taken>1):
 					peakdetection = 1 - abs((attenuation_last_run/attenuation_current))
-					if peakdetection > 0.015:
+					if (peakdetection > 0.015) and (abs(attenuation_current- attenuation_last_run)>1.5):
 						atn_peak = True
 						flag = flag + "PEAK"
 				if (attenuation_last_run == 0):
@@ -595,8 +593,6 @@ def bcmeter_main():
 					attenuation_coeff = 0
 				absorption_coeff = attenuation_coeff/bcMeterConf.filter_scattering_factor
 				BCngm3 = int((absorption_coeff / sigma_air_880nm)*bcMeterConf.device_specific_correction_factor) #bc nanograms per m3
-				if (abs(BCngm3)>50000):
-					flag =flag+"toHighBC"
 				logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
 				log.write(logString+"\n")
 				if (compair_upload == True) and (samples_taken > 2):

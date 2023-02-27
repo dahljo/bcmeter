@@ -220,6 +220,7 @@ if(connection_ok is False):
 else:
 	print_to_file("online now starting bcMeter service")
 	deactivate_dnsmasq_service()
+	stop_access_point()
 	run_bcMeter_service()
 	status = STATUS_OK
 
@@ -279,7 +280,7 @@ while True:
 					sleep(10)
 					connection_ok= check_connection()
 					raise Exception
-				print_to_file("Connected to " + wifi_ssid + " updating status")
+				stop_access_point()
 				status = STATUS_OK
 				# already in wifi mode, so do nothing
 				deactivate_dnsmasq_service()

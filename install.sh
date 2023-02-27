@@ -112,22 +112,15 @@ chmod -R 777 /home/pi/*
 
 touch $BCMINSTALLED 
 if [ "$1" != "update" ]; then
-
     # resize the root partition when it is smaller than 3GB
-
-
-
     SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)
     SIZE=$(echo $SIZE | sed 's/[^0-9]//g')
-
     TOCOMPARE=3
 
     if [ $SIZE -lt $TOCOMPARE ]; then
-        raspi-config nonint do_expand_rootfs
+        sudo raspi-config nonint do_expand_rootfs
         echo "partition resized, please reboot to have the changes take an effect when this script is finished."
     fi
-
-
 
     read -p "Basically the bcMeter is now set up. It is recommended to install the WiFi Accesspoint. It will create an own WiFi if no known WiFi is available. Continue? " yn
         case $yn in

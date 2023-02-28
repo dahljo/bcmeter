@@ -42,7 +42,7 @@ macaddr_acl=0
 auth_algs=1
 ignore_broadcast_ssid=0
 wpa=2
-wpa_passphrase=bcMeterCompair
+wpa_passphrase=bcMeterbcMeter
 wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP
@@ -64,7 +64,7 @@ sed -i '/^exit 0/c\#ifconfig eth0 down\niptables-restore < /etc/iptables.ipv4.na
 chmod +x /home/pi/bcMeter_ap_control_loop.py
 touch /lib/systemd/system/bcMeter_ap_control_loop.service
 
-tee -a /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
+tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
 [Unit]
 Description=bcMeter manage-access point & connections to wifi
 After=multi-user.target
@@ -80,7 +80,7 @@ EOF
 chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
 
 touch /lib/systemd/system/bcMeter.service
-tee -a /lib/systemd/system/bcMeter.service <<EOF
+tee /lib/systemd/system/bcMeter.service <<EOF
 [Unit]
 Description=bcMeter.org service
 After=multi-user.target

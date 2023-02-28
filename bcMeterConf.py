@@ -1,4 +1,4 @@
-run_hotspot =False#Hotspot Mode: 'True' for continours operation, 'False' to turn off after 10 Minutes
+run_hotspot =False#Hotspot Mode: 'True' for continouus operation, 'False' to turn off after 10 Minutes
 sample_time=300 #Time in seconds between to samples. 
 sample_count = 7000 #This many samples are take for each datapoint. 
 airflow_per_minute=0.180 #Airflow per minute in liter

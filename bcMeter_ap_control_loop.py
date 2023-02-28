@@ -277,15 +277,20 @@ while True:
 			try:
 				connection_ok= check_connection()
 				if not connection_ok:
+					print_to_file("Connection not OK, retry")
 					sleep(10)
 					connection_ok= check_connection()
-					raise Exception
-				stop_access_point()
-				status = STATUS_OK
-				# already in wifi mode, so do nothing
-				deactivate_dnsmasq_service()
-				print_to_file("Starting bcMeter Service")
-				run_bcMeter_service()
+					if not connection_ok:
+						raise Exception
+				else:
+					stop_access_point()
+					status = STATUS_OK
+					# already in wifi mode, so do nothing
+					deactivate_dnsmasq_service()
+					print_to_file("Connection OK, starting bcMeter Service")
+					keep_running=True
+					run_bcMeter_service()
+				
 			except Exception:
 				print_to_file("Connection problems")
 				stop_access_point()

@@ -38,18 +38,15 @@ hotspot_maxtime = 600
 BREAK_LOOP=False
 
 
-def check_exit_status():
+def check_exit_status(service):
 	status =""
-	output =str(subprocess.run(["systemctl", "status", "bcMeter"], capture_output=True, text=True).stdout.strip("\n"))
+	output =str(subprocess.run(["systemctl", "status", service], capture_output=True, text=True).stdout.strip("\n"))
 	output=output.splitlines()
 	for line in output:
 		if "Process:" in line:
 			status = str(line.split("code=")[1]).split(",")[0]
 			break
-	if (status == "killed"):
-		return "killed"
-	elif (status == "exited"):
-		return "exited"
+	return status
 
 
 def print_to_file(string):
@@ -225,7 +222,9 @@ def get_wifi_bssid(ssid):
 		print_to_file('Did not find any access points')
 		return None
 
-stop_bcMeter_service() #if service was enabled and device was not shutdown properly, it will startup immediately even if we dont want to		
+if (check_exit_status("bcMeter")=="exited"):
+	stop_bcMeter_service() #if service was enabled and device was not shutdown properly (=service disabled), it will startup immediately even if we dont want to		
+
 
 connection_ok= check_connection()
 
@@ -322,7 +321,7 @@ while True:
 			#print_to_file("exiting through the gift shop")
 	else:
 		time.sleep(10)
-		exit_status = check_exit_status()
+		exit_status = check_exit_status("bcMeter")
 		if (exit_status == "exited"):
 			print_to_file("unintended interruption detected. restarting service")
 			run_bcMeter_service()

@@ -7,55 +7,29 @@
 
 </head>
 
+
 <body>
 	<a href="" id="download" style="display: none;"></a>
 
 <br />
 
 
-<?php
 
-function clearAddressBar()
-{
 
-		if (!isset($_SESSION))
-		{
-				session_start();
-		}
-
-		if ($_SERVER['REQUEST_METHOD'] == 'POST')
-		{
-				$_SESSION['postdata'] = $_POST;
-				unset($_POST);
-				header("Location: " . $_SERVER['PHP_SELF']);
-				exit;
-		}
-}
-
-function getPID()
-{
-
-		$grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
-		$numbers = preg_replace('/^\s+| python3 \/home\/pi\/bcMeter.py/', "", $grep);
-		$numbers = explode(" ", $numbers);
-		$PID = $numbers[0];
-			$VERSION =  "0.9.19 2023-02-26";
-			$STARTED = implode(" ", array_slice($numbers,1));
-      $DEVICETIME = shell_exec('date');
-      echo "<div style='text-align:center;'>Current time set on device: $DEVICETIME </div>";
-			if (!isset($grep))
-			{
-					echo "<div style='text-align:center;'>bcMeter stopped.<br/></div>";
-			}
-			else {
-					 echo "<div style='text-align:center;'>Current Log running with PID $PID since $STARTED <br /> v$VERSION </div>";
-			}
-		return $PID;
-}
-
+       <?php
+          $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
+       if (!isset($grep))
+      {
+          echo "<script type='text/javascript'>setTimeout(() => {if (location.href.indexOf('stopped') === -1) { location.href = location.href + '?stopped';}}, 10000);</script>";
+      }
+      else
+      {
+                  echo "<script type='text/javascript'>setTimeout(() => {if (location.href.indexOf('stopped') >= 1) { location.href = location.href.replace('?stopped', '');}}, 1000);</script>";
+      }
 ?>
 
 <img src="bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/>
+
 
 <!-- Bootstrap Layout -->
 <div class="container">
@@ -68,7 +42,6 @@ function getPID()
         echo "<div class='alert alert-"; 
 
 
-         $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
                    if(!isset($grep)){echo "warning'";}
           else {echo "success'";} 
           echo " role='alert'>";
@@ -80,6 +53,7 @@ function getPID()
        if (!isset($grep))
       {
           echo "<div style='text-align:center;'>bcMeter stopped.<br/></div>";
+
           if(!empty($output)) {
                   echo "<div style='text-align:center;' id='devicetime'></div>";
                 ?><div style="text-align: center";>
@@ -165,10 +139,11 @@ function getPID()
 	<script src="js/bootbox.min.js"></script>
 
 <script>
-
+    if(window.location.href.indexOf("stopped") === -1){
     if ( typeof window.history.pushState == 'function' ) {
         window.history.pushState({}, "Hide", '<?php echo $_SERVER['PHP_SELF'];?>');
     }
+  }
     let selectLogs = document.getElementById("logs_select")
     current_file = selectLogs.value;
     if (current_file == 'log_current.csv') {
@@ -1584,7 +1559,7 @@ JS;
 
 if (isset($_POST["exec_stop"]))
 {
-shell_exec("sudo kill -SIGINT $PID");
+shell_exec("sudo systemctl stop bcMeter");
 }
 
 
@@ -1640,9 +1615,8 @@ if (isset($_POST["exec_debug"]))
 if (isset($_POST["startbcm"]))
 {
 	 echo "<script>bootbox.alert('Starting new log. Wait 15 Minutes for graph to appear');</script>";
-		shell_exec("sudo screen python3 /home/pi/bcMeter.py");
-		clearAddressBar();
-		echo "<script>setTimeout(window.location.reload.bind(window.location), 30000);</script>";
+		shell_exec("sudo systemctl start bcMeter");
+		echo "<script>setTimeout(window.location.reload.bind(window.location), 10000);</script>";
 }
 
 if (isset($_POST["newlog"]))
@@ -1688,9 +1662,9 @@ JS;
 
 if (isset($_POST["exec_new_log"])){
 
-		shell_exec("sudo kill -SIGINT $PID");
+		shell_exec("sudo systemctl stop bcMeter");
 		sleep(3);
-		shell_exec('sudo screen -dm python3 /home/pi/bcMeter.py 2>&1');
+		shell_exec('sudo systemctl start bcMeter');
 		sleep(3);
 		echo "setTimeout(window.location.reload.bind(window.location), 10000);";
 

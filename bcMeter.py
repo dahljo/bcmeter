@@ -565,13 +565,13 @@ def bcmeter_main():
 						filter_status = 5
 					elif (6000 < main_sensor_value_current < 8000):
 						filter_status = 4
-					elif (4000 < main_sensor_value_current < 6000):
+					elif (3000 < main_sensor_value_current < 6000):
 						filter_status = 3
-					elif (4000 < main_sensor_value_current < 6000):
+					elif (2000 < main_sensor_value_current < 3000):
 						filter_status = 2
-					elif (2000 < main_sensor_value_current < 4000):
+					elif (1000 < main_sensor_value_current < 2000):
 						filter_status = 1
-					elif (2000 < main_sensor_value_current < 4000):
+					elif (0000 < main_sensor_value_current < 1000):
 						filter_status = 0
 				if (abs(bcm_temperature_last_run-temperature_current) > .5): flag = flag + "tempChange-"
 				attenuation_current=round((numpy.log(main_sensor_value_current/reference_sensor_value_current)*-100),5)

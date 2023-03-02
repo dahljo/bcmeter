@@ -13,13 +13,24 @@
 </style>
 
 <body>
-<a href="../index.php"><img src="../bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/></a>
+<a href="../index.php"><img src="../bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/><br/><div style="text-align:center">Back to interface</div></a>
   <script src="../js/d3.min.js"></script>
   <script src="../js/jquery-3.6.0.min.js"></script>
   <script src="../js/bootstrap.min.js"></script>
   <script src="../js/bootbox.min.js"></script>
 <h3 style="text-align: center">
 <?php
+
+$connected = FALSE;
+
+if(!$sock = @fsockopen('www.google.com', 80))
+{
++    $connected = FALSE;
+}
+else
+{   
+    $connected = TRUE;
+}
 
 function getPID()
 {
@@ -106,26 +117,17 @@ function getPID()
       $cmd = 'sudo reboot now';
       $proc = popen($cmd, 'r');
         
-/*        while (@ ob_end_flush()); // end all output buffers if any
-        echo '<pre>';
-        while (!feof($proc))
-        {
-            echo fread($proc, 4096);
-            @ flush();
-        }
-        echo '</pre>';*/
+
+
       break;
     case 'shutdown':
       echo "bcMeter will now shutdown<br />You may disconnect the power source in 20 seconds.<br /><br /><pre>";
       $cmd = 'sudo shutdown now';
+          echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+
         $proc = popen($cmd, 'r');
-        echo '<pre>';
-        while (!feof($proc))
-        {
-            echo fread($proc, 4096);
-            @ flush();
-        }
-        echo '</pre>';
+       
+
       break;
     case 'debug':
       echo "debug log<br /><br /><pre>";
@@ -142,7 +144,8 @@ function getPID()
       break;
 
  case 'update':
-      echo "bcMeter will now update<br /><br /><pre>";
+ if ($connected == TRUE){
+      echo "bcMeter will now update, this may take a few minutes. If system freezes, reboot in 15 Minutes. <br /><br /><pre>";
 
        shell_exec("sudo kill -SIGINT $PID");
 
@@ -157,6 +160,12 @@ function getPID()
       }
 
       echo '</pre>';
+    }
+   else {
+    echo "<pre style='text-align:center'>bcMeter seems not to be online! Change WiFi and try again</pre>";
+   }
+   echo "Wait for automatic redirect... <script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+
 
 break;
   	

@@ -27,6 +27,8 @@ keep_running=False
 # sleep timeintervals
 SERVICE_WAIT_TIME = 3 			
 
+DONTSTARTTHEBCMETER = False
+
 #wifi credentials file
 WIFI_CREDENTIALS_FILE='/home/pi/bcMeter_wifi.json'
 
@@ -34,6 +36,21 @@ WIFI_CREDENTIALS_FILE='/home/pi/bcMeter_wifi.json'
 hotspot_maxtime = 600
 #var and function for the interrupt from php // not used for bcMeter but might be handy later
 BREAK_LOOP=False
+
+
+def check_exit_status():
+	status =""
+	output =str(subprocess.run(["systemctl", "status", "bcMeter"], capture_output=True, text=True).stdout.strip("\n"))
+	output=output.splitlines()
+	for line in output:
+		if "Process:" in line:
+			status = str(line.split("code=")[1]).split(",")[0]
+			break
+	if (status == "killed"):
+		return "killed"
+	elif (status == "exited"):
+		return "exited"
+
 
 def print_to_file(string):
 	print(string)
@@ -58,6 +75,7 @@ def run_bcMeter_service():
 
 
 def stop_bcMeter_service():
+	DONTSTARTTHEBCMETER = True
 	p = subprocess.call(["sudo", "systemctl", "stop", "bcMeter"])
 	p = subprocess.call(["sudo", "systemctl", "disable", "bcMeter"])
 	time.sleep(SERVICE_WAIT_TIME)
@@ -106,10 +124,7 @@ def setup_access_point():
 	# restart the AP
 	p = subprocess.Popen(["sudo", "systemctl", "start", "hostapd"])
 	p.communicate()
-	#start bcMeter routine
-	#if bcMeterConf.run_hotspot is True:
-	#	print_to_file("starting bcMeter in hotspot mode ")
-	#	run_bcMeter_service()
+
 
 def stop_access_point():
 	print_to_file("Stopping access point...")
@@ -209,7 +224,9 @@ def get_wifi_bssid(ssid):
 	else:
 		print_to_file('Did not find any access points')
 		return None
-		
+
+stop_bcMeter_service() #if service was enabled and device was not shutdown properly, it will startup immediately even if we dont want to		
+
 connection_ok= check_connection()
 
 if(connection_ok is False):
@@ -305,6 +322,10 @@ while True:
 			#print_to_file("exiting through the gift shop")
 	else:
 		time.sleep(10)
+		exit_status = check_exit_status()
+		if (exit_status == "exited"):
+			print_to_file("unintended interruption detected. restarting service")
+			run_bcMeter_service()
 		connection_ok= check_connection()
 		if(connection_ok is False):
 			status = STATUS_NOK

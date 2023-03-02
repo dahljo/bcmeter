@@ -3,8 +3,8 @@
 APINSTALLED=/tmp/bcmeter_ap_installed
 
 if [ -f "$APINSTALLED" ]; then
-    echo "Accesspoint already installed. remove /tmp/bcmeter_ap_installed if you really want to run this script again. "
-    exit
+	cp /etc/dnsmasq.conf.orig /etc/dnsmasq.conf
+	cp /etc/hostapd/hostapd.conf.orig /etc/hostapd/hostapd.conf
 fi
 
 if [ "$EUID" -ne 0 ]
@@ -94,9 +94,13 @@ WantedBy=multi-user.target
 EOF
 
 chmod 644 /lib/systemd/system/bcMeter.service
+if [ ! -f "$APINSTALLED" ]; then
+
 sed -i -e 's/listen \[::\]:80 default_server;/#listen \[::\]:80 default_server;/g' /etc/nginx/sites-enabled/default
 sed -i '1 s/$/ ipv6.disable=1/' /boot/cmdline.txt
 echo "net.ipv6.conf.all.disable_ipv6=1" | tee -a /etc/sysctl.conf
+fi
+
 sysctl -p
 touch $APINSTALLED
 echo "done installing accesspoint, activating services and rebooting - connection will be lost and hotspot bcMeter will be there in a few minutes!!"

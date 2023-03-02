@@ -9,8 +9,9 @@ fi
 
 
 if [ "$1" == "update" ]; then
-    echo "Backing up old Parameters"
+    echo "Backing up old Parameters and WiFi"
     cp /home/pi/bcMeterConf.py  /home/pi/bcMeterConf.orig
+    cp /home/pi/bcMeter_wifi.json  /home/pi/bcMeter_wifi.json.orig
     echo "Updating from github"
     rm -rf /home/pi/bcmeter/ /home/pi/interface/
     git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter
@@ -19,6 +20,8 @@ if [ "$1" == "update" ]; then
 
     echo "Restoring Parameters"
     mv /home/pi/bcMeterConf.orig /home/pi/bcMeterConf.py
+    mv /home/pi/bcMeter_wifi.json.orig /home/pi/bcMeter_wifi.json  
+
 
 fi
 
@@ -52,10 +55,7 @@ apt update && apt upgrade -y && apt autoremove -y;
     fi
 
 
-fi
 
-
-if [ "$1" != "update" ]; then
     mkdir /home/pi/logs
     touch /home/pi/logs/log_current.csv
 

@@ -44,6 +44,8 @@ GPIO.setup(12,GPIO.OUT)           # initialize as an output.
 #using switch to adjust air volume
 GPIO.setup(16, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
+output_to_terminal = False
+
 pump_duty = GPIO.PWM(12,10)         #GPIO12 as PWM output, with 10Hz frequency
 
 #uncomment for BMP Temperature Sensor:
@@ -103,7 +105,7 @@ class TemperatureSensor:
 				match = re.search(r't=(\d{1,6})', lines[1])
 				if match:
 					return int(match.group(1), 10)
-			time.sleep(self.RETRY_INTERVAL)
+			sleep(self.RETRY_INTERVAL)
 		raise Exception(
 			F'Cannot read temperature (tried {self.RETRY_COUNT} times with an interval of {self.RETRY_INTERVAL})'
 		)
@@ -216,7 +218,6 @@ class ADCPi:
 				config = self.__updatebyte(config, 7, 0)
 		# keep reading the adc data until the conversion result is ready
 		while True:
-			
 			__adcreading = self._bus.read_i2c_block_data(address, config, 4)
 			if self.__bitrate == 18:
 				h = __adcreading[0]
@@ -621,7 +622,7 @@ def bcmeter_main():
 				print("exiting debug mode")
 				GPIO.output(POWERPIN, 0)
 				sys.exit(1)
-			if (debug == False) and (reference_sensor_value_current !=0) and (main_sensor_value !=0): #output in terminal
+			if (debug == False) and (reference_sensor_value_current !=0) and (main_sensor_value !=0) and (output_to_terminal is True): #output in terminal
 				with open('logs/log_current.csv','r') as csv_file:
 					#os.system('clear')
 					print(today, now, ver, logFileName)
@@ -630,10 +631,10 @@ def bcmeter_main():
 						csv_reader = list(csv.reader(csv_file, delimiter=';'))
 						print(tabulate(csv_reader, headers, tablefmt="fancy_grid"))
 						print("Exit script with ctrl+c")
-				if ((bcMeterConf.sample_time)-delay <= 0):
-					sleep(bcMeterConf.sample_time)
-				else:
-					sleep((bcMeterConf.sample_time)-delay)
+			if ((bcMeterConf.sample_time)-delay <= 0):
+				sleep(bcMeterConf.sample_time)
+			else:
+				sleep((bcMeterConf.sample_time)-delay)
 
 			
 		else: #debug mode
@@ -680,7 +681,7 @@ def keep_the_temperature():
 					temperature_to_keep = temperature_current - 5
 				GPIO.output(1,True)
 				GPIO.output(23,True)
-				print("adjusted temperature to keep to  ", temperature_to_keep)
+				#print("adjusted temperature to keep to  ", temperature_to_keep)
 			
 			if temperature_current < temperature_to_keep:
 				GPIO.output(1,True)
@@ -692,7 +693,7 @@ def keep_the_temperature():
 					temperature_to_keep = temperature_current+1
 				GPIO.output(1,False)
 				GPIO.output(23,False)
-				print("adjusted temperature to keep to ", temperature_to_keep)
+				#print("adjusted temperature to keep to ", temperature_to_keep)
 
 			if ((temperature_to_keep - temperature_current)<0):
 				GPIO.output(1,False)

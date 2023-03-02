@@ -101,7 +101,7 @@ tee /lib/systemd/system/bcMeter.service <<EOF
 EOF
 
     chmod 644 /lib/systemd/system/bcMeter.service
-    systemctl daemon-reload && systemctl enable bcMeter.service
+    systemctl daemon-reload 
 
 fi
 

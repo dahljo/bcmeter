@@ -24,6 +24,7 @@ import socket
 import importlib
 import bcMeterConf
 
+bcMeter_version = "0.9.22 2023-03-05"
 
 compair_upload = bcMeterConf.compair_upload 
 
@@ -38,41 +39,21 @@ sigma_air_880nm = 0.0000000777
 run_once = "false"
 no_bias = "false"
 devicename = socket.gethostname()
-useTemp = "DS"
 #pwm for pump:
 GPIO.setup(12,GPIO.OUT)           # initialize as an output.
 #using switch to adjust air volume
 GPIO.setup(16, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 output_to_terminal = False
+online = False
 
 pump_duty = GPIO.PWM(12,10)         #GPIO12 as PWM output, with 10Hz frequency
-
-#uncomment for BMP Temperature Sensor:
-if useTemp == "BMP":
-	import Python_BMP.BMP085 as BMP085
-	bmp = BMP085.BMP085() 
-
-if useTemp == "DHT":
-	import MyPyDHT
-	import board
-	import adafruit_dht
-	dhtDevice = adafruit_dht.DHT22(board.D13, use_pulseio=False)
-
-
-
-
-
-
 
 sample_spot_areasize=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 0.50cm
 debug = False #no need to change here
 
 POWERPIN = 26
 BUTTON = 16
-
-ver = "bcMeter A/DC evaluation script v 0.9.19 2023-02-26"
-
 
 class TemperatureSensor:
 	RETRY_INTERVAL = 0.5
@@ -518,7 +499,7 @@ def bcmeter_main():
 	logFileName =(str(today) + "_" + str(now) + ".csv").replace(':','')
 	header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3;Temperature;flag;main_sensor_bias;reference_sensor_bias;sampleDuration"
 	if (debug == False):
-		print(today, now, ver, "STARTED NEW LOG", logFileName)
+		print("Started new bcMeter log ", today, now, bcMeter_version, logFileName)
 		createLog(logFileName,header)
 		logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
 	else:
@@ -596,7 +577,8 @@ def bcmeter_main():
 				BCngm3 = int((absorption_coeff / sigma_air_880nm)*bcMeterConf.device_specific_correction_factor) #bc nanograms per m3
 				logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
 				log.write(logString+"\n")
-				if (compair_upload == True) and (samples_taken > 2):
+				online = check_connection()
+				if (compair_upload == True) and (samples_taken > 2) and (online is True):
 					#print("uploading to CompAir Cloud",BCngm3,attenuation_current,main_sensor_value_current,reference_sensor_value_current,temperature_current, bcMeter_location, filter_status)
 					compair_data_upload.upload_sample(BCngm3,attenuation_current,main_sensor_value_current,reference_sensor_value_current,temperature_current, bcMeter_location, filter_status)
 				flag=""
@@ -604,7 +586,7 @@ def bcmeter_main():
 				attenuation_last_run=attenuation_current
 				bcm_temperature_last_run = temperature_current
 				atn_peak = False
-
+				online = False
 				flag=""
 				if (debug == True):
 					print("sen; " + str(round(main_sensor_value,3)) +"; ref; " + str(round(reference_sensor_value,3)) + "; senbias; " + str(round(main_sensor_bias,3)) + "; refbias; "+ str(round(reference_sensor_bias,3)) + "; sample_time; "+ str(round(delay,2)) )
@@ -624,8 +606,8 @@ def bcmeter_main():
 				sys.exit(1)
 			if (debug == False) and (reference_sensor_value_current !=0) and (main_sensor_value !=0) and (output_to_terminal is True): #output in terminal
 				with open('logs/log_current.csv','r') as csv_file:
-					#os.system('clear')
-					print(today, now, ver, logFileName)
+					os.system('clear')
+					print(today, now, bcMeter_version, logFileName)
 					headers=[]
 					with open('logs/log_current.csv','r') as csv_file:
 						csv_reader = list(csv.reader(csv_file, delimiter=';'))

@@ -53,7 +53,7 @@ def print_to_file(string):
 	print(string)
 	file = "/home/pi/ap_control_loop.log"
 	current_time = time.localtime()
-	timestamp = "["+ time.strftime("%H:%M:%S", current_time) +"]"
+	timestamp = "["+ time.strftime("%Y-%m-%d %H:%M:%S", current_time) +"]"
 	string = timestamp + " " + str(string) + "\n"
 	with open(file, 'a+') as f:
 		f.write(string)
@@ -225,6 +225,7 @@ def get_wifi_bssid(ssid):
 if (check_exit_status("bcMeter")=="exited"):
 	stop_bcMeter_service() #if service was enabled and device was not shutdown properly (=service disabled), it will startup immediately even if we dont want to		
 
+print_to_file("Starting new session")
 
 connection_ok= check_connection()
 
@@ -234,7 +235,7 @@ if(connection_ok is False):
 	#print_to_file("no connection on startup, so here is the accesspoint!")
 	setup_access_point()
 else:
-	print_to_file("online now starting bcMeter service")
+	print_to_file("online, starting bcMeter service")
 	deactivate_dnsmasq_service()
 	stop_access_point()
 	run_bcMeter_service()
@@ -321,10 +322,11 @@ while True:
 			#print_to_file("exiting through the gift shop")
 	else:
 		time.sleep(10)
-		exit_status = check_exit_status("bcMeter")
-		if (exit_status == "exited"):
-			print_to_file("unintended interruption detected. restarting service")
-			run_bcMeter_service()
+		#print_to_file("checking status")
+		#exit_status = check_exit_status("bcMeter")
+		#if (exit_status == "killed"):
+		#	print_to_file("unintended interruption detected. restarting service")
+		#	run_bcMeter_service()
 		connection_ok= check_connection()
 		if(connection_ok is False):
 			status = STATUS_NOK

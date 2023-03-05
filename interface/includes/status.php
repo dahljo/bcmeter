@@ -1,5 +1,8 @@
 
-
+<?php
+// Start the PHP session
+session_start();
+?>
 <!DOCTYPE html>
 <meta charset="utf-8">
 <head>    <link rel="stylesheet" type="text/css" href="css/bootstrap.min.css">
@@ -14,18 +17,25 @@
 
 <body>
 <a href="../index.php"><img src="../bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/><br/><div style="text-align:center">Back to interface</div></a>
-  <script src="../js/d3.min.js"></script>
-  <script src="../js/jquery-3.6.0.min.js"></script>
-  <script src="../js/bootstrap.min.js"></script>
-  <script src="../js/bootbox.min.js"></script>
+  <script src="../../js/jquery-3.6.0.min.js"></script>
+  <script src="../../js/bootstrap.min.js"></script>
+  <script src="../../js/bootbox.min.js"></script>
 <h3 style="text-align: center">
 <?php
+
+
+if (!isset($_SESSION['valid_session']) ) {
+  echo "<script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
+  exit();
+}
+
+session_destroy();
 
 $connected = FALSE;
 
 if(!$sock = @fsockopen('www.google.com', 80))
 {
-+    $connected = FALSE;
+    $connected = FALSE;
 }
 else
 {   
@@ -35,11 +45,30 @@ else
 function getPID()
 {
 
+    $version = '';
+    $localfile = '/home/pi/bcMeter.py';
+    for($i = 1; $i <= 50; $i++) {
+      $line = trim(exec("head -$i $localfile| tail -1"));
+      if (strpos($line, 'bcMeter_version') === 0) {
+        $version = explode('"', $line)[1];
+        break;
+      }
+    }
+
+    echo "The version is $version";
+
+    $version_parts = explode('.', $version);
+
+
+    $VERSION = $version_parts[0] . "." . $version_parts[1]  . "." .  $version_parts[2];
+
+
     $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
     $numbers = preg_replace('/^\s+| python3 \/home\/pi\/bcMeter.py/', "", $grep);
     $numbers = explode(" ", $numbers);
     $PID = $numbers[0];
-      $VERSION =  "0.9.8 2022-10-04";
+     
+
       $STARTED = implode(" ", array_slice($numbers,1));
 
       if (!isset($grep))
@@ -53,11 +82,18 @@ function getPID()
 }
 
 
+
+
 	if (isset($_GET['status'])) {
 		$status = $_GET['status'];
 
 	}
 	switch($status) {
+
+    case 'debug':
+    echo "$session_id";
+
+    break;
 
     case 'timestamp':
 
@@ -121,10 +157,10 @@ function getPID()
 
       break;
     case 'shutdown':
-      echo "bcMeter will now shutdown<br />You may disconnect the power source in 20 seconds.<br /><br /><pre>";
+      echo "bcMeter will now shutdown<br />You may disconnect the power source in 20 seconds or when you hear the pump is stopped.<br /><br /><pre>";
       $cmd = 'sudo shutdown now';
           echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
-
+          sleep(3);
         $proc = popen($cmd, 'r');
        
 
@@ -145,11 +181,8 @@ function getPID()
 
  case 'update':
  if ($connected == TRUE){
-      echo "bcMeter will now update, this may take a few minutes. If system freezes, reboot in 15 Minutes. <br /><br /><pre>";
-
-       shell_exec("sudo kill -SIGINT $PID");
-
-        while (@ ob_end_flush()); // end all output buffers if any
+      echo "bcMeter will now update, this may take a few minutes. <br /><br /><pre>";
+      while (@ ob_end_flush()); // end all output buffers if any
       $cmd = 'cd /home/pi && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P /home/pi/ && sudo bash /home/pi/install.sh update' ;
       $proc = popen($cmd, 'r');
       echo '<pre>';
@@ -158,8 +191,7 @@ function getPID()
           echo fread($proc, 4096);
           @ flush();
       }
-
-      echo '</pre>';
+       echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
     }
    else {
     echo "<pre style='text-align:center'>bcMeter seems not to be online! Change WiFi and try again</pre>";
@@ -170,10 +202,13 @@ function getPID()
 break;
   	
     	default:
-	   		echo "no valid status" . $status;
+
+        getPID();
 		
 
 	}
+
+  
 ?>
 	
 	</h3>

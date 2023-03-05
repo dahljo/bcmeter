@@ -1,3 +1,8 @@
+<?php
+// Start the PHP session
+session_start();
+$_SESSION['valid_session'] = 1;
+?>
 
 <!DOCTYPE html>
 <meta charset="utf-8">
@@ -17,6 +22,26 @@
 
 
        <?php
+
+
+
+ $version = '';
+    $localfile = '/home/pi/bcMeter.py';
+    for($i = 1; $i <= 50; $i++) {
+      $line = trim(exec("head -$i $localfile| tail -1"));
+      if (strpos($line, 'bcMeter_version') === 0) {
+        $version = explode('"', $line)[1];
+        break;
+      }
+    }
+
+    $version_parts = explode('.', $version);
+
+
+    $VERSION = $version_parts[0] . "." . $version_parts[1]  . "." .  $version_parts[2];
+
+
+
           $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
        if (!isset($grep))
       {
@@ -69,7 +94,7 @@
 
       }
       else {
-           echo "<div style='text-align:center;'>Sampling since $STARTED</div>";
+           echo "<div style='text-align:center;'>Current log running since $STARTED<br /></div>";
                      if(!empty($output)) {
                      echo "<div style='text-align:center;'><strong>You're currently in Hotspot mode! Device may turn off soon, check Parameters for continous Hotspot Operation or setup WiFi below!</strong></div>";
                      }
@@ -823,7 +848,7 @@ data
   <div class="tab-pane fade show active" id="pills-log" role="tabpanel" aria-labelledby="pills-log-tab">
 
       <form style="display: block; text-align:center;" method="post">
-              <input type="submit" name="newlog" value="New log" class="btn btn-info"/>  
+              <input type="submit" name="newlog" value="Start" class="btn btn-info"/>  
               <input type="submit" name="stopbcm" value="Stop" class="btn btn-info"/>
           <button type="button" class="btn btn-warning" data-toggle="modal" data-target="#wifisetup">
             Add/Change WiFi
@@ -913,7 +938,7 @@ data
 
           <input type="submit" name="update" value="Update bcMeter" class="btn btn-secondary"/>
           <input type="submit" name="shutdown" value="Shutdown" class="btn btn-danger"/>
-
+          <input type="submit" name="phpdebug" value="Debug" class="btn btn-danger"/>
           </form>
 
 
@@ -1110,6 +1135,36 @@ data
           </div>
 <!-- end set time modal-->
 
+<?php
+
+// Access /home/pi/ap_control_loop.log
+$apLogFile = fopen("/home/pi/ap_control_loop.log", "r");
+if ($apLogFile) {
+    $apLogContent = fread($apLogFile, filesize("/home/pi/ap_control_loop.log"));
+    fclose($apLogFile);
+} else {
+    echo "Unable to open /home/pi/ap_control_loop.log";
+}
+
+// Access /var/log/syslog
+$sysLogFile = fopen("/var/log/syslog", "r");
+if ($sysLogFile) {
+    $sysLogContent = fread($sysLogFile, filesize("/var/log/syslog"));
+    fclose($sysLogFile);
+} else {
+    echo "Unable to open /var/log/syslog";
+}
+
+// Set mail headers
+$headers = 'From: <sender@example.com>' . "\r\n";
+ 
+// Set mail body
+$message = "Attached are the ap_control_loop.log and syslog files\r\n" . $apLogContent . "\r\nSYSLOG:\r\n" . $sysLogContent;
+ 
+// Send the mail
+mail('jd@bcmeter.org', 'AP and Syslog Files', $message, $headers);
+
+?>
 <!-- Begin Set WiFi -->
 
 
@@ -1150,19 +1205,7 @@ data
                         $chunk2_mod=$chunk2 % 23;
                         $checkModulo=$convert_arr[$chunk1_mod].$convert_arr[$chunk2_mod];
 
-                        //read image version file
-                        $versionFile='/home/pi/json/telraam_version.json';
-
-                        $version='';
-                        $string = file_get_contents($versionFile);
-                        if ($string !== false) {
-                          $json_a = json_decode($string, true);
-                          if ($json_a !== null) {
-                            $version=$json_a['version'];
-                          }
-                        }
-
-
+            
                         // wifi vars
                         $wifiFile='/home/pi/bcMeter_wifi.json';
 
@@ -1192,7 +1235,7 @@ data
                           
                           $credsUpdated=true;
 
-                          echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
+                          echo "<script>window.location.href='includes/status.php?sid=$session_id?status=reboot';</script>";
                         }
 
                         // check for existing wifi credentials
@@ -1389,7 +1432,7 @@ data
 <?php
 
 
-
+echo "<div style='text-align:center;'>v$VERSION</div>";
 
 if (isset($_POST["deleteOld"]))
 {
@@ -1412,7 +1455,12 @@ var dialog = bootbox.dialog({
             label: "Yes",
             className: 'btn-danger',
             callback: function(){
-                window.location.href='includes/status.php?status=deleteOld';
+                window.location.href='includes/status.php
+javascript;     
+
+                echo "status.php?sid=$session_id";
+echo <<< javascript
+                ?status=deleteOld';
 
             }
         }
@@ -1433,7 +1481,7 @@ if (isset($_POST["set_time"]))
 
   $set_timestamp_to = $_POST['set_time'];
 
-echo("<script>window.location.href='includes/status.php?status=timestamp&timestamp=$set_timestamp_to'</script>");
+echo("<script>window.location.href='includes/status.php?sid=$session_id?status=timestamp&timestamp=$set_timestamp_to'</script>");
 
 }
 
@@ -1441,6 +1489,38 @@ echo("<script>window.location.href='includes/status.php?status=timestamp&timesta
 
 
 
+if (isset($_POST["phpdebug"]))
+{
+
+echo <<< javascript
+<script>
+var dialog = bootbox.dialog({
+    title: 'Turn off bcMeter?',
+    message: "<p>Do you want to shutdown the device?</p>",
+    size: 'small',
+    buttons: {
+        cancel: {
+            label: "No",
+            className: 'btn-success',
+            callback: function(){
+
+            }
+        },
+        ok: {
+            label: "Yes",
+            className: 'btn-danger',
+            callback: function(){
+                window.location.href='includes/status.php?sid=$session_id?status=debug';
+
+            }
+        }
+    }
+});
+</script>
+javascript;
+
+
+}
 
 
 
@@ -1467,7 +1547,7 @@ var dialog = bootbox.dialog({
 						label: "Yes",
 						className: 'btn-danger',
 						callback: function(){
-								window.location.href='includes/status.php?status=shutdown';
+								window.location.href='includes/status.php?sid=$session_id?status=shutdown';
 
 						}
 				}
@@ -1500,7 +1580,7 @@ var dialog = bootbox.dialog({
 						label: "Yes",
 						className: 'btn-danger',
 						callback: function(){
-								window.location.href='includes/status.php?status=reboot';
+								window.location.href='includes/status.php?sid=$session_id?status=reboot';
 
 						}
 				}
@@ -1589,7 +1669,7 @@ var dialog = bootbox.dialog({
 								type: 'post',
 								data: 'exec_debug',
 								success: function(response){
-									 window.location.href='includes/status.php?status=debug';
+									 window.location.href='includes/status.php?sid=$session_id?status=debug';
 								}
 						 });
 
@@ -1738,7 +1818,7 @@ var dialog = bootbox.dialog({
 						label: "Yes",
 						className: 'btn-danger',
 						callback: function(){
-								window.location.href='includes/status.php?status=update';
+								window.location.href='includes/status.php?sid=$session_id?status=update';
 
 						}
 				}

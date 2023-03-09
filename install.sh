@@ -59,7 +59,7 @@ if [ "$1" == "update" ]; then
     rm /tmp/bcMeter*
     if [ "$major_version" -lt "$git_major_version" ] || [ "$minor_version" -lt "$git_minor_version" ] || [ "$patch_version" -lt "$git_patch_version" ]
     then
-        echo "running updating"
+        echo "running update"
         systemctl stop bcMeter_ap_control_loop
         systemctl stop bcMeter
         rm /home/pi/ap_control_loop.log

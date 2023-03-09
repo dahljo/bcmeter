@@ -92,6 +92,13 @@ def deactivate_dnsmasq_service():
 	#print_to_file("Dnsmasq service deactivated.")
 
 
+def force_wlan0_reset():
+	print_to_file("forcing wlan0 reset")
+	subprocess.call(["sudo", "ip", "link", "set", "wlan0", "down"])
+	time.sleep(20)
+	subprocess.call(["sudo", "ip", "link", "set", "wlan0", "up"])
+
+
 def setup_access_point():
 	# reset the config file with a static IP
 	# first delete anything that was written after #bcMeterConfig
@@ -311,6 +318,7 @@ while True:
 			except Exception:
 				print_to_file("Connection problems")
 				stop_access_point()
+				force_wlan0_reset()
 				file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
 				file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
 				file.close()

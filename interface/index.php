@@ -938,7 +938,7 @@ data
 
           <input type="submit" name="update" value="Update bcMeter" class="btn btn-secondary"/>
           <input type="submit" name="shutdown" value="Shutdown" class="btn btn-danger"/>
-          <input type="submit" name="phpdebug" value="Debug" class="btn btn-danger"/>
+          <!--input type="submit" name="phpdebug" value="Debug" class="btn btn-danger"/-->
           </form>
 
 
@@ -1135,36 +1135,6 @@ data
           </div>
 <!-- end set time modal-->
 
-<?php
-
-// Access /home/pi/ap_control_loop.log
-$apLogFile = fopen("/home/pi/ap_control_loop.log", "r");
-if ($apLogFile) {
-    $apLogContent = fread($apLogFile, filesize("/home/pi/ap_control_loop.log"));
-    fclose($apLogFile);
-} else {
-    echo "Unable to open /home/pi/ap_control_loop.log";
-}
-
-// Access /var/log/syslog
-$sysLogFile = fopen("/var/log/syslog", "r");
-if ($sysLogFile) {
-    $sysLogContent = fread($sysLogFile, filesize("/var/log/syslog"));
-    fclose($sysLogFile);
-} else {
-    echo "Unable to open /var/log/syslog";
-}
-
-// Set mail headers
-$headers = 'From: <sender@example.com>' . "\r\n";
- 
-// Set mail body
-$message = "Attached are the ap_control_loop.log and syslog files\r\n" . $apLogContent . "\r\nSYSLOG:\r\n" . $sysLogContent;
- 
-// Send the mail
-mail('jd@bcmeter.org', 'AP and Syslog Files', $message, $headers);
-
-?>
 <!-- Begin Set WiFi -->
 
 
@@ -1235,7 +1205,7 @@ mail('jd@bcmeter.org', 'AP and Syslog Files', $message, $headers);
                           
                           $credsUpdated=true;
 
-                          echo "<script>window.location.href='includes/status.php?sid=$session_id?status=reboot';</script>";
+                          echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
                         }
 
                         // check for existing wifi credentials
@@ -1455,12 +1425,7 @@ var dialog = bootbox.dialog({
             label: "Yes",
             className: 'btn-danger',
             callback: function(){
-                window.location.href='includes/status.php
-javascript;     
-
-                echo "status.php?sid=$session_id";
-echo <<< javascript
-                ?status=deleteOld';
+                window.location.href='includes/status.php?status=deleteOld';
 
             }
         }
@@ -1481,7 +1446,7 @@ if (isset($_POST["set_time"]))
 
   $set_timestamp_to = $_POST['set_time'];
 
-echo("<script>window.location.href='includes/status.php?sid=$session_id?status=timestamp&timestamp=$set_timestamp_to'</script>");
+echo("<script>window.location.href='includes/status.php?status=timestamp&timestamp=$set_timestamp_to'</script>");
 
 }
 
@@ -1510,7 +1475,7 @@ var dialog = bootbox.dialog({
             label: "Yes",
             className: 'btn-danger',
             callback: function(){
-                window.location.href='includes/status.php?sid=$session_id?status=debug';
+                window.location.href='includes/status.php?status=debug';
 
             }
         }
@@ -1547,7 +1512,7 @@ var dialog = bootbox.dialog({
 						label: "Yes",
 						className: 'btn-danger',
 						callback: function(){
-								window.location.href='includes/status.php?sid=$session_id?status=shutdown';
+								window.location.href='includes/status.php?status=shutdown';
 
 						}
 				}
@@ -1580,7 +1545,7 @@ var dialog = bootbox.dialog({
 						label: "Yes",
 						className: 'btn-danger',
 						callback: function(){
-								window.location.href='includes/status.php?sid=$session_id?status=reboot';
+								window.location.href='includes/status.php?status=reboot';
 
 						}
 				}
@@ -1669,7 +1634,7 @@ var dialog = bootbox.dialog({
 								type: 'post',
 								data: 'exec_debug',
 								success: function(response){
-									 window.location.href='includes/status.php?sid=$session_id?status=debug';
+									 window.location.href='includes/status.php?status=debug';
 								}
 						 });
 
@@ -1695,6 +1660,8 @@ if (isset($_POST["exec_debug"]))
 if (isset($_POST["startbcm"]))
 {
 	 echo "<script>bootbox.alert('Starting new log. Wait 15 Minutes for graph to appear');</script>";
+      shell_exec("sudo systemctl stop bcMeter");
+    sleep(3);
 		shell_exec("sudo systemctl start bcMeter");
 		echo "<script>setTimeout(window.location.reload.bind(window.location), 10000);</script>";
 }
@@ -1818,7 +1785,7 @@ var dialog = bootbox.dialog({
 						label: "Yes",
 						className: 'btn-danger',
 						callback: function(){
-								window.location.href='includes/status.php?sid=$session_id?status=update';
+								window.location.href='includes/status.php?status=update';
 
 						}
 				}

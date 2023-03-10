@@ -31,7 +31,7 @@
 	$language["connection_active"] = "Connection to hotspot is active";
 	
 	$language["tab_wifi"] = "Wifi connection";
-	$language["edit-password"] = "Correct the stored password";
+	$language["edit-password"] = "Edit Password";
 	
 	$language["set_date_and_time"] = "If you plan to run continouusly in hotspot mode, you have to tell bcMeter the current date and time.";
 

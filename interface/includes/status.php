@@ -31,6 +31,8 @@ if (!isset($_SESSION['valid_session']) ) {
 
 session_destroy();
 
+shell_exec('sudo systemctl daemon-reload');
+
 $connected = FALSE;
 
 if(!$sock = @fsockopen('www.google.com', 80))
@@ -139,9 +141,12 @@ function getPID()
      $bcMeter_hotspot_address = "http://192.168.18.8";
       $bcMeter_hostname = gethostname();
       $bcMeter_wifi_address ="http://$bcMeter_hostname.local";
-      if(empty($wifi_pwd)){ 
+
+      if(empty($wifi_pwd)){   
+        exec("sudo bash -c \"echo 'ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n' > /etc/wpa_supplicant/wpa_supplicant.conf\"");
+        
         echo "<pre style='text-align:center'><h2>Rebooting to hotspot mode</h2>";
-       echo "Connect to WiFi called bcMeter when it shows up in a minute before you connect to <a href='$bcMeter_hotspot_address'>$bcMeter_hotspot_address</a>.";  
+        echo "Connect to WiFi called bcMeter when it shows up in a minute before you connect to <a href='$bcMeter_hotspot_address'>$bcMeter_hotspot_address</a>.";  
 
       }
       else {
@@ -150,8 +155,8 @@ function getPID()
          
         echo "</pre><script>setTimeout(function(){window.location.replace('$bcMeter_wifi_address');}, 70000);</script>";
       }
-      $cmd = 'sudo reboot now';
-      $proc = popen($cmd, 'r');
+      exec('sudo reboot now');
+
         
 
 
@@ -160,8 +165,8 @@ function getPID()
       echo "bcMeter will now shutdown<br />You may disconnect the power source in 20 seconds or when you hear the pump is stopped.<br /><br /><pre>";
       $cmd = 'sudo shutdown now';
           echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
-          sleep(3);
-        $proc = popen($cmd, 'r');
+
+        exec($cmd);
        
 
       break;
@@ -171,11 +176,7 @@ function getPID()
         while (@ ob_end_flush()); // end all output buffers if any
         $proc = popen($cmd, 'r');
         echo '<pre>';
-        while (!feof($proc))
-        {
-            echo fread($proc, 4096);
-            @ flush();
-        }
+
         echo '</pre><br /> <h3>copy and paste this to <a href="mailto:jd@bcmeter.org">jd@bcmeter.org</a><br /> <br /><a href="index.php">Go back to interface</a>';
       break;
 

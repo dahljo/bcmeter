@@ -45,7 +45,7 @@ $_SESSION['valid_session'] = 1;
           $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
        if (!isset($grep))
       {
-          echo "<script type='text/javascript'>setTimeout(() => {if (location.href.indexOf('stopped') === -1) { location.href = location.href + '?stopped';}}, 10000);</script>";
+          echo "<script type='text/javascript'>setTimeout(() => {if (location.href.indexOf('stopped') === -1) { location.href = location.href + '?stopped';}}, 2000);</script>";
       }
       else
       {
@@ -851,7 +851,7 @@ data
               <input type="submit" name="newlog" value="Start" class="btn btn-info"/>  
               <input type="submit" name="stopbcm" value="Stop" class="btn btn-info"/>
           <button type="button" class="btn btn-warning" data-toggle="modal" data-target="#wifisetup">
-            Add/Change WiFi
+            WiFi Config
           </button>
               <input type="submit" name="saveGraph" value="Save Log" class="btn btn-secondary bootbox-accept"/>
 
@@ -923,7 +923,7 @@ data
           <form style="display: block; text-align:center;" method="post">
 
           <button type="button" class="btn btn-info" data-toggle="modal" data-target="#editparameters">
-            Edit parameters
+            Settings
           </button>
           <input type="hidden" name="randcheck" />
             <!--button type="button" class="btn btn-info" data-toggle="modal" data-target="#editdate">
@@ -948,7 +948,7 @@ data
 </div>
 
 <!-- begin edit parameters modal -->
-            <div class="modal fade" id="editparameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
+            <div class="modal fade" id="editparameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true" style="z-index: 999;">
             <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 90%;">
               <div class="modal-content">
                 <div class="modal-header">
@@ -1142,7 +1142,7 @@ data
             <div class="modal-dialog modal-dialog-centered" role="document">
               <div class="modal-content">
                 <div class="modal-header">
-                  <h2 class="modal-title" id="exampleModalLongTitle" style="text-align: center;">Wifi Setup (No 5 GHz!) / Hotspot Mode</h2>
+                  <h2 class="modal-title" id="exampleModalLongTitle" style="text-align: center;">Wifi Setup</h2>
                   <button type="button" class="close" data-dismiss="modal" aria-label="Close">
                     <span aria-hidden="true">&times;</span>
                   </button>
@@ -1220,7 +1220,7 @@ data
                            $wifi_pwd ="";
                          $data = array("wifi_ssid"=>$wifi_ssid, "wifi_pwd"=>$wifi_pwd);
                           file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
-                          echo "<script>setTimeout(window.location.reload.bind(window.location), 3000);</script>";
+                          echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
 
                       }
 
@@ -1238,7 +1238,7 @@ data
                           }
                           else{
                             // send SIGUSR1 signal to the bcMeter_ap_control_loop service
-                            exec('sudo kill -SIGUSR1 '.$pid, $output);
+                            //exec('sudo kill -SIGUSR1 '.$pid, $output);
                             $interruptSent=true;
                           }
                         }
@@ -1308,18 +1308,19 @@ data
                             
                               <div class="content">
 
-
-                                <form name="connect_now_form" method="POST" action="index.php">
+                            
+                               
+                                <form name="connect_now_form" method="POST" action="index.php"><br />
                                   <?php
                                     if ($currentWifiSsid!==null && $currentWifiSsid!=='') {
-                                        echo "".$language["current_wifi_setup"]. ": ". $currentWifiSsid. "";
+                                        echo "<div class=\"alert alert-success\" role=\"alert\">".$language["current_wifi_setup"]. ": ". $currentWifiSsid. "</div>";
                                 
                                     } else {
                                       
                                     }
                                   ?>
                                   </form>
-
+                              
                               <div class="tab-content tab-wifi" >
                                 
                               
@@ -1354,33 +1355,31 @@ data
                                     </div>
                                     <div id="wifi-pwd">
                                       <div>
-                                        <label><?php echo $language["wifi_pwd"]; ?>:</label>
+                                        <div class="edit-password"><a href="#" class="js-edit-password"><?php echo $language["edit-password"]; ?></a></div>
                                       </div>
-                                                    <div class="wifi-pwd-field" style="display: <?php echo ((!empty($currentWifiPwd)) ? 'none' : 'block') ?>  ">
-                                                        <input type="password" id="pass_log_id" name="wifi_pwd">
-                                                        <span toggle="#password-field" class="icon-field icon-eye toggle-password">Show/Hide</span>
-                                                    </div>
-                                                    <?php if(!empty($currentWifiPwd)) { ?>
-                                                        <div class="wifi-pwd-field-exist">
-                                                            <div class="password-dots">
-                                                                <input type="text" value="<?php echo $currentWifiPwdHidden ?>" readonly></div>
-                                                            
-                                                        </div>
-
-                                                    <?php } ?>
+                                      <div class="wifi-pwd-field" style="display: <?php echo ((!empty($currentWifiPwd)) ? 'none' : 'block') ?>  ">
+                                            <input type="password" id="pass_log_id" name="wifi_pwd">
+                                            <span toggle="#password-field" class="icon-field icon-eye toggle-password">Show/Hide</span>
+                                        </div>
+                                        <?php if(!empty($currentWifiPwd)) { ?>
+                                            <div class="wifi-pwd-field-exist">
+                                                <div class="password-dots">
+                                                    <input type="text" value="<?php echo $currentWifiPwdHidden ?>" readonly></div>
+                                            </div>
+                                        <?php } ?>
 
 
-                                                </div>
-                                  Want to keep the hotspot mode? Set parameter to "True" 
-                                  <button type="button" class="" data-toggle="modal" data-target="#editparameters" style="font-family: inherit; font-size: inherit; color: #0062cc; background-color: transparent; border: 0; padding: 0;" data-dismiss="modal">
-                                    here
-                                  </button>
+                                        </div>
+
                                     <div class="submit-container">
                                       <input type="Submit" name="conn_submit" value="<?php echo $language["save_and_connect"]; ?>" class="btn btn-primary">
                                       <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
                                        <input type="Submit" name="reset_wifi_json" value="Delete Wifi" class="btn btn-warning">
+                                    </div><br />
+                                    <div class="alert alert-warning" role="alert">
+                                     Deleting/saving wifi credentials will take immediate effect and may cut connection.
                                     </div>
-                                    It takes a minute or two for the bcMeter to connect to new wifi. 
+                                    <sub>If you like to run the bcMeter independently without being connected to a WiFi, you can adjust it in the Settings!
                                   </form>
                                 </div> <!-- end entering-the-connection-info -->
                               </div>  <!-- tab-wifi -->

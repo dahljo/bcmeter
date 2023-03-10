@@ -948,7 +948,7 @@ data
 </div>
 
 <!-- begin edit parameters modal -->
-            <div class="modal fade" id="editparameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true" style="z-index: 999;">
+            <div class="modal fade" id="editparameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
             <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 90%;">
               <div class="modal-content">
                 <div class="modal-header">

@@ -12,6 +12,7 @@ import requests
 import uuid
 import json
 import bcMeterConf
+import importlib
 
 
 # endpoint for checking internet connection (this is Google's public DNS server)
@@ -31,12 +32,12 @@ DONTSTARTTHEBCMETER = False
 
 #wifi credentials file
 WIFI_CREDENTIALS_FILE='/home/pi/bcMeter_wifi.json'
+AP_LOG_FILE = '/home/pi/ap_control_loop.log'
+
 
 #stop hotspot from being active after 10 Minutes of running (can be overridden by parameter run_hotspot=True)
 hotspot_maxtime = 600
 #var and function for the interrupt from php // not used for bcMeter but might be handy later
-BREAK_LOOP=False
-
 
 def check_exit_status(service):
 	status =""
@@ -51,18 +52,14 @@ def check_exit_status(service):
 
 def print_to_file(string):
 	print(string)
-	file = "/home/pi/ap_control_loop.log"
+	file = AP_LOG_FILE
 	current_time = time.localtime()
 	timestamp = "["+ time.strftime("%Y-%m-%d %H:%M:%S", current_time) +"]"
 	string = timestamp + " " + str(string) + "\n"
 	with open(file, 'a+') as f:
 		f.write(string)
 
-def signal_received(signal_number, frame):
-	global BREAK_LOOP
-	BREAK_LOOP=True
-	#print_to_file('Interrupt received!')
-	signal.signal(signal.SIGUSR1, signal_received)    
+
 
 def run_bcMeter_service():
 	p = subprocess.call(["sudo", "systemctl", "enable", "bcMeter"])
@@ -112,23 +109,26 @@ def setup_access_point():
 			file.truncate()
 			break
 	file.close()
-
-	activate_dnsmasq_service()
-
+	print_to_file("edited dhcpcd")
+	process = subprocess.run(['systemctl', 'status', 'dnsmasq'], stdout=subprocess.PIPE)
+	if 'active (running)' not in process.stdout.decode('utf-8'):
+		activate_dnsmasq_service()
 	# rewrite the last 3 lines (always after #bcMeterConfig)
 	file = open("/etc/dhcpcd.conf", "a")
 	file.write("interface wlan0\n")
 	file.write("  static ip_address=192.168.18.8/24\n")
 	file.write("  nohook wpa_supplicant")
 	file.close()
-	
+	print_to_file("started dnsmasq")
+	p = subprocess.Popen(["sudo", "systemctl", "daemon-reload"])
+	p.communicate()
+	print_to_file("daemon reloaded")
 	p = subprocess.Popen(["sudo", "service", "dhcpcd", "restart"])
 	p.communicate()
-
 	# restart the AP
 	p = subprocess.Popen(["sudo", "systemctl", "start", "hostapd"])
 	p.communicate()
-
+	print_to_file("hostapd started")
 
 def stop_access_point():
 	print_to_file("Stopping access point...")
@@ -166,7 +166,10 @@ def get_wifi_credentials():
 			return data['wifi_ssid'], data['wifi_pwd']
 	except FileNotFoundError as e:
 		print_to_file('FileNotFoundError:\n{}'.format(e))
-	print_to_file("no connection and i did not even try!")
+		with open(WIFI_CREDENTIALS_FILE, 'w') as f:
+			f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
+		os.chmod(WIFI_CREDENTIALS_FILE, 0o777)
+	print_to_file("no file/ssid/pwd!")
 	return '', ''
 
 def get_wifi_bssid(ssid):
@@ -229,8 +232,7 @@ def get_wifi_bssid(ssid):
 		print_to_file('Did not find any access points')
 		return None
 
-if (check_exit_status("bcMeter")=="exited"):
-	stop_bcMeter_service() #if service was enabled and device was not shutdown properly (=service disabled), it will startup immediately even if we dont want to		
+stop_bcMeter_service() #if service was enabled and device was not shutdown properly (=service disabled), it will startup immediately even if we dont want to		
 
 print_to_file("Starting new session")
 
@@ -239,28 +241,40 @@ connection_ok= check_connection()
 if(connection_ok is False):
 	status = STATUS_NOK
 	keep_running = False
-	#print_to_file("no connection on startup, so here is the accesspoint!")
+	print_to_file("no connection on startup, so here is the accesspoint!")
 	setup_access_point()
 else:
-	print_to_file("online, starting bcMeter service")
-	deactivate_dnsmasq_service()
-	stop_access_point()
-	run_bcMeter_service()
-	status = STATUS_OK
+	wifi_ssid, wifi_pwd=get_wifi_credentials()
+	if (len(wifi_ssid) > 0):
+		print_to_file("online at startup, starting bcMeter service")
+		deactivate_dnsmasq_service()
+		stop_access_point()
+		run_bcMeter_service()
+		status = STATUS_OK
+	else:
+		print_to_file("no wifi credentials given, discarding wpa_supplicant and opening accesspoint")
+		file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
+		file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
+		file.close()
+		p = subprocess.Popen(["sudo", "systemctl", "daemon-reload"])
+		p.communicate()
+		setup_access_point()
+		status = STATUS_NOK
+		keep_running = False
 
 
 
 while True:
+	importlib.reload(bcMeterConf)
 	uptime=get_uptime()
-	if (status == STATUS_NOK):
-		if (uptime >=hotspot_maxtime) and (bcMeterConf.run_hotspot is False) and (keep_running is False): #make sure to shutdown after 10 minutes but keep running if connection lost for other reasons
+	if (status == STATUS_NOK) and (bcMeterConf.run_hotspot is False): #no connection but in contious hotspot mode? Dont dare to connect to a wifi!
+		if (uptime >=hotspot_maxtime) and (keep_running is False): #make sure to shutdown after 10 minutes but keep running if connection lost for other reasons
 			print_to_file("up too long go sleep")
 			stop_access_point()
 			stop_bcMeter_service()
 			os.system("shutdown now -h")
-		time.sleep(1)
 		wifi_ssid, wifi_pwd=get_wifi_credentials()
-		if len(wifi_ssid) > 0:
+		if (len(wifi_ssid) > 0) :
 			print_to_file("trying to establishing connection to wifi")
 			wifi_bssid = None
 			# SSID is new, so replace the conf file
@@ -290,44 +304,60 @@ while True:
 					file.truncate()
 					break
 			file.close()
+			p = subprocess.Popen(["sudo", "systemctl", "daemon-reload"])
+			p.communicate()
+
 			print_to_file("restarting dhcpd to connect to wifi")
 			p = subprocess.Popen(["sudo", "service", "dhcpcd", "restart"])
 			p.communicate()
 			# wait until the wifi is connected
 			wait_time = 10
-			print_to_file("... Services are restarting, waiting " + str(round(wait_time)) + " seconds...")
+			print_to_file("dhcpcd is restarting")
 			time.sleep(wait_time)
 			# check connection
+			connection_ok= check_connection()
 			try:
-				connection_ok= check_connection()
 				if not connection_ok:
 					print_to_file("Connection not OK, retry")
-					sleep(10)
+					time.sleep(10)
 					connection_ok= check_connection()
 					if not connection_ok:
-						raise Exception
+						force_wlan0_reset()
+						connection_ok= check_connection()
+						if not connection_ok:
+							raise Exception
 				else:
 					stop_access_point()
 					status = STATUS_OK
-					# already in wifi mode, so do nothing
 					deactivate_dnsmasq_service()
 					print_to_file("Connection OK, starting bcMeter Service")
 					keep_running=True
 					run_bcMeter_service()
 				
 			except Exception:
-				print_to_file("Connection problems")
-				stop_access_point()
-				force_wlan0_reset()
+				print_to_file("Connection problems persist")
 				file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
 				file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
 				file.close()
-				if (uptime >=hotspot_maxtime) and (bcMeterConf.run_hotspot is False):
+				if (uptime >=hotspot_maxtime):
 					print_to_file("shutting down hotspot because more than max tries.")
-					stop_access_point()
-				else:
+					stop_access_point()	
+				if (uptime <=hotspot_maxtime):
+					print_to_file("Deleting wifi credentials")
+					with open(WIFI_CREDENTIALS_FILE, 'w') as f:
+						f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
+					os.chmod(WIFI_CREDENTIALS_FILE, 0o777)
+					print_to_file("setting up access point again")
 					setup_access_point()
-			#print_to_file("exiting through the gift shop")
+					#print_to_file("rebooting")
+					#os.system("sudo reboot now")
+					#print_to_file("not rebooted b/c of permissions")
+		else:
+			print_to_file("checking status of hostapd")
+			exit_status = check_exit_status("hostapd")
+			print_to_file(exit_status)
+			#print_to_file("this should only be readable when hotspot is running and no wifi credentials are entered")
+			time.sleep(5)
 	else:
 		time.sleep(10)
 		#print_to_file("checking status")
@@ -339,6 +369,6 @@ while True:
 		if(connection_ok is False):
 			status = STATUS_NOK
 		else:
-		 keep_running= True #if connection set up once, do not stop everything later just because for example weak wifi signal. 
+			keep_running= True #if connection set up once, do not stop everything later just because for example weak wifi signal. 
 
 

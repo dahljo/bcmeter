@@ -24,7 +24,7 @@ import socket
 import importlib
 import bcMeterConf
 
-bcMeter_version = "0.9.23 2023-03-09"
+bcMeter_version = "0.9.24 2023-03-10"
 
 compair_upload = bcMeterConf.compair_upload 
 

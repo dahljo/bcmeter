@@ -24,7 +24,7 @@ import socket
 import importlib
 import bcMeterConf
 
-bcMeter_version = "0.9.24 2023-03-10"
+bcMeter_version = "0.9.25 2023-03-11"
 
 compair_upload = bcMeterConf.compair_upload 
 
@@ -47,7 +47,7 @@ GPIO.setup(16, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 output_to_terminal = False
 online = False
 
-pump_duty = GPIO.PWM(12,10)         #GPIO12 as PWM output, with 10Hz frequency
+pump_duty = GPIO.PWM(12,20)         #GPIO12 as PWM output, with 10Hz frequency
 
 sample_spot_areasize=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 0.50cm
 debug = False #no need to change here

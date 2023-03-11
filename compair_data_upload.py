@@ -6,6 +6,12 @@ import datetime
 import random
 from time import sleep
 
+# endpoint for checking internet connection (this is Google's public DNS server)
+DNS_HOST = "8.8.8.8"
+DNS_PORT = 53
+DNS_TIME_OUT = 3
+
+online = False
 
 thing_id = hex(uuid.getnode())
 post_to_sensors = "/sensors"
@@ -161,6 +167,20 @@ def get_observations(timestamp,bcngm3,atn,bcmsen,bcmref,bcmtemperature,location,
 
 	return observations
 
+def check_connection():
+	connection_ok = False
+	current_time = 0
+	while current_time < 5:
+		try:
+			socket.setdefaulttimeout(DNS_TIME_OUT)
+			socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((DNS_HOST, DNS_PORT))
+			connection_ok = True
+			break
+		except Exception:
+			current_time += 1
+			time.sleep(1)
+	
+
 
 def get_timestamp():
 	dateTimeObj = datetime.datetime.now()
@@ -177,7 +197,9 @@ def check_if_sensor_registered():
 	else:
 		print("bcMeter already registered!")
 
-check_if_sensor_registered()
+online = check_connection()
+if (online is True):
+	check_if_sensor_registered()
 
 def upload_sample(bcngm3,atn,bcmsen,bcmref,bcmtemperature, location, filter_status):
 	timestamp = get_timestamp()

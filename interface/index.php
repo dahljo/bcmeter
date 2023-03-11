@@ -142,13 +142,14 @@ $_SESSION['valid_session'] = 1;
 
 	<br /-->
 	<!-- CONTAINER FOR CHART -->
-	<div class="tooltip"></div>
 	<div id="svg-container">
 			 <input type="number"  id="y-menu-min" placeholder="min">
 			 <input type="number"  id="y-menu-max" placeholder="max">
 			 <input type="number" id="y-menu2-min" placeholder="min">
 			 <input type="number" id="y-menu2-max" placeholder="max">
-		<svg id="line-chart" width="1100" height="480" style="margin: 0px auto 10px auto">
+    <div class="tooltip" style="position: absolute;"></div>
+
+		<svg id="line-chart" width="1100" height="480" style="margin: 0px auto 10px">
 	</div>
 
 	</svg>
@@ -504,9 +505,11 @@ $_SESSION['valid_session'] = 1;
             : bi_lower
 
             const temp = data[idx];
-            const maxLeft = innerWidth/2 > e.pageX
-            ? xScale(data[idx][xLabel])+margin.right + 20 
-            : xScale(data[idx][xLabel]) - 10
+            let diff = e.offsetX - e.pageX
+            const maxLeft = innerWidth/2 > e.offsetX
+            ? xScale(data[idx][xLabel])+margin.right + 30 - diff
+
+            : xScale(data[idx][xLabel]) - 25 - diff
 
             let tooltipMessage = (!isHidden) ? `<div><b>Date:</b>  ${temp["bcmTimeRaw"]}</div>
                 <div><b>${yColumn}:</b>  ${temp[yColumn]}</div>
@@ -515,7 +518,8 @@ $_SESSION['valid_session'] = 1;
                 <div><b>${yColumn}:</b>  ${temp[yColumn]}</div>
                 `
             d3.select('.tooltip').style("left", maxLeft + 10 + "px")
-              .style("top", "150px")
+              .style("top", e.pageY + "px")
+              .style("pointer-events", "none")
               .style("opacity", "1")
               .html( tooltipMessage )
 

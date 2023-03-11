@@ -353,9 +353,9 @@ while True:
 					#os.system("sudo reboot now")
 					#print_to_file("not rebooted b/c of permissions")
 		else:
-			print_to_file("checking status of hostapd")
-			exit_status = check_exit_status("hostapd")
-			print_to_file(exit_status)
+			#print_to_file("checking status of hostapd")
+			#exit_status = check_exit_status("hostapd")
+			#print_to_file(exit_status)
 			#print_to_file("this should only be readable when hotspot is running and no wifi credentials are entered")
 			time.sleep(5)
 	else:

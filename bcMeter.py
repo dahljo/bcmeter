@@ -24,12 +24,15 @@ import socket
 import importlib
 import bcMeterConf
 
-bcMeter_version = "0.9.25 2023-03-11"
+bcMeter_version = "0.9.26 2023-03-22"
 
 compair_upload = bcMeterConf.compair_upload 
 
-if (compair_upload is True):
-	import compair_data_upload
+try:
+	heating = bcMeterConf.heating
+except:
+	heating = False  
+
 
 MCP3426_DEFAULT_ADDRESS = 0x68
 i2c = busio.I2C(SCL, SDA)
@@ -520,6 +523,9 @@ def bcmeter_main():
 			with open('bcMeterConf.py', 'w') as f:
 				f.writelines(lines)
 	print("using lat lon", bcMeter_location)
+	
+	if (compair_upload is True):
+		import compair_frost_upload
 
 	while(True):
 		if (debug == False):
@@ -572,7 +578,8 @@ def bcmeter_main():
 				if (atn_peak is False):
 					attenuation_coeff = sample_spot_areasize*((attenuation_current-attenuation_last_run)/100)/volume_air_per_minute	
 				else:
-					attenuation_coeff = 0
+					attenuation_coeff = sample_spot_areasize*((attenuation_current-attenuation_last_run)/100)/volume_air_per_minute	
+				#	attenuation_coeff = 0
 				absorption_coeff = attenuation_coeff/bcMeterConf.filter_scattering_factor
 				BCngm3 = int((absorption_coeff / sigma_air_880nm)*bcMeterConf.device_specific_correction_factor) #bc nanograms per m3
 				logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(flag) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1))
@@ -580,7 +587,7 @@ def bcmeter_main():
 				online = check_connection()
 				if (compair_upload == True) and (samples_taken > 2) and (online is True):
 					#print("uploading to CompAir Cloud",BCngm3,attenuation_current,main_sensor_value_current,reference_sensor_value_current,temperature_current, bcMeter_location, filter_status)
-					compair_data_upload.upload_sample(BCngm3,attenuation_current,main_sensor_value_current,reference_sensor_value_current,temperature_current, bcMeter_location, filter_status)
+					compair_frost_upload.upload_sample(str(BCngm3),str(attenuation_current),str(main_sensor_value_current),str(reference_sensor_value_current),str(temperature_current), str(bcMeter_location), str(filter_status))
 				flag=""
 				main_sensor_value_last_run=main_sensor_value_current 
 				attenuation_last_run=attenuation_current
@@ -656,30 +663,34 @@ def keep_the_temperature():
 			#sneak in pwm adjustment for pump because we dont want do have on thread just for that
 			importlib.reload(bcMeterConf)
 			pump_duty.ChangeDutyCycle(bcMeterConf.pump_dutycycle) 
-			#keep going with the temperature 
+			try:
+				heating = bcMeterConf.heating
+			except:
+				heating = False  
 			temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
-			if ((temperature_to_keep - temperature_current) > 10):
-				if (temperature_to_keep > 10):
-					temperature_to_keep = temperature_current - 5
-				GPIO.output(1,True)
-				GPIO.output(23,True)
-				#print("adjusted temperature to keep to  ", temperature_to_keep)
-			
-			if temperature_current < temperature_to_keep:
-				GPIO.output(1,True)
-				GPIO.output(23,True)
-				#print(temperature, "current, heating up to", temperature_to_keep)
+			if (heating is True):
+				if ((temperature_to_keep - temperature_current) > 10):
+					if (temperature_to_keep > 10):
+						temperature_to_keep = temperature_current - 5
+					GPIO.output(1,True)
+					GPIO.output(23,True)
+					#print("adjusted temperature to keep to  ", temperature_to_keep)
+				
+				if temperature_current < temperature_to_keep:
+					GPIO.output(1,True)
+					GPIO.output(23,True)
+					#print(temperature, "current, heating up to", temperature_to_keep)
 
-			if (temperature_current >(temperature_to_keep+1)):
-				if (temperature_to_keep < 40):
-					temperature_to_keep = temperature_current+1
-				GPIO.output(1,False)
-				GPIO.output(23,False)
-				#print("adjusted temperature to keep to ", temperature_to_keep)
+				if (temperature_current >(temperature_to_keep+1)):
+					if (temperature_to_keep < 40):
+						temperature_to_keep = temperature_current+1
+					GPIO.output(1,False)
+					GPIO.output(23,False)
+					#print("adjusted temperature to keep to ", temperature_to_keep)
 
-			if ((temperature_to_keep - temperature_current)<0):
-				GPIO.output(1,False)
-				GPIO.output(23,False)
+				if ((temperature_to_keep - temperature_current)<0):
+					GPIO.output(1,False)
+					GPIO.output(23,False)
 
 			sleep(5)
 

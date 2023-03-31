@@ -2,7 +2,16 @@
 // Start the PHP session
 session_start();
 $_SESSION['valid_session'] = 1;
+
+
 ?>
+
+<?php
+$macAddr = exec("/sbin/ifconfig wlan0 | grep 'ether' | awk '{print $2}'");
+$macAddr = str_replace(':', '', $macAddr);
+
+?>
+
 
 <!DOCTYPE html>
 <meta charset="utf-8">
@@ -53,7 +62,7 @@ $_SESSION['valid_session'] = 1;
       }
 ?>
 
-<img src="bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/>
+<a href="index.php"><img src="bcMeter-logo.png" style="width: 300px; display:block; margin: 0 auto;"/></a>
 
 
 <!-- Bootstrap Layout -->
@@ -670,7 +679,7 @@ data
                 let btn = document.getElementById("report-button");
                 if (bcmSen == 0){
                   if (bcmRef == 0) {
-                    btn.className = "btn btn-white";
+                    btn.className = "btn btn-secondary";
 
                   }
                 }
@@ -683,9 +692,9 @@ data
                   } else if (bcmSen > 4000 && bcmSen <= 6000) {
                     btn.className = "btn btn-danger";
                   } else if (bcmSen > 2000 && bcmSen <= 4000) {
-                    btn.className = "btn btn-dark";
+                    btn.className = "btn btn-secondary";
                   } else if (bcmSen <= 2000) {
-                    btn.className = "btn btn-black";
+                    btn.className = "btn btn-dark";
                   }
                 }
                 }
@@ -1395,17 +1404,13 @@ data
             </div>
           </div>
 <!-- end set WiFi modal-->
-
-
-
-
-<br /><br />
-
-
+<br />
 <?php
 
+$macAddr = 'bcMeter_0x' . $macAddr;
+echo "<div style='text-align:center;'>bcMeter $VERSION<br />thingID: $macAddr</div>";
 
-echo "<div style='text-align:center;'>v$VERSION</div>";
+
 
 if (isset($_POST["deleteOld"]))
 {

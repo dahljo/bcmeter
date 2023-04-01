@@ -684,7 +684,7 @@ data
                   }
                 }
 
-                if (bcmRef > 6000) {
+                if (bcmRef > 4000) {
                   if (bcmSen > 8000) {
                     btn.className = "btn btn-success";
                   } else if (bcmSen > 6000 && bcmSen <= 8000) {

@@ -24,14 +24,21 @@ import socket
 import importlib
 import bcMeterConf
 
-bcMeter_version = "0.9.26 2023-03-22"
+bcMeter_version = "0.9.27 2023-04-5"
 
 compair_upload = bcMeterConf.compair_upload 
+
+#compatibility for older revisions, try to find out if heating and pwm frequency. 
 
 try:
 	heating = bcMeterConf.heating
 except:
 	heating = False  
+
+try:
+	pwm_freq = bcMeterConf.pwm_freq
+except:
+	pwm_freq = 20  
 
 
 MCP3426_DEFAULT_ADDRESS = 0x68
@@ -50,7 +57,7 @@ GPIO.setup(16, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 output_to_terminal = False
 online = False
 
-pump_duty = GPIO.PWM(12,20)         #GPIO12 as PWM output, with 10Hz frequency
+pump_duty = GPIO.PWM(12,pwm_freq)         #GPIO12 as PWM output, with 20Hz frequency
 
 sample_spot_areasize=numpy.pi*(0.50/2)**2 #area of spot in cm2 from bcmeter, diameter 0.50cm
 debug = False #no need to change here

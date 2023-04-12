@@ -111,6 +111,8 @@ def check_if_sensor_registered(): #to be adjusted for FROST
 		"@iot.id": thing_id,
 		"name": thing_id,
 		"description": "bcMeter",
+		"dataType": "AIR",
+		"source": "bcMeter",
 		"Locations":[
 		{
 		"name": "Citizen Science Device",

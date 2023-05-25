@@ -24,7 +24,7 @@ import socket
 import importlib
 import bcMeterConf
 
-bcMeter_version = "0.9.27 2023-04-5"
+bcMeter_version = "0.9.28 2023-04-25"
 
 compair_upload = bcMeterConf.compair_upload 
 
@@ -722,4 +722,3 @@ if __name__ == '__main__':
 		sleep(0.1) #sometimes the dutycycle is not transmitted early
 
 		pass
-

@@ -107,22 +107,27 @@ def check_if_sensor_registered(): #to be adjusted for FROST
 		url = "https://sensorthings.wecompair.eu/FROST-Server/v1.1/$batch"
 
 
-		thing_id_body = {
-		"@iot.id": thing_id,
-		"name": thing_id,
-		"description": "bcMeter",
-		"dataType": "AIR",
-		"source": "bcMeter",
-		"Locations":[
-		{
-		"name": "Citizen Science Device",
-		"description": "Citizen Science Device",
-		"encodingType": "application/geo+json",
-		"location": {
-		"type": "Feature", "properties": {}, "geometry": {
-		"type": "Point", "coordinates": location
-		} }
-		} ] }
+		"body" = {
+			"@iot.id": thing_id,
+			"name": thing_id,
+			"description": "bcMeter",
+            "properties": {
+                "source": "bcmeter",
+                "dataType": "AIR"
+            }
+			"Locations":[
+			{
+				"name": "Citizen Science Device",
+				"description": "Citizen Science Device",
+				"encodingType": "application/geo+json",
+				"location": {
+					"type": "Feature", "properties": {}, "geometry": {
+						"type": "Point", "coordinates": location
+					} 
+				}
+			}
+			] 
+		 }
 
 		datastreams_bc = {
 		"@iot.id": thing_id + "_bc",

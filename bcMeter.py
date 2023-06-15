@@ -29,29 +29,7 @@ debug = False #no need to change here
 sht40_i2c = None
 
 online = False
-online = check_connection()
 
-
-try:
-	import adafruit_sht4x
-except ImportError:
-	if (online is True):
-		subprocess.check_call(["pip3", "install", "adafruit-circuitpython-sht4x"])
-		import adafruit_sht4x
-
-try:
-	sht = adafruit_sht4x.SHT4x(i2c)
-	sht.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
-
-	temperature, relative_humidity = sht.measurements
-	print("Temperature: %0.1f C" % temperature)
-	print("Humidity: %0.1f %%" % relative_humidity)
-	print("")
-	sht40_i2c = True
-except Exception as e:
-	sht40_i2c = False
-
-	print("Error: ", e)
 
 sigma_air_880nm = 0.0000000777
 run_once = "false"
@@ -134,6 +112,28 @@ def check_connection():
 
 
 def startUp():
+	online = check_connection()
+
+
+	try:
+		import adafruit_sht4x
+	except ImportError:
+		if (online is True):
+			subprocess.check_call(["pip3", "install", "adafruit-circuitpython-sht4x"])
+			import adafruit_sht4x
+
+	try:
+		sht = adafruit_sht4x.SHT4x(i2c)
+		sht.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
+
+		temperature, relative_humidity = sht.measurements
+		print("Temperature: %0.1f C" % temperature)
+		print("Humidity: %0.1f %%" % relative_humidity)
+		print("")
+		sht40_i2c = True
+	except Exception as e:
+		sht40_i2c = False
+		print("Error: ", e)
 	global MCP3426_DEFAULT_ADDRESS, sample_time, sample_count, run_once, debug, no_bias
 	cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3']
 	process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -422,7 +422,7 @@ def keep_the_temperature():
 			except:
 				skipheat=True			
 		else:
-			print("no temperature sensor detected")
+			#print("no temperature sensor detected")
 			temperature_current = 1
 	#sneak in pwm adjustment for pump because we dont want do have on thread just for that
 		importlib.reload(bcMeterConf)

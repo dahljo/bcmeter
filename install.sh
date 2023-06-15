@@ -92,7 +92,7 @@ apt update && apt upgrade -y && apt autoremove -y;
         fi
 
     echo "Installing software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates and the speed of your pi."
-    apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio python3-numpy nginx php php-fpm php-pear php-common php-cli php-gd screen git openssl && pip3 install gpiozero tabulate adafruit-blinka && systemctl enable zramswap.service  
+    apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio python3-numpy nginx php php-fpm php-pear php-common php-cli php-gd screen git openssl && pip3 install gpiozero tabulate adafruit-blinka adafruit-circuitpython-sht4x && systemctl enable zramswap.service  
 
 
     GITCLONE=0

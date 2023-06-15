@@ -107,7 +107,7 @@ def check_if_sensor_registered(): #to be adjusted for FROST
 		url = "https://sensorthings.wecompair.eu/FROST-Server/v1.1/$batch"
 
 
-		"body" = {
+		body = {
 			"@iot.id": thing_id,
 			"name": thing_id,
 			"description": "bcMeter",
@@ -115,7 +115,7 @@ def check_if_sensor_registered(): #to be adjusted for FROST
                 "source": "bcmeter",
                 "dataType": "AIR"
             }
-			"Locations":[
+			Locations:[
 			{
 				"name": "Citizen Science Device",
 				"description": "Citizen Science Device",

@@ -147,7 +147,7 @@ $macAddr = str_replace(':', '', $macAddr);
 
 	</div>
 
-	<!-- br />  <span style="display:block; text-align:center;font-size: 10px!important;  font-weight: 200;">BCngm3_6 and _12 are rolling averages.<br />Depending on the conditions, the Graph my fluctuate <strong>a lot</strong>. Display the rolling averages, then. They are available after minimum 6 or 12 samples taken (default 1hr)</span>
+	<!-- br />  <span style="display:block; text-align:center;font-size: 10px!important;  font-weight: 200;">BC_rolling_avg_of_6 and _12 are rolling averages.<br />Depending on the conditions, the Graph my fluctuate <strong>a lot</strong>. Display the rolling averages, then. They are available after minimum 6 or 12 samples taken (default 1hr)</span>
 
 	<br /-->
 	<!-- CONTAINER FOR CHART -->
@@ -185,7 +185,7 @@ $macAddr = str_replace(':', '', $macAddr);
         updateCurrentLogsFunction()
       } 
     /* VARS*/
-    let yColumn2 = "BCngm3_12",
+    let yColumn2 = "BC_rolling_avg_of_12",
       yColumn = "BCngm3",
       tooltip,
       hoveredTime = 0,
@@ -241,8 +241,8 @@ $macAddr = str_replace(':', '', $macAddr);
     const xLabel = "bcmTime";
 
     /* PRESET AND PREPOPULATE */
-    combineLogs["columns"] = ["BCngm3", "BCngm3_6", "BCngm3_12", "bcmATN", "bcmRef", "bcmSen", "Temperature"]
-    data["columns"] = ["BCngm3", "BCngm3_6", "BCngm3_12", "bcmATN", "bcmRef", "bcmSen", "Temperature"]
+    combineLogs["columns"] = ["BCngm3", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen", "Temperature", "sht_humidity"]
+    data["columns"] = ["BCngm3", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen", "Temperature", "sht_humidity"]
 
     /* FUNCTION AND EVENT LISTENER */
     /* EVENT LISTENER FOR MIN AND MAX VALUES */
@@ -445,10 +445,10 @@ $macAddr = str_replace(':', '', $macAddr);
         .y((d) => yScale2(yValue2(d)))
 
       /* TO HANDLE NULL VALUE FOR ROLLING AVERAGE */
-      if (yColumn == "BCngm3_6" || yColumn == "BCngm3_12") {
+      if (yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") {
         lineGenerator.defined(d => d[yColumn] !== null)
       }
-      if (yColumn2 == "BCngm3_6" || yColumn2 == "BCngm3_12") {
+      if (yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") {
         lineGenerator2.defined(d => d[yColumn2] !== null)
       }
 
@@ -617,6 +617,7 @@ $macAddr = str_replace(':', '', $macAddr);
     selectUpdate(data["columns"], "#y-menu", yColumn);
     selectUpdate(data["columns"], "#y-menu2", yColumn2)
 
+
     let BCngm3_value = (d) => d["BCngm3"];
     /* RENDER FUNCTION THAT CALLS CHART PLOT */
     const render = () => {
@@ -629,8 +630,8 @@ $macAddr = str_replace(':', '', $macAddr);
        }
       yValue = (d) => d[yColumn];
       yValue2 = (d) => d[yColumn2];
-      if ((((yColumn == "BCngm3_6" || yColumn == "BCngm3_12") && yColumn2 == "BCngm3") ||
-        ((yColumn2 == "BCngm3_6" || yColumn2 == "BCngm3_12") && yColumn == "BCngm3")) && !isHidden) {
+      if ((((yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") && yColumn2 == "BCngm3") ||
+        ((yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") && yColumn == "BCngm3")) && !isHidden) {
         yValueScale = BCngm3_value;
         yValueScale2 = BCngm3_value;
       } else {
@@ -644,7 +645,7 @@ $macAddr = str_replace(':', '', $macAddr);
 data
     const dataFile = (file, isCombineLogsSelected = false ) => {
       data = []
-      data["columns"] = ["BCngm3", "BCngm3_6", "BCngm3_12", "bcmATN", "bcmRef", "bcmSen","Temperature"]
+      data["columns"] = ["BCngm3", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen","Temperature","Humidity"]
       
       d3.dsv(';', file).then((rawData) => {
         let movingIndex6 = 0
@@ -659,6 +660,8 @@ data
             d.relativeLoad = +d.relativeLoad;
             d.BCngm3 = +d.BCngm3;
             d.Temperature = +d.Temperature;
+            d.sht_humidity = +d.sht_humidity;
+
             data.push(d)
           }
         });
@@ -711,17 +714,17 @@ data
 
         data.map((d, i) => {
           if (i < 4 || i > data.length - 3) {
-            d.BCngm3_6 = null;
+            d.BC_rolling_avg_of_6 = null;
         } else {
-          d.BCngm3_6 = +((((((data.slice(movingIndex6,  movingIndex6 + 6).reduce((p, c) => p + c.BCngm3, 0)) / 6)) 
+          d.BC_rolling_avg_of_6 = +((((((data.slice(movingIndex6,  movingIndex6 + 6).reduce((p, c) => p + c.BCngm3, 0)) / 6)) 
           +(((data.slice(movingIndex6 + 1, movingIndex6 + 1 + 6).reduce((p, c) =>  p + c.BCngm3, 0)) / 6))) / 2).toFixed(2))
           movingIndex6++;
         }
         /* MOVING AVERAGE = 12 */
         if (i < 7 || i > data.length - 6) {
-          d.BCngm3_12 = null;
+          d.BC_rolling_avg_of_12 = null;
         } else {
-          d.BCngm3_12 = +((((((data.slice(movingIndex12, movingIndex12 + 12).reduce((p, c) => p + c.BCngm3, 0)) / 12)) 
+          d.BC_rolling_avg_of_12 = +((((((data.slice(movingIndex12, movingIndex12 + 12).reduce((p, c) => p + c.BCngm3, 0)) / 12)) 
           +(((data.slice(movingIndex12 + 1, movingIndex12 + 1 + 12).reduce((p, c) => p + c.BCngm3, 0)) / 12))) / 2).toFixed(2))
           movingIndex12++;
         }
@@ -827,8 +830,8 @@ data
     
     document.getElementById("hide-y-menu2").addEventListener("click", function() {
       isHidden = !isHidden;
-      if ((((yColumn == "BCngm3_6" || yColumn == "BCngm3_12") && yColumn2 == "BCngm3") ||
-        ((yColumn2 == "BCngm3_6" || yColumn2 == "BCngm3_12") && yColumn == "BCngm3")) && !isHidden) {
+      if ((((yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") && yColumn2 == "BCngm3") ||
+        ((yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") && yColumn == "BCngm3")) && !isHidden) {
           render()
       }
       this.innerHTML = (isHidden) ? `Show` : `Hide`;
@@ -939,9 +942,9 @@ data
             Settings
           </button>
           <input type="hidden" name="randcheck" />
-            <!--button type="button" class="btn btn-info" data-toggle="modal" data-target="#editdate">
-              Set clock on bcMeter
-           </button-->
+            <button type="button" class="btn btn-info" data-toggle="modal" data-target="#edithostname">
+              Change Hostname
+           </button>
 
 
           <input type="submit" name="deleteOld" value="Delete old logs" class="btn btn-secondary"/>
@@ -959,6 +962,36 @@ data
   
 
 </div>
+
+
+<!-- begin edit parameters modal -->
+            <div class="modal fade" id="edithostname" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title" id="exampleModalLongTitle">Change the Hostname of the device</h5>
+                  <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                  </button>
+                </div>
+                <div class="modal-body">
+
+
+                  <form action="/interface/includes/status.php" method="GET">
+                  <label for="new_hostname">New Hostname:</label>
+                  <input type="text" id="new_hostname" name="new_hostname" pattern="[a-zA-Z0-9]+" required>
+                  <input type="hidden" name="status" value="change_hostname">
+                  <input type="submit" value="Submit">
+                </form>
+
+
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+<!-- End Edit Parameters -->
 
 <!-- begin edit parameters modal -->
             <div class="modal fade" id="editparameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
@@ -1218,7 +1251,7 @@ data
                           
                           $credsUpdated=true;
 
-                          echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
+                          //echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
                         }
 
                         // check for existing wifi credentials
@@ -1233,7 +1266,7 @@ data
                            $wifi_pwd ="";
                          $data = array("wifi_ssid"=>$wifi_ssid, "wifi_pwd"=>$wifi_pwd);
                           file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
-                          echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
+                          //echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
 
                       }
 
@@ -1390,9 +1423,9 @@ data
                                        <input type="Submit" name="reset_wifi_json" value="Delete Wifi" class="btn btn-warning">
                                     </div><br />
                                     <div class="alert alert-warning" role="alert">
-                                     Deleting/saving wifi credentials will take immediate effect and may cut connection.
+                                     Changes in Wifi Credentials will take effect <strong>on next reboot</strong>!
                                     </div>
-                                    <sub>If you like to run the bcMeter independently without being connected to a WiFi, you can adjust it in the Settings!
+                                    <sub>If you like to run the bcMeter independently without being connected to a WiFi, you can adjust it in the Settings.
                                   </form>
                                 </div> <!-- end entering-the-connection-info -->
                               </div>  <!-- tab-wifi -->
@@ -1406,9 +1439,15 @@ data
 <!-- end set WiFi modal-->
 <br />
 <?php
+$getHostname = 'sudo raspi-config nonint get_hostname';
+$hostname = shell_exec($getHostname);
 
 $macAddr = 'bcMeter_0x' . $macAddr;
-echo "<div style='text-align:center;'>bcMeter $VERSION<br />thingID: $macAddr</div>";
+echo "<div style='text-align:center;'>bcMeter $VERSION<br />thingID: $macAddr<br />Hostname: $hostname</div>";
+
+
+
+
 
 
 

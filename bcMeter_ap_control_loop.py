@@ -97,6 +97,15 @@ def force_wlan0_reset():
 
 
 def setup_access_point():
+	file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
+	file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
+	file.close()
+	with open(WIFI_CREDENTIALS_FILE, 'w') as f:
+		f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
+		os.chmod(WIFI_CREDENTIALS_FILE, 0o777)
+
+	p = subprocess.Popen(["sudo", "systemctl", "daemon-reload"])
+	p.communicate()
 	# reset the config file with a static IP
 	# first delete anything that was written after #bcMeterConfig
 	file = open('/etc/dhcpcd.conf', 'r+')
@@ -136,21 +145,20 @@ def stop_access_point():
 	p.communicate()
 
 def check_connection():
-	connection_ok = False
-	current_time = 0
-	while current_time < 5:
+	for _ in range(5):
 		try:
-			socket.setdefaulttimeout(DNS_TIME_OUT)
-			socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((DNS_HOST, DNS_PORT))
-			connection_ok = True
-			break
-		except Exception:
-			current_time += 1
-			time.sleep(1)
-	
+			start_time = time.time()
+			socket.setdefaulttimeout(0.15)  # Set socket timeout to 100ms
+			socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'', ('8.8.8.8', 1))
+			end_time = time.time()
+			response_time = (end_time - start_time) * 1000  # Convert to milliseconds
+			if response_time <= 160:
+				return True
 
-	
-	return connection_ok
+		except socket.error:
+			print_to_file("no connection, trying again to connect in 5s...")
+			time.sleep(5)  # Pause for 5 seconds before retrying
+	return False
 
 def get_uptime():
 	with open('/proc/uptime', 'r') as f:
@@ -236,6 +244,28 @@ stop_bcMeter_service() #if service was enabled and device was not shutdown prope
 
 print_to_file("Starting new session")
 
+def is_wifi_driver_loaded():
+	try:
+		result = subprocess.run(['sudo', 'iw', 'dev'], capture_output=True, text=True)
+		output = result.stdout.strip()
+
+		if "Interface" in output:
+			return True
+		else:
+			return False
+	except FileNotFoundError:
+		return False
+
+# Loop until Wi-Fi driver is loaded
+while True:
+	if is_wifi_driver_loaded():
+		print_to_file("Wi-Fi driver is enabled and loaded.")
+		break
+	else:
+		print_to_file("Wi-Fi driver is not enabled or loaded. Retrying in 5 seconds...")
+		time.sleep(2)  # Wait for 5 seconds before retrying
+
+
 connection_ok= check_connection()
 
 if(connection_ok is False):
@@ -252,15 +282,16 @@ else:
 		run_bcMeter_service()
 		status = STATUS_OK
 	else:
-		print_to_file("no wifi credentials given, discarding wpa_supplicant and opening accesspoint")
+		'''print_to_file("no wifi credentials given, discarding wpa_supplicant and opening accesspoint")
 		file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
 		file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
 		file.close()
 		p = subprocess.Popen(["sudo", "systemctl", "daemon-reload"])
-		p.communicate()
+		p.communicate()'''
 		setup_access_point()
 		status = STATUS_NOK
 		keep_running = False
+
 
 
 
@@ -336,9 +367,9 @@ while True:
 				
 			except Exception:
 				print_to_file("Connection problems persist")
-				file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
+				'''file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
 				file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
-				file.close()
+				file.close()'''
 				if (uptime >=hotspot_maxtime):
 					print_to_file("shutting down hotspot because more than max tries.")
 					stop_access_point()	

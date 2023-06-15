@@ -92,6 +92,20 @@ function getPID()
 	}
 	switch($status) {
 
+  case 'change_hostname':
+    if (isset($_GET['new_hostname'])) {
+      $new_hostname = $_GET['new_hostname'];
+      $setHostname = 'sudo raspi-config nonint do_hostname '. $new_hostname;
+      $hostname = shell_exec($setHostname);
+      echo "changing hostname to $new_hostname on next reboot.";
+
+
+    }
+  echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+  break;
+
+
+
     case 'debug':
     echo "$session_id";
 
@@ -187,12 +201,7 @@ function getPID()
       $cmd = 'cd /home/pi && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P /home/pi/ && sudo bash /home/pi/install.sh update' ;
       $proc = popen($cmd, 'r');
       echo '<pre>';
-      while (!feof($proc))
-      {
-          echo fread($proc, 4096);
-          @ flush();
-      }
-       echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+      echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
     }
    else {
     echo "<pre style='text-align:center'>bcMeter seems not to be online! Change WiFi and try again</pre>";

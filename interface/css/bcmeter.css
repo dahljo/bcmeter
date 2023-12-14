@@ -69,7 +69,10 @@ html, body{
 		 margin-top: 395px
 	}
 
-
+	#report-button {
+		margin: 0 10px;
+		display: block!important;
+	}
 
 
 	#resetZoom {
@@ -127,7 +130,6 @@ html, body{
 .nav-pills .nav-link {
 border-radius: .25rem;
 background-color: #eee;
-margin: 5px;
 }
 
 
@@ -152,4 +154,8 @@ text {
 	color: #ccc;
 	font-weight: 200;
 
+}
+
+table td, .table th {
+ padding: 0!important;
 }

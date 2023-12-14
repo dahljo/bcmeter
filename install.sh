@@ -1,5 +1,44 @@
 #!/bin/bash
+APT_PACKAGES="\
+    i2c-tools \
+    zram-tools \
+    python3-pip \
+    python3-smbus \
+    python3-dev \
+    python3-pigpio \
+    python3-scipy \
+    python3-rpi.gpio \
+    python3-numpy \
+    nginx \
+    php \
+    php-fpm \
+    php-pear \
+    php-common \
+    php-cli \
+    php-gd \
+    screen \
+    git \
+    openssl \
+    dnsmasq \
+    hostapd"
 
+PYTHON_PACKAGES="\
+    wifi \
+    gpiozero \
+    tabulate \
+    adafruit-blinka \
+    adafruit-circuitpython-sht4x"
+
+
+
+apt update && apt upgrade -y && apt autoremove -y;
+apt install -y $APT_PACKAGES
+
+# Install Python packages
+pip3 install $PYTHON_PACKAGES
+
+# Enable zramswap.service
+systemctl enable zramswap.service
 BCMINSTALLED=/tmp/bcmeter_installed
 
 if (( $EUID != 0 )); then
@@ -7,8 +46,18 @@ if (( $EUID != 0 )); then
     exit
 fi
 
+# resize the root partition when it is smaller than 3GB
+SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)
+SIZE=$(echo $SIZE | sed 's/[^0-9]//g')
+TOCOMPARE=3
+
+if [ $SIZE -lt $TOCOMPARE ]; then
+    raspi-config nonint do_expand_rootfs
+fi
 
 if [ "$1" == "update" ]; then
+
+
     version=''
     localfile=bcMeter.py
 
@@ -62,6 +111,42 @@ if [ "$1" == "update" ]; then
         echo "running update"
         systemctl stop bcMeter_ap_control_loop
         systemctl stop bcMeter
+
+        rm /lib/systemd/system/bcMeter_ap_control_loop.service
+        touch /lib/systemd/system/bcMeter_ap_control_loop.service
+
+tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
+[Unit]
+Description=bcMeter manage-access point & connections to wifi
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 /home/pi/bcMeter_ap_control_loop.py
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
+        rm /lib/systemd/system/bcMeter.service
+        touch /lib/systemd/system/bcMeter.service
+tee /lib/systemd/system/bcMeter.service <<EOF
+[Unit]
+Description=bcMeter.org service
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 /home/pi/bcMeter.py
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        chmod 644 /lib/systemd/system/bcMeter.service
+
         rm /home/pi/ap_control_loop.log
         echo "Backing up old Parameters and WiFi"
         cp /home/pi/bcMeterConf.py  /home/pi/bcMeterConf.orig
@@ -83,7 +168,7 @@ fi
 
 if [ "$1" != "update" ]; then
 echo "Updating the system"
-apt update && apt upgrade -y && apt autoremove -y;
+
 
 
     if [ -f "$BCMINSTALLED" ]; then
@@ -92,8 +177,6 @@ apt update && apt upgrade -y && apt autoremove -y;
         fi
 
     echo "Installing software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates and the speed of your pi."
-    apt install -y i2c-tools zram-tools python3-pip python3-smbus python3-dev python3-rpi.gpio python3-numpy nginx php php-fpm php-pear php-common php-cli php-gd screen git openssl && pip3 install gpiozero tabulate adafruit-blinka adafruit-circuitpython-sht4x && systemctl enable zramswap.service  
-
 
     GITCLONE=0
     read -p "Clone from git? Not necessary if you copied the files yourself. (yes or no)" yn
@@ -121,6 +204,7 @@ apt update && apt upgrade -y && apt autoremove -y;
     echo "enabled autologin - you can disable this with sudo raspi-config anytime"
     raspi-config nonint do_i2c 0
     echo "enabled i2c"
+    raspi-config nonint do_hostname "bcMeter"
 
 
     mv /home/pi/nginx-bcMeter.conf /etc/nginx/sites-enabled/default
@@ -128,8 +212,8 @@ apt update && apt upgrade -y && apt autoremove -y;
     usermod -aG sudo www-data
     usermod -aG sudo pi
 
-    echo "www-data  ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/www-data
-    echo "pi  ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/pi
+    echo "www-data  ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/www-data
+    echo "pi  ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/pi
 
     systemctl start nginx
 
@@ -161,23 +245,130 @@ fi
 rm -rf /home/pi/bcmeter
 chmod -R 777 /home/pi/*
 
-# resize the root partition when it is smaller than 3GB
-SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)
-SIZE=$(echo $SIZE | sed 's/[^0-9]//g')
-TOCOMPARE=3
-
-if [ $SIZE -lt $TOCOMPARE ]; then
-    sudo raspi-config nonint do_expand_rootfs
-fi
-
 
 touch $BCMINSTALLED 
 if [ "$1" != "update" ]; then
-    read -p "Basically the bcMeter is now set up. It is recommended to install the WiFi Accesspoint. It will create an own WiFi if no known WiFi is available. Continue? " yn
-    case $yn in
-        [Yy]* ) bash /home/pi/accesspoint-install.sh; break;;
-        [Nn]* ) exit;;
-        * ) echo "Please answer yes (y) or no (n).";;
-    esac
+APINSTALLED=/tmp/bcmeter_ap_installed
+
+if [ -f "$APINSTALLED" ]; then
+    cp /etc/dnsmasq.conf.orig /etc/dnsmasq.conf
+    cp /etc/hostapd/hostapd.conf.orig /etc/hostapd/hostapd.conf
 fi
+
+systemctl stop dnsmasq && systemctl stop hostapd
+
+tee -a /etc/dhcpcd.conf <<EOF
+#bcMeterConfig
+interface wlan0
+    static ip_address=192.168.18.8/24
+    nohook wpa_supplicant
+EOF
+
+cp /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
+
+tee -a /etc/dnsmasq.conf <<EOF
+#bcMeterConfig
+interface=wlan0
+    dhcp-range=192.168.18.8,192.168.18.254,255.255.255.0,24h
+EOF
+
+cp /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.orig
+tee -a /etc/hostapd/hostapd.conf <<EOF
+interface=wlan0
+driver=nl80211
+ssid=bcMeter
+hw_mode=g
+channel=7
+wmm_enabled=0
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase=bcMeterbcMeter
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+EOF
+
+
+sed -i '/#DAEMON_CONF/c\DAEMON_CONF="/etc/hostapd/hostapd.conf"' /etc/default/hostapd
+
+
+sed -i '/#net.ipv4.ip_forward=1/c\net.ipv4.ip_forward=1' /etc/sysctl.conf
+
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && iptables -t nat -A POSTROUTING -o wlan0 -j MASQUERADE
+sh -c "iptables-save > /etc/iptables.ipv4.nat"
+
+
+sed -i '/^exit 0/c\#ifconfig eth0 down\niptables-restore < /etc/iptables.ipv4.nat\nexit 0' /etc/rc.local
+
+
+chmod +x /home/pi/bcMeter_ap_control_loop.py
+touch /lib/systemd/system/bcMeter_ap_control_loop.service
+
+tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
+[Unit]
+Description=bcMeter manage-access point & connections to wifi
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 /home/pi/bcMeter_ap_control_loop.py
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
+
+touch /lib/systemd/system/bcMeter.service
+tee /lib/systemd/system/bcMeter.service <<EOF
+[Unit]
+Description=bcMeter.org service
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 /home/pi/bcMeter.py
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chmod 644 /lib/systemd/system/bcMeter.service
+if [ ! -f "$APINSTALLED" ]; then 
+
+sed -i -e 's/listen \[::\]:80 default_server;/#listen \[::\]:80 default_server;/g' /etc/nginx/sites-enabled/default
+sed -i '1 s/$/ ipv6.disable=1/' /boot/cmdline.txt
+echo "net.ipv6.conf.all.disable_ipv6=1" | tee -a /etc/sysctl.conf
+fi
+
+sysctl -p
+touch $APINSTALLED
+
+systemctl unmask hostapd && systemctl enable hostapd
+systemctl daemon-reload && systemctl enable bcMeter_ap_control_loop.service
+
+chmod 777 -R /home/pi
+
+echo "bcMeter will now boot into configuration mode now (WiFi Name bcMeter, password bcMeterbcMeter) Reboot now? (yes/no): "
+
+# Read user input
+read confirmation
+
+# Check user input
+if [ "$confirmation" = "yes" ]; then
+    # Perform the reboot
+    echo "Rebooting..."
+    systemctl start hostapd && systemctl start dnsmasq 
+    reboot now
+else
+
+    echo "Reboot canceled. Starting hostapd (Hotspot) now. Connection closed. Please reboot manually once you're done to enter Hotspot"
+fi
+
+fi
+
 

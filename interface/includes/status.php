@@ -2,6 +2,7 @@
 <?php
 // Start the PHP session
 session_start();
+header('X-Accel-Buffering: no');
 ?>
 <!DOCTYPE html>
 <meta charset="utf-8">
@@ -197,7 +198,6 @@ function getPID()
  case 'update':
  if ($connected == TRUE){
       echo "bcMeter will now update, this may take a few minutes. <br /><br /><pre>";
-      while (@ ob_end_flush()); // end all output buffers if any
       $cmd = 'cd /home/pi && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P /home/pi/ && sudo bash /home/pi/install.sh update' ;
       $proc = popen($cmd, 'r');
       echo '<pre>';
@@ -211,6 +211,55 @@ function getPID()
 
 break;
   	
+ case 'syslog':
+
+
+$output = shell_exec('sudo cat /var/log/syslog');
+
+// Define the path for the temporary file
+$tempFilePath = '/tmp/bcMeter_syslog.txt';
+
+// Save the output to the temporary file
+file_put_contents($tempFilePath, $output);
+
+// Set appropriate headers for downloading the file
+header('Content-Description: File Transfer');
+header('Content-Type: application/octet-stream');
+header('Content-Disposition: attachment; filename=' . basename($tempFilePath));
+header('Content-Transfer-Encoding: binary');
+header('Expires: 0');
+header('Cache-Control: must-revalidate');
+header('Pragma: public');
+header('Content-Length: ' . filesize($tempFilePath));
+
+// Read the file and output its contents
+readfile($tempFilePath);
+
+// Delete the temporary file after download
+unlink($tempFilePath);
+break;
+
+ case 'adc':
+
+session_write_close(); //important to not block the session
+
+$cmd = 'sudo strace -p'.$PID.' -s9999  -e write';
+
+while (@ ob_end_flush()); // end all output buffers if any
+
+$proc = popen($cmd, 'r');
+echo '<pre>';
+while (!feof($proc))
+{
+    echo fread($proc, 4096);
+    @ flush();
+}
+echo '</pre>';
+
+
+break;
+
+
     	default:
 
         getPID();

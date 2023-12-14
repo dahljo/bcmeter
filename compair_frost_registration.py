@@ -1,5 +1,4 @@
 
-#ONLY ONCE IN A LIFETIME (or when John says so):
 def register_bcMeter():
 	url = "https://sensorthings.wecompair.eu/FROST-Server/v1.1/$batch"
 	sensor = {

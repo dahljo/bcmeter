@@ -196,7 +196,6 @@ function getPID()
       break;
 
  case 'update':
-f
 // Function to flush and send output to the browser
 function sendOutput($output) {
     echo $output;
@@ -204,31 +203,38 @@ function sendOutput($output) {
     flush();
 }
 
+session_start();
 
-if ($connected == TRUE) {
-    echo "bcMeter will now update, this may take a few minutes. <br /><br /><pre>";
-    $cmd = 'cd /home/pi && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P /home/pi/ && sudo bash /home/pi/install.sh update';
-    $proc = popen($cmd, 'r');
-    sendOutput('<pre>');
+if (!isset($_SESSION['update_in_progress'])) {
+    $_SESSION['update_in_progress'] = true;
 
-    while (!feof($proc)) {
-        $output = fread($proc, 4096);
-        sendOutput($output);
+    if ($connected == TRUE) {
+        echo "bcMeter will now update, this may take a few minutes. <br /><br /><pre>";
+        $cmd = 'cd /home/pi && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P /home/pi/ && sudo bash /home/pi/install.sh update';
+        $proc = popen($cmd, 'r');
+        sendOutput('<pre>');
+
+        while (!feof($proc)) {
+            $output = fread($proc, 4096);
+            sendOutput($output);
+        }
+
+        pclose($proc);
+
+        // Display the content of the log file
+        $logContent = file_get_contents('/home/pi/bcMeter_install.log');
+        sendOutput($logContent);
+
+        echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+    } else {
+        echo "<pre style='text-align:center'>bcMeter seems not to be online! Change WiFi and try again</pre>";
     }
 
-    pclose($proc);
+    echo "Wait for automatic redirect... <script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
 
-    // Display the content of the log file
-    $logContent = file_get_contents('/home/pi/bcMeter_install.log');
-    sendOutput($logContent);
-
-    echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
-} else {
-    echo "<pre style='text-align:center'>bcMeter seems not to be online! Change WiFi and try again</pre>";
+    // Mark the update as complete
+    unset($_SESSION['update_in_progress']);
 }
-
-echo "Wait for automatic redirect... <script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
-
 break;
   	
  case 'syslog':

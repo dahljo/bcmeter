@@ -40,9 +40,12 @@ fi
 
 exec > >(tee -a /home/pi/bcMeter_install.log) 2>&1
 
+echo "checking if the base system is up to date"
+
 apt update && apt upgrade -y && apt autoremove -y;
 apt install -y $APT_PACKAGES
 
+echo "installing/updating python3 packages"
 # Install Python packages
 pip3 install $PYTHON_PACKAGES
 

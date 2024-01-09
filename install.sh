@@ -166,8 +166,6 @@ KillSignal=SIGINT
 WantedBy=multi-user.target
 EOF
         chmod 644 /lib/systemd/system/bcMeter.service
-
-        rm /home/pi/ap_control_loop.log
         echo "Backing up old Parameters and WiFi"
         cp /home/pi/bcMeterConf.py  /home/pi/bcMeterConf.orig
         cp /home/pi/bcMeter_wifi.json  /home/pi/bcMeter_wifi.json.orig

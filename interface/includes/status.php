@@ -225,7 +225,7 @@ if (!isset($_SESSION['update_in_progress'])) {
         $logContent = file_get_contents('/home/pi/bcMeter_install.log');
         sendOutput($logContent);
 
-        echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+        echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 30000);</script>";
     } else {
         echo "<pre style='text-align:center'>bcMeter seems not to be online! Change WiFi and try again</pre>";
     }

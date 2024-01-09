@@ -319,7 +319,7 @@ def startUp():
 
 	if len(my_pid.splitlines()) > 1:
 		sys.stdout.write("bcMeter Script already running.\n" + str(my_pid.splitlines())+"\n")
-		shutdown()
+		shutdown("DUPLICATE SESSION")
 	else:
 		pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
 		find_mcp_adress()
@@ -336,7 +336,7 @@ def handle_signal(signum, frame):
 	if signum == signal.SIGUSR1:
 		signal_handler()
 	elif signum == signal.SIGINT:
-		shutdown()
+		shutdown("SIGINT")
 
 #Signalhandler
 signal.signal(signal.SIGUSR1, handle_signal)
@@ -460,7 +460,7 @@ def read_adc(mcp_i2c_address, sample_time):
 			current_airflow=round(airflow_by_voltage(average_channel3, af_sensor_type),4)
 			#logger.debug("current AF ", current_airflow, average_channel3)
 			#blink_led(235)
-			if (airflow_only is False):
+			if (airflow_only is False) and (airflow_sensor is True):
 				check_airflow(current_airflow)
 			last_check_time = current_time
 			airflow_sample_index=1
@@ -765,7 +765,7 @@ def bcmeter_main():
 		return
 	if (debug is True):
 		#bcmeter_debug()
-		shutdown()
+		shutdown("DEBUG")
 	last_email_time = time()
 	first_value = True
 	filter_status = samples_taken = sht_humidity=delay=airflow_sensor_value=reference_sensor_value=reference_sensor_bias=main_sensor_bias=bcmRefFallback=bcmSenRef=reference_sensor_value_current=main_sensor_value_current=main_sensor_value_last_run=attenuation_last_run=BCngm3_unfiltered=BCngm3_unfilteredpos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=temperature_current=bcm_temperature_last_run=attenuation_coeff=absorption_coeff=0
@@ -810,7 +810,7 @@ def bcmeter_main():
 		sample_time = bcMeterConf.sample_time
 		pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
 		start = time()
-		if (samples_taken == 0):
+		if (samples_taken == 0) and (sample_time >10):
 			sample_time=60
 		samples_taken+=1	
 		sensor_values=get_sensor_values(MCP342X_DEFAULT_ADDRESS, sample_time)
@@ -884,13 +884,13 @@ def bcmeter_main():
 				notice = notice + "PEAK"
 		if (attenuation_last_run == 0):
 			attenuation_last_run = attenuation_current
-		if (volume_air_per_sample<0.01):
+		if (volume_air_per_sample<0.01) and (airflow_sensor is True):
 			if (mail_logs_to is not None):
-				logger.error("PUMP MALFCUNCTION - STOPPING")
+				logger.error("PUMP MALFUNCTION - STOPPING")
 				if (online is True): 
 					send_email("Pump")
 			notice=notice+"NO_AF"
-			shutdown()
+			shutdown("PUMP MALFUNCTION")
 			#delay = time() - start
 			#volume_air_per_sample=bcMeterConf.airflow_per_minute*(delay/60)
 
@@ -941,7 +941,7 @@ def bcmeter_main():
 		if (run_once == "true"): 
 			logger.debug("cycle of " + str(sample_time) + " took " + str(round(delay,2)) + " seconds")
 			GPIO.output(infrared_led_control, 0)
-			shutdown()
+			shutdown("RUN ONCE")
 		if (debug == False) and (reference_sensor_value_current !=0) and (main_sensor_value !=0) and (output_to_terminal is True): #output in terminal
 			with open('logs/log_current.csv','r') as csv_file:
 				os.system('clear')
@@ -963,10 +963,14 @@ def housekeeping():
 		importlib.reload(bcMeterConf)
 		if (airflow_sensor is False):
 			pump_dutycycle = getattr(bcMeterConf,'pump_dutycycle',20)
-			if (reverse_dutycycle is True):
-				pi.set_PWM_dutycycle(12, pump_PWM_range/2)
-			else:
-				pi.set_PWM_dutycycle(12, pump_dutycycle)
+			try:
+				if (pump_dutycycle >= 0 ) and (pump_dutycycle <= pump_PWM_range):
+					pi.set_PWM_dutycycle(12,pump_dutycycle)
+				else:
+					logger.error(f"wrong pump_dutycycle {pump_dutycycle}")
+					pi.set_PWM_dutycycle(12, 50)
+			except Exception as e:
+				print(e)
 		#go on with temperature stabilization
 		skipheat=False
 		if (sht40_i2c is True):
@@ -1093,15 +1097,18 @@ def led_communication():
 
 
 
-def shutdown():
+def shutdown(reason):
+	logger.debug(reason)
 	global reverse_dutycycle
-	pi.set_PWM_dutycycle(12, pump_PWM_range)
 	if (reverse_dutycycle is False):
 		pi.set_PWM_dutycycle(12, 0)
+	else:
+		pi.set_PWM_dutycycle(12, pump_PWM_range)
 
+	sleep(1)
 	pi.stop()
 	subprocess.Popen(["sudo", "killall", "pigpiod"]).communicate
-
+	sleep(2)
 	print("\nWhen ready again, you may restart the script with 'python3 bcMeter.py' or just reboot the device itself")
 	GPIO.output(infrared_led_control, False)
 	GPIO.output(1,False)
@@ -1148,5 +1155,5 @@ if __name__ == '__main__':
 
 
 	except KeyboardInterrupt: 
-		shutdown()
+		shutdown("CTRL+C")
 

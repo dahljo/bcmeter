@@ -31,6 +31,15 @@ PYTHON_PACKAGES="\
 
 
 
+$BCMINSTALLLOG="/home/pi/bcMeter_install.log"
+if [ -f "$BCMINSTALLLOG" ]; then
+    rm $BCMINSTALLLOG
+    exit
+fi
+
+
+exec > >(tee -a /home/pi/bcMeter_install.log) 2>&1
+
 apt update && apt upgrade -y && apt autoremove -y;
 apt install -y $APT_PACKAGES
 
@@ -40,6 +49,14 @@ pip3 install $PYTHON_PACKAGES
 # Enable zramswap.service
 systemctl enable zramswap.service
 BCMINSTALLED=/tmp/bcmeter_installed
+UPDATING=/tmp/bcmeter_updating
+
+
+    if [ -f "$UPDATING" ]; then
+        echo "script is in update procedure. remove /tmp/bcmeter_updating if you really know that this is not true to run this script again. "
+        exit
+    fi
+
 
 if (( $EUID != 0 )); then
     echo "Run with sudo"
@@ -57,7 +74,7 @@ fi
 
 if [ "$1" == "update" ]; then
 
-
+touch $UPDATING
     version=''
     localfile=bcMeter.py
 
@@ -174,7 +191,7 @@ echo "Updating the system"
     if [ -f "$BCMINSTALLED" ]; then
         echo "script already installed. remove /tmp/bcmeter_installed if you really want to run this script again. "
         exit
-        fi
+    fi
 
     echo "Installing software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates and the speed of your pi."
 
@@ -247,6 +264,8 @@ chmod -R 777 /home/pi/*
 
 
 touch $BCMINSTALLED 
+rm $UPDATING
+
 if [ "$1" != "update" ]; then
 APINSTALLED=/tmp/bcmeter_ap_installed
 

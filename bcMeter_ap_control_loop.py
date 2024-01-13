@@ -72,10 +72,10 @@ if (enable_wifi is False):
 	sys.exit()
 
 
-# endpoint for checking internet connection (this is Google's public DNS server)
-DNS_HOST = "8.8.8.8"
-DNS_PORT = 53
-DNS_TIME_OUT = 3
+# alternative check -- http/www on port 80 instead of dns on port 53
+CONNECTION_TEST_HOST = "www.google.com" 
+CONNECTION_TEST_PORT = 80
+CONNECTION_TEST_TIMEOUT = 3
 
 we_already_had_a_successful_connection=False
 
@@ -196,8 +196,8 @@ def setup_access_point():
 def check_connection():
 	for _ in range(3):
 		try:
-			# Attempt to create a socket connection to Google's DNS server (8.8.8.8) on port 53.
-			socket.create_connection(("8.8.8.8", 53), timeout=1)
+			# Attempt to create a socket connection to the test host
+			socket.create_connection((CONNECTION_TEST_HOST, CONNECTION_TEST_PORT), timeout=CONNECTION_TEST_TIMEOUT)
 			return True
 		except OSError:
 			time.sleep(2)

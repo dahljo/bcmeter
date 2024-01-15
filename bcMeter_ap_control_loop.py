@@ -1,7 +1,6 @@
 
 #heavily adapted telraams work 
 
-import socket
 import subprocess
 import signal
 import os
@@ -15,6 +14,8 @@ import bcMeterConf
 import importlib
 import logging
 from datetime import datetime
+
+from bcmeter_check_connection import check_connection
 
 enable_wifi = getattr(bcMeterConf, 'enable_wifi', True)
 is_ebcMeter = getattr(bcMeterConf, 'is_ebcMeter', False)
@@ -72,11 +73,6 @@ if (enable_wifi is False):
 	sys.exit()
 
 
-# alternative check -- http/www on port 80 instead of dns on port 53
-CONNECTION_TEST_HOST = "www.google.com" 
-CONNECTION_TEST_PORT = 80
-CONNECTION_TEST_TIMEOUT = 3
-
 we_already_had_a_successful_connection=False
 
 #wifi credentials file
@@ -102,8 +98,6 @@ def check_exit_status(service):
 def stop_access_point():
 	p = subprocess.Popen(["sudo", "systemctl", "stop", "hostapd"])
 	p.communicate()
-
-
 
 
 def stop_bcMeter_service():
@@ -191,17 +185,6 @@ def setup_access_point():
 	p.communicate()
 	logger.debug("hostapd started")
 
-
-
-def check_connection():
-	for _ in range(3):
-		try:
-			# Attempt to create a socket connection to the test host
-			socket.create_connection((CONNECTION_TEST_HOST, CONNECTION_TEST_PORT), timeout=CONNECTION_TEST_TIMEOUT)
-			return True
-		except OSError:
-			time.sleep(2)
-	return False
 
 def get_uptime():
 	with open('/proc/uptime', 'r') as f:

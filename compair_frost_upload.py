@@ -11,6 +11,7 @@ from time import sleep
 import logging
 import bcMeterConf
 from datetime import datetime
+from bcmeter_check_connection import check_connection
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -55,14 +56,7 @@ if len(log_files) > 11:
 		os.remove(os.path.join(log_folder, file_to_remove))
 
 
-
 logger.debug("Compair FROST Upload initialized")
-
-
-# endpoint for checking internet connection (this is Google's public DNS server)
-DNS_HOST = "8.8.8.8"
-DNS_PORT = 53
-DNS_TIME_OUT = 3
 
 online = False
 
@@ -76,17 +70,6 @@ name_ref = "Raw Reference Value"
 name_temperature = "Temperature"
 name_coordinates = "Position"
 name_filter_status ="Filter Status"
-
-def check_connection():
-	current_time = 0
-	while current_time < 5:
-		try:
-			socket.setdefaulttimeout(3)
-			socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
-			return True
-		except Exception:
-			current_time += 1
-			sleep(1)
 
 def get_location():
 	import json

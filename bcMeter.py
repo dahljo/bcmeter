@@ -13,6 +13,7 @@ from email.mime.application import MIMEApplication
 import smtplib
 import logging
 
+from bcmeter_check_connection import check_connection
 
 GPIO.setmode(GPIO.BCM)
 
@@ -195,17 +196,6 @@ files = os.listdir("/home/pi")
 for file in files:
 	file_path = os.path.join("/home/pi", file)
 	os.chmod(file_path, 0o777) #dont try this at home
-
-def check_connection():
-	current_time = 0
-	while current_time < 5:
-		try:
-			socket.setdefaulttimeout(3)
-			socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
-			return True
-		except Exception:
-			current_time += 1
-			sleep(1)
 
 online = check_connection()
 logger.debug("We can ping Google: %s", online)

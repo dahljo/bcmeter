@@ -1107,6 +1107,7 @@ function processLogFile($log)
                       foreach ($_POST['var'] as $key => $var) {
                           $value = $_POST['value'][$key];
                           if (strpos($value, "@") && !strpos('"')) {$value = "\"" . $value ."\""; }
+                          if (strpos($var, "password") && !strpos("'")) {$value = "'" . $value ."'"; }
                           if ($value !== ""){
                             $comment = $_POST['comment'][$key];
                             if (($var !="")) {

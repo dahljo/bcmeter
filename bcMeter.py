@@ -873,8 +873,11 @@ def bcmeter_main():
 	while(True):
 		importlib.reload(bcMeterConf)
 		mail_sending_interval = getattr(bcMeterConf, 'mail_sending_interval', 6)
+		send_log_by_mail = getattr(bcMeterConf, 'send_log_by_mail', False)
 		#mail_sending_interval = 6 if mail_sending_interval < 6 else (24 if mail_sending_interval > 24 else mail_sending_interval)
+		email_service_password = getattr(bcMeterConf, 'email_service_password', 'email_service_password')
 		led_brightness = getattr(bcMeterConf, 'led_brightness', 100)
+
 		sample_time = bcMeterConf.sample_time
 		pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
 		start = time()

@@ -413,7 +413,7 @@ def prime_control_loop():
 		if (is_wifi_in_range(wifi_ssid) is False):
 			is_online = False
 			setup_access_point()
-			return
+			return wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection
 		else:
 			connect_to_wifi(wifi_ssid,wifi_pwd, False)
 			is_online = check_connection() #initial ping Google determines if we're online
@@ -443,6 +443,8 @@ def prime_control_loop():
 			logger.debug("no connection and no wifi credentials on startup, so here is the accesspoint! (2)")
 			setup_access_point()
 	return wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection
+
+
 
 def check_service_running(service_name):
     try:

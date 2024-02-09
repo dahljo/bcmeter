@@ -449,7 +449,7 @@ def read_adc(mcp_i2c_address, sample_time):
 
 	start = time()
 	last_check_time = time()
-	airflow_samples_to_take = 1	if airflow_only is False else 200
+	airflow_samples_to_take = 5	if airflow_only is False else 200
 	check_interval = 1
 
 
@@ -873,6 +873,7 @@ def bcmeter_main():
 	while(True):
 		importlib.reload(bcMeterConf)
 		mail_sending_interval = getattr(bcMeterConf, 'mail_sending_interval', 6)
+		filter_status_mail = getattr(bcMeterConf, 'filter_status_mail', False)
 		send_log_by_mail = getattr(bcMeterConf, 'send_log_by_mail', False)
 		#mail_sending_interval = 6 if mail_sending_interval < 6 else (24 if mail_sending_interval > 24 else mail_sending_interval)
 		email_service_password = getattr(bcMeterConf, 'email_service_password', 'email_service_password')

@@ -215,14 +215,16 @@ def get_wifi_credentials():
 	try:
 		with open(WIFI_CREDENTIALS_FILE) as wifi_file:
 			data=json.load(wifi_file)
+			if (data['wifi_ssid'] == '') and (data['wifi_pwd'] == ''):
+				return 0, 0
 			return data['wifi_ssid'], data['wifi_pwd']
 	except FileNotFoundError as e:
-		logger.debug('FileNotFoundError:\n{}'.format(e))
+		logger.error('FileNotFoundError:\n{}'.format(e))
 		with open(WIFI_CREDENTIALS_FILE, 'w') as f:
 			f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
 		os.chmod(WIFI_CREDENTIALS_FILE, 0o777)
 	logger.debug("no file/ssid/pwd!")
-	return '', ''
+	return 0, 0
 
 def get_wifi_bssid(ssid):
 	logger.debug('... Getting wifi bssid for ssid={}'.format(ssid))
@@ -407,7 +409,7 @@ def prime_control_loop():
 	we_already_had_a_successful_connection = False
 	is_online = False
 	wifi_ssid, wifi_pwd=get_wifi_credentials()
-	if (len(wifi_ssid) > 0) and (len(wifi_pwd) > 0):
+	if (wifi_ssid != 0) and (wifi_pwd != 0):
 		if (is_wifi_in_range(wifi_ssid) is False):
 			is_online = False
 			setup_access_point()
@@ -419,14 +421,14 @@ def prime_control_loop():
 			logger.debug("We are online: %s",is_online)
 
 	if (is_online is True):
-		if (len(wifi_ssid) > 0) and (len(wifi_pwd) > 0):
+		if (wifi_ssid != 0) and (wifi_pwd != 0):
 			we_already_had_a_successful_connection = True
 			logger.debug("online at startup, starting bcMeter service (0)")
 			deactivate_dnsmasq_service()
 			stop_access_point()
 			run_bcMeter_service()
 	else:
-		if (len(wifi_ssid) > 1) and (len(wifi_pwd) > 1):
+		if (wifi_ssid != 0) and (wifi_pwd != 0):
 			connect_to_wifi(wifi_ssid,wifi_pwd, is_online)
 			is_online = check_connection() #initial ping Google determines if we're online
 			if is_online is True:
@@ -440,9 +442,7 @@ def prime_control_loop():
 			we_already_had_a_successful_connection = False
 			logger.debug("no connection and no wifi credentials on startup, so here is the accesspoint! (2)")
 			setup_access_point()
-	if (len(wifi_ssid)!=0) and (len(wifi_pwd)!=0):
-		return wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection
-	else: return 0,0, is_online, we_already_had_a_successful_connection
+	return wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection
 
 def check_service_running(service_name):
     try:
@@ -471,9 +471,10 @@ def ap_control_loop(wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_
 					stop_access_point()
 					stop_bcMeter_service()
 					os.system("shutdown now -h")
-			if (we_already_had_a_successful_connection is True ) and (wifi_ssid != 0) and (wifi_pwd != 0): #we've been online already but lost wifi signal. try to reconnect...
-				logger.debug("we've been online last time in %s but now we are not. try to reconnect to ...", wifi_ssid)
+			if  (wifi_ssid != 0) and (wifi_pwd != 0): #we've been online already but lost wifi signal. try to reconnect...
+				logger.debug(f"try to reconnect to {wifi_ssid}")
 				connect_to_wifi(wifi_ssid,wifi_pwd, we_already_had_a_successful_connection)
+
 		if (is_online is True) and (bcMeterConf.run_hotspot is False):
 	#		if (len(wifi_ssid) > 0) and (we_already_had_a_successful_connection is True): #while being online the wifi is deleted and we suspect the hotspot is required
 			we_already_had_a_successful_connection= True #if connection set up once, do not stop everything later just because for example weak wifi signal. 

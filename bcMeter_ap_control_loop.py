@@ -404,6 +404,8 @@ def is_wifi_in_range(wifi_name):
 
 
 def prime_control_loop():
+	we_already_had_a_successful_connection = False
+	is_online = False
 	wifi_ssid, wifi_pwd=get_wifi_credentials()
 	if (len(wifi_ssid) > 0) and (len(wifi_pwd) > 0):
 		if (is_wifi_in_range(wifi_ssid) is False):

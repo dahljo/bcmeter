@@ -1101,39 +1101,69 @@ function processLogFile($log)
         </button>
       </div>
       <div class="modal-body"> <?php 
-                  $file = "/home/pi/bcMeterConf.py";
-                    if (isset($_POST['save'])) {
-                      $fileContent = "";
-                      foreach ($_POST['var'] as $key => $var) {
-                          $value = $_POST['value'][$key];
-                          if (strpos($value, "@") && !strpos('"')) {$value = "\"" . $value ."\""; }
-                          if (strpos($var, "password") && !strpos("'")) {$value = "'" . $value ."'"; }
-                          if ($value !== ""){
-                            $comment = $_POST['comment'][$key];
-                            if (($var !="")) {
-                              $param = $_POST['param'][$key];
-                                if (($param !="")) {
-                                   $fileContent .= $var . "=" . $value . "#" . $comment . "#". $param ."\n";
-                                }
-                                else {
-                                    $fileContent .= $var . "=" . $value . "#" . $comment . "\n";
-                                }
-                            }
-                          }
-                      }
-                      //echo($fileContent);
-                      file_put_contents($file, $fileContent);
-                      echo "File updated successfully";
-                  }
+$file = "/home/pi/bcMeterConf.py";
+if (isset($_POST['save'])) {
+    $fileContent = "";
+    foreach ($_POST['var'] as $key => $var) {
+        $value = $_POST['value'][$key];
+        if (strpos($var, "mail_logs_to") !== false) {
+            // Check if the value is not already enclosed in single quotes
+            if (!preg_match("/^'.*'$/", $value)) {
+                $value = "'" . $value . "'";
+            }
+        }   
 
-                  if (isset($_POST['cancel'])) {
-                      echo "Action canceled";
-                  }
 
-                  $content = file_get_contents($file);
-                  $lines = explode("\n", $content);
 
-                  ?>
+        if (strpos($var, "password") !== false) {
+            // Check if the value is not already enclosed in single quotes
+            if (!preg_match("/^'.*'$/", $value)) {
+                $value = "'" . $value . "'";
+            }
+        }                        
+        if ($value !== ""){
+            $comment = $_POST['comment'][$key];
+            if (($var !="")) {
+                $param = $_POST['param'][$key];
+                if (($param !="")) {
+                    $fileContent .= $var . "=" . $value . "#" . $comment . "#". $param ."\n";
+                }
+                else {
+                    $fileContent .= $var . "=" . $value . "#" . $comment . "\n";
+                }
+            }
+        }
+    }
+
+    // Trim to remove whitespace from the beginning and end of the content
+    $fileContent = trim($fileContent);
+
+    // Split the content into lines
+    $lines = explode("\n", $fileContent);
+    // Filter out empty lines
+    $lines = array_filter($lines, function($line) {
+        return trim($line) !== '';
+    });
+    $uniqueLines = array_unique($lines); // Remove duplicate lines
+
+    // Rebuild fileContent with only unique and non-empty lines
+    $fileContent = implode("\n", $uniqueLines);
+
+    // Ensure the content ends with a newline
+    if (substr($fileContent, -1) !== "\n") {
+        $fileContent .= "\n";
+    }
+
+    file_put_contents($file, $fileContent);
+}
+
+
+
+$content = file_get_contents($file);
+$lines = explode("\n", $content);
+
+?>
+
         <form method="post">
           <table class="table table-bordered" id="session-parameters">
             <thead>

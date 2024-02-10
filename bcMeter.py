@@ -21,7 +21,7 @@ from datetime import datetime
 
 
 
-bcMeter_version = "0.9.898 2024-02-07"
+bcMeter_version = "0.9.899 2024-02-10"
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -135,7 +135,8 @@ if (use_display is True):
 
 
 if (use_display is True):
-	show_display(f"Initializing", False, 0)
+	show_display(f"Initializing bcMeter", False, 0)
+	show_display(f"bcMeter {bcMeter_version}", False, 1)
 
 
 import traceback, numpy, os, csv, typing, re, glob, signal, socket, importlib, smtplib
@@ -1215,7 +1216,11 @@ def shutdown(reason):
 	print(reason)
 	if (use_display is True):
 		show_display("Goodbye",0,True)
-		show_display(f"{reason}",1,True)
+		if reason == "SIGINT":
+			show_display("Turn off bcMeter",1,True)
+		else:
+			show_display(f"{reason}",1,True)
+
 		show_display("",2,True)
 	logger.debug(reason)
 	if (reverse_dutycycle is False):

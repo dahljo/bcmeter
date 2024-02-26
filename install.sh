@@ -187,8 +187,7 @@ EOF
         echo "Restoring Parameters"
         mv /home/pi/bcMeterConf.orig /home/pi/bcMeterConf.py
         mv /home/pi/bcMeter_wifi.json.orig /home/pi/bcMeter_wifi.json  
-        systemctl start bcMeter_ap_control_loop
-        systemctl start bcMeter
+        systemctl restart bcMeter_ap_control_loop
      else echo "most recent version installed"
     fi
 fi

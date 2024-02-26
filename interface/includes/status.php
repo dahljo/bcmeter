@@ -237,33 +237,43 @@ if (!isset($_SESSION['update_in_progress'])) {
 }
 break;
   	
- case 'syslog':
+case 'syslog':
 
+// Define the ZIP file path
+$zipFilePath = '/tmp/syslog_and_maintenance_logs.zip';
 
-$output = shell_exec('sudo cat /var/log/syslog');
+// Command to zip /var/log/syslog and all files in /home/pi/maintenance_logs/
+$zipCommand = "zip -j $zipFilePath /var/log/syslog /home/pi/maintenance_logs/*";
 
-// Define the path for the temporary file
-$tempFilePath = '/tmp/bcMeter_syslog.txt';
+// Execute the command
+shell_exec($zipCommand);
 
-// Save the output to the temporary file
-file_put_contents($tempFilePath, $output);
+// Check if ZIP file was created successfully
+if (file_exists($zipFilePath)) {
+    // Set appropriate headers for downloading the ZIP file
+    header('Content-Description: File Transfer');
+    header('Content-Type: application/zip');
+    header('Content-Disposition: attachment; filename=' . basename($zipFilePath));
+    header('Content-Transfer-Encoding: binary');
+    header('Expires: 0');
+    header('Cache-Control: must-revalidate');
+    header('Pragma: public');
+    header('Content-Length: ' . filesize($zipFilePath));
 
-// Set appropriate headers for downloading the file
-header('Content-Description: File Transfer');
-header('Content-Type: application/octet-stream');
-header('Content-Disposition: attachment; filename=' . basename($tempFilePath));
-header('Content-Transfer-Encoding: binary');
-header('Expires: 0');
-header('Cache-Control: must-revalidate');
-header('Pragma: public');
-header('Content-Length: ' . filesize($tempFilePath));
+    // Clean any previously output data
+    ob_clean();
+    flush();
 
-// Read the file and output its contents
-readfile($tempFilePath);
+    // Read the ZIP file and output its contents
+    readfile($zipFilePath);
 
-// Delete the temporary file after download
-unlink($tempFilePath);
+    // Delete the ZIP file after download
+    unlink($zipFilePath);
+} else {
+    echo 'Failed to create ZIP file.';
+}
 break;
+
 
  case 'adc':
 

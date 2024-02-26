@@ -10,7 +10,9 @@ import os
 from time import sleep
 import logging
 import bcMeterConf
+import sys
 from datetime import datetime
+import importlib
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -101,8 +103,9 @@ def get_location():
 location= getattr(bcMeterConf,'location',[0,0])
 
 online = check_connection()
+print(online, "frost upload online")
 
-if (online is True) and (bcMeterConf.get_location is True) and (location[0]==0):
+if (online is True) and (bcMeterConf.get_location is True):
 	location = get_location()
 	print("adding location to conf")
 	if not 'location' in open('bcMeterConf.py').read():
@@ -120,8 +123,10 @@ if (online is True) and (bcMeterConf.get_location is True) and (location[0]==0):
 
 location = bcMeterConf.location[::-1] #reverse to comply to frost syntax
 
-if (location[0]==0):
-	logger.error("No valid Location for bcMeter given, cancelling Upload. Enter manually or check options and internet connection")
+if (location[0]==0) and (location[1] == 0):
+	error_message="No valid Location for bcMeter given, cancelling. Enter manually or check options and internet connection"
+	logger.error(error_message)
+	print(error_message)
 	sys.exit(1)
 
 
@@ -441,6 +446,7 @@ def upload_sample(bcngm3,atn,bcmsen,bcmref,bcmtemperature, location, filter_stat
 	url = "https://sensorthings.wecompair.eu/FROST-Server/v1.1/CreateObservations"
 	try:
 		res = requests.post(url, json=observations)
+		print(res)
 		logger.debug(f"uploaded sample to FROST with return code {res}") 
 	except requests.exceptions.RequestException as e:
 		logger.error(f"An error occurred: {e}")

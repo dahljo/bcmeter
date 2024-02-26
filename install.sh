@@ -62,10 +62,19 @@ UPDATING=/tmp/bcmeter_updating
     fi
 
 
+
+
 if (( $EUID != 0 )); then
     echo "Run with sudo"
     exit
 fi
+
+if [ "$1" == "revert" ]; then
+echo "reverting"
+
+fi
+
+
 
 # resize the root partition when it is smaller than 3GB
 SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)

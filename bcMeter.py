@@ -21,7 +21,7 @@ from datetime import datetime
 
 
 
-bcMeter_version = "0.9.899 2024-02-10"
+bcMeter_version = "0.9.900 2024-02-26"
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -103,7 +103,6 @@ debug = False
 sht40_i2c = None
 online = False
 output_to_terminal = False 
-ds18b20 = False
 
 zero_airflow = 0
 
@@ -123,8 +122,9 @@ if (use_display is True):
 		}
 		logger.debug("Display found")
 		
-	except ImportError:
-		logger.error("No display driver installed, update the device")
+	except Exception as e:
+		logger.error(f"Display Error: {e}")
+		use_display = False
 
 	def show_display(message, line, clear):
 		if (use_display is True):
@@ -210,7 +210,7 @@ channel2 = MCP342X_CHANNEL_2
 channel3 = MCP342X_CHANNEL_3
 channel4 = MCP342X_CHANNEL_4
 
-mode = MCP342X_CONF_MODE_ONESHOT
+mode = MCP342X_CONF_MODE_CONTINUOUS
 rate_12bit = MCP342X_CONF_SIZE_12BIT
 rate_14bit = MCP342X_CONF_SIZE_14BIT
 rate_16bit = MCP342X_CONF_SIZE_16BIT 
@@ -252,6 +252,8 @@ for file in files:
 
 def check_connection():
 	current_time = 0
+	if is_ebcMeter:
+		return False
 	while current_time < 5:
 		try:
 			socket.setdefaulttimeout(3)
@@ -344,10 +346,70 @@ try:
 	logger.debug("Humidity: %0.1f %%" % relative_humidity)
 
 	sht40_i2c = True
+	ds18b20 = False
 except Exception as e:
 	sht40_i2c = False
 	logger.error("Error: %s", e)
 
+
+
+if sht40_i2c is False:
+	class TemperatureSensor:
+		RETRY_INTERVAL = 0.5
+		RETRY_COUNT = 10
+		device_file_name = None
+		def __init__(self, channel: int):
+			GPIO.setmode(GPIO.BCM)
+			GPIO.setup(channel, GPIO.IN)
+			GPIO.setup(1,GPIO.OUT)
+			GPIO.setup(23,GPIO.OUT)
+			
+		#def __del__(self):
+			#GPIO.cleanup()
+
+		@staticmethod
+		def read_device() -> typing.List[str]:
+			device_file_name = None
+			try:
+				device_file_name = glob.glob('/sys/bus/w1/devices/28*')[0] + '/w1_slave'
+			except Exception as e:
+				logger.error(f"Temperature Sensor Error {e}")
+			if device_file_name is not None:
+				with open(device_file_name, 'r') as fp:
+					return [line.strip() for line in fp.readlines()]
+
+
+	
+
+		def get_temperature_in_milli_celsius(self) -> int:
+			"""
+			$ cat /sys/bus/w1/devices/28-*/w1_slave
+			c1 01 55 05 7f 7e 81 66 c8 : crc=c8 YES
+			c1 01 55 05 7f 7e 81 66 c8 t=28062
+			"""
+			for i in range(self.RETRY_COUNT):
+				lines = self.read_device()
+				if len(lines) >= 2 and lines[0].endswith('YES'):
+					match = re.search(r't=(\d{1,6})', lines[1])
+					if match:
+						return int(match.group(1), 10)
+				sleep(self.RETRY_INTERVAL)
+			logger.error(f"Cannot read temperature (tried {self.RETRY_COUNT} times with an interval of {self.RETRY_INTERVAL})")
+	try:
+		temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2) #read once to decide if we use ds18b20
+		if temperature_current is not None:
+			ds18b20 = True
+			if debug:
+				print("using ds18b20")
+			logger.debug("Usind ds18b20 as temperature sensor")
+		
+			logger.debug("Temperature: %0.1f C" % temperature_current)
+
+	except:
+		print("no temperature sensor detected!")
+		ds18b20 = False
+
+	
 
 
 
@@ -356,14 +418,14 @@ def startUp():
 	global MCP342X_DEFAULT_ADDRESS, debug, airflow_sensor_bias
 	airflow_sensor_bias = -1
 	read_airflow_sensor_bias = read_adc(MCP342X_DEFAULT_ADDRESS,1)
-	print("AF sens bias ", airflow_sensor_bias)
+	if debug:
+		print("AF sens bias ", airflow_sensor_bias)
 	if (airflow_only is False):
 		pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
 		GPIO.setup(infrared_led_control, GPIO.OUT)
 		GPIO.setup(1,GPIO.OUT)
 		GPIO.setup(23,GPIO.OUT)
 		GPIO.setup(BUTTONPIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-		pump_test()
 
 
 def handle_signal(signum, frame):
@@ -450,7 +512,8 @@ def read_adc(mcp_i2c_address, sample_time):
 
 	start = time()
 	last_check_time = time()
-	airflow_samples_to_take = 5	if airflow_only is False else 200
+	airflow_samples_to_take = 5	if sample_time < 20 else 20
+	airflow_samples_to_take = 200 if airflow_only is True else airflow_samples_to_take
 	check_interval = 1
 
 
@@ -508,7 +571,7 @@ def read_adc(mcp_i2c_address, sample_time):
 
 		i+=1
 		if (debug is True):
-			print(f"{i}, {sum_channel1/i}, {sum_channel2/i}, {average_channel3}")
+			print(f"{i}, {sum_channel1/i}, {sum_channel2/i}, {average_channel3}, current: {voltage_channel1}, {voltage_channel2}, {voltage_channel3} ")
 			pass
 	average_channel3 = (sum_channel3 / j) if (airflow_sensor is True) else 0
 	#'''	
@@ -525,11 +588,11 @@ def read_adc(mcp_i2c_address, sample_time):
 
 def airflow_by_voltage(voltage,sensor_type):
 	global airflow_sensor_bias
+	pump_type=2
 	if (airflow_only is True) or (debug is True):
 		#print("\033c", end="", flush=True)
 		#print(voltage, airflow_sensor_bias)
 		pass
-	airflow_sensor_bias = 0 #override
 	# Define the table data (replace with your actual table) # valid for OMRON D6F P0001A1 with 100ml; due to limitations of ADC only 77ml max
 	if (sensor_type == 0):
 		table = {
@@ -537,21 +600,25 @@ def airflow_by_voltage(voltage,sensor_type):
 			2.5: 0.100
 		}
 
-	if (sensor_type == 1):
+	if (sensor_type == 1) :
 	# Define the table data (replace with your actual table) # valid for OMRON D6F P0010A2 with 1000ml; due to limitations of ADC only 473ml max
 		table = {
-			0.5-airflow_sensor_bias:0,
-			0.695-airflow_sensor_bias:0.04,
-			0.75-airflow_sensor_bias:0.05,
-			0.86-airflow_sensor_bias:0.1,
-			0.94-airflow_sensor_bias:0.13,
-			1.21-airflow_sensor_bias:0.15,
-			1.3-airflow_sensor_bias:0.26,
-			1.45-airflow_sensor_bias:0.31,
-			2.5-airflow_sensor_bias:1
+			0.5:0,
+			0.62:0.04,
+			0.75:0.05,
+			0.86:0.1,
+			0.94:0.13,
+			1.21:0.15,
+			1.3:0.26,
+			1.45:0.31,
+			2.5:1
 
 
 		}
+
+
+	
+
 
 	# Check if the voltage is in the table
 	if voltage in table:
@@ -573,7 +640,8 @@ def airflow_by_voltage(voltage,sensor_type):
 		interpolated_value = lower_value + (voltage - lower_voltage) * (upper_value - lower_value) / (upper_voltage - lower_voltage)
 		#if ((airflow_sensor == 1) and (interpolated_value > 0.47)) or ((airflow_sensor == 0 and interpolated_value>0.075)):
 		#	interpolated_value = 9999
-		return interpolated_value
+
+		return interpolated_value+airflow_sensor_bias
 
 
 
@@ -596,7 +664,7 @@ def check_airflow(current_mlpm):
 	if(disable_pump_control is False):
 		if (current_mlpm<0.002) and (desired_airflow_in_mlpm>0):
 			zero_airflow+=1
-			if (zero_airflow==10):
+			if (zero_airflow==50):
 				logger.debug("resetting pump... no airflow measured")
 				pump_test()
 				sleep(1)
@@ -624,7 +692,7 @@ def check_airflow(current_mlpm):
 		show_display(str(round(current_mlpm*1000)) + "ml/min",2,False)
 	if (debug is True):
 		if (use_display is True):
-			show_display(str(round(current_mlpm*1000)) + "ml/min" + f" {pump_dutycycle} ",2,False)
+			show_display(str(round(current_mlpm*1000)) + "ml/min",2,False)
 		print("current_mlpm", round(current_mlpm*1000,2), "desired_airflow_in_mlpm", round(desired_airflow_in_mlpm*1000,2), "pump_dutycycle", pump_dutycycle)
 		pass
 
@@ -649,50 +717,6 @@ def pump_test():
 '''
 
 
-
-if sht40_i2c is False:
-	class TemperatureSensor:
-		RETRY_INTERVAL = 0.5
-		RETRY_COUNT = 10
-		device_file_name = None
-		global ds18b20
-		def __init__(self, channel: int):
-			GPIO.setmode(GPIO.BCM)
-			GPIO.setup(channel, GPIO.IN)
-			GPIO.setup(1,GPIO.OUT)
-			GPIO.setup(23,GPIO.OUT)
-			
-		#def __del__(self):
-			#GPIO.cleanup()
-
-		@staticmethod
-		def read_device() -> typing.List[str]:
-			try:
-				device_file_name = glob.glob('/sys/bus/w1/devices/28*')[0] + '/w1_slave'
-			except Exception as e:
-				logger.error(f"Temperature Sensor Error {e}")
-			if device_file_name is not None:
-				with open(device_file_name, 'r') as fp:
-					return [line.strip() for line in fp.readlines()]
-				ds18b20 = True
-
-		def get_temperature_in_milli_celsius(self) -> int:
-			"""
-			$ cat /sys/bus/w1/devices/28-*/w1_slave
-			c1 01 55 05 7f 7e 81 66 c8 : crc=c8 YES
-			c1 01 55 05 7f 7e 81 66 c8 t=28062
-			"""
-			for i in range(self.RETRY_COUNT):
-				lines = self.read_device()
-				if len(lines) >= 2 and lines[0].endswith('YES'):
-					match = re.search(r't=(\d{1,6})', lines[1])
-					if match:
-						return int(match.group(1), 10)
-				sleep(self.RETRY_INTERVAL)
-			logger.error(f"Cannot read temperature (tried {self.RETRY_COUNT} times with an interval of {self.RETRY_INTERVAL})")
-			
-
-
 def get_location_from_ip():
 	import json
 	import requests 
@@ -708,6 +732,7 @@ def get_location_from_ip():
 def button_pressed():
 	input_state = GPIO.input(16)
 	if input_state == False:
+		print(yo)
 		pass
 
 def createLog(log,header):
@@ -826,7 +851,7 @@ def send_email(payload):
 
 
 def bcmeter_main():
-	global airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password
+	global airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password, ds18b20
 	compair_offline_logging = False
 	if (airflow_only is True):
 		get_sensor_values(MCP342X_DEFAULT_ADDRESS, 86400*31)
@@ -849,26 +874,19 @@ def bcmeter_main():
 	logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";"+ str(BCngm3_unfiltered) + ";" + str(temperature_current) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(sht_humidity) + ";" + str(volume_air_per_sample) 
 	online = check_connection()
 	get_location = getattr(bcMeterConf, 'get_location', False) 
-	location = getattr(bcMeterConf, 'location', False)
-	if (online is True) and (get_location is True) and (location[0] == 0.00):
-		location = get_location_from_ip()
-		if not 'location' in open('bcMeterConf.py').read():
-			with open('bcMeterConf.py', 'a') as f:
-				f.write("location=" + str(location) + "#Location of the bcMeter. Keep syntax exactly like that [lat,lon]#session")
-		else:
-			with open('bcMeterConf.py', 'r') as f:
-				lines = f.readlines()
-			for i, line in enumerate(lines):
-				if line.startswith('location'):
-					lines[i] = "location=" + str(location) + "#Location of the bcMeter. Keep syntax exactly like that [lat,lon]#session"
-			with open('bcMeterConf.py', 'w') as f:
-				f.writelines(lines)
-		logger.debug("using lat lon %s", location)
+	location = getattr(bcMeterConf, 'location', [0,0])
+
+
 		
 	if (compair_upload is True):
 		import compair_frost_upload
 	if debug is True:
-		print("Airflow Sensor bias: ",  airflow_sensor_bias)
+		#print("Airflow Sensor bias: ",  airflow_sensor_bias)
+		pass
+	if airflow_only is False:
+		pump_test()
+		housekeeping_thread = Thread(target=housekeeping)
+		housekeeping_thread.start()
 
 	y = 0
 	while(True):
@@ -973,7 +991,10 @@ def bcmeter_main():
 
 		attenuation_coeff = sample_spot_areasize*((attenuation_current-attenuation_last_run)/100)/volume_air_per_sample	
 		absorption_coeff = attenuation_coeff/bcMeterConf.filter_scattering_factor
-		BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*bcMeterConf.device_specific_correction_factor) #bc nanograms per m3
+
+		device_specific_correction_factor = bcMeterConf.device_specific_correction_factor/1000 if is_ebcMeter else bcMeterConf.device_specific_correction_factor
+
+		BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
 		#logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";" + str(round(temperature_current,1)) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(round(sht_humidity,1))
 		if (samples_taken>1) and (airflow_only is False):
 			with open("/home/pi/logs/" + logFileName, "a") as log:
@@ -988,18 +1009,18 @@ def bcmeter_main():
 
 			log_file_path = "/home/pi/logs/" + logFileName
 			column_index = 7  
-			last_six_values = []
+			sum_for_avg = []
 
 			with open(log_file_path, 'r') as log_file:
 				for line in log_file:
 					columns = line.strip().split(';')
 					try:
 						value = float(columns[7])  # Index 7 corresponds to the "BCngm3" column
-						last_six_values.append(value)
+						sum_for_avg.append(value)
 					except (ValueError, IndexError):
 						pass
 
-			average = sum(last_six_values[-12:]) / min(12, len(last_six_values))
+			average = sum(sum_for_avg[-12:]) / min(12, len(sum_for_avg))
 
 			if (use_display is True):
 				show_display(f"{int(average)} ngm3/hr", False, 0)
@@ -1059,7 +1080,7 @@ def bcmeter_main():
 			sleep(sample_time-delay)
 		
 def housekeeping():		
-	global temperature_to_keep, session_running_since
+	global temperature_to_keep, session_running_since, ds18b20
 	temperature_to_keep = 35
 	while (True):
 		if (use_display is True):
@@ -1093,13 +1114,12 @@ def housekeeping():
 				sht_humidity  = sensor.relative_humidity
 				#logger.debug(temperature_current, sht_humidity)
 			except:
-				if (ds18b20 is True):
-					temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
-				else:
-					temperature_current = 1
-					skipheat=True	
+				temperature_current = 1
+				skipheat=True	
 		if (ds18b20 is True):
 			temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
+			if debug:
+				print(temperature_current, "ds18b20 temp")
 		heating = getattr(bcMeterConf, 'heating', False)
 		#logger.debug("skip heating: " + str(skipheat) + " / heating: " + str(heating) + " / current temp: " + str(temperature_current) + " / temp to keep: " + str(temperature_to_keep))
 		if (heating is True) and (skipheat is False):
@@ -1278,8 +1298,6 @@ if __name__ == '__main__':
 		if (airflow_only is False):
 			if debug:
 				print("starting housekeeping thread")
-			heating_thread = Thread(target=housekeeping)
-			heating_thread.start()
 		if debug:
 			print("everything set up and running")
 

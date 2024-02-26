@@ -228,7 +228,7 @@ if (file_exists($filename)) {
 
 
     /* CONSTANTS */
-    const noData ="<div class='alert alert-warning' role='alert'>Not enough data yet. Graph will appear 15 Minutes after start.</div>";
+    const noData ="<div class='alert alert-warning' role='alert'>Not enough data yet.</div>";
     const svg = d3.select("svg");
     const width = +svg.attr("width");
     const height = +svg.attr("height");
@@ -608,13 +608,20 @@ if (file_exists($filename)) {
       brushedX = [];
       current_file = selectLogs.value; 
       data = dataObj[current_file];
-      if(data) {
+       if(data) {
         let len = data.length - 1;
-        render()
-        document.getElementById("report-value").innerHTML = `Averages: <h4 style='display:inline'>
+        render();
 
-        ${d3.mean([...data].splice(len-12, 12), BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avg12</sub> » 
-        ${d3.mean(data, BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avgALL</sub></h4>`;
+        // Calculate averages once
+        let avg12 = d3.mean([...data].splice(len-12, 12), BCngm3_value);
+        let avgAll = d3.mean(data, BCngm3_value);
+
+        // Prepare output based on is_ebcmeter flag
+        let unit = is_ebcmeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
+
+        document.getElementById("report-value").innerHTML = `Averages: <h4 style='display:inline'>
+        ${(avg12 ).toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avg12</sub> » 
+        ${(avgAll ).toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avgALL</sub></h4>`;
       }
 
       if (current_file == 'log_current.csv') {
@@ -702,9 +709,15 @@ if (file_exists($filename)) {
               let len = data.length - 1;
 
               if (len>0) {
+                let unit = is_ebcmeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
+
+                // Calculate averages once
+                let avg12 = d3.mean([...data].splice(len-12, 12), BCngm3_value);
+                let avgAll = d3.mean(data, BCngm3_value);
+
                 document.getElementById("report-value").innerHTML = `Averages: <h4 style='display:inline'>
-                ${d3.mean([...data].splice(len-12, 12), BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avg12</sub> » 
-                ${d3.mean(data, BCngm3_value).toFixed(0)} ng/m<sup>3</sup><sub>avgALL</sub></h4>`;
+                ${avg12.toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avg12</sub> » 
+                ${avgAll.toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avgALL</sub></h4>`;
                 let bcmRef = data[len].bcmRef;
                 let bcmSen = data[len].bcmSen;
                 let btn = document.getElementById("report-button");
@@ -733,7 +746,7 @@ if (file_exists($filename)) {
                 }
                 
               if (len<0) {
-                document.getElementById("report-value").innerHTML = `<h4>Not enough data for graph/averages. Will appear after 15 Minutes after starting.</h4>`;
+                document.getElementById("report-value").innerHTML = `<h4>Not enough data for graph/averages yet.</h4>`;
               }
 }
 
@@ -2046,7 +2059,7 @@ if (isset($_POST["exec_debug"]))
 
 if (isset($_POST["startbcm"]))
 {
-	 echo "<script>bootbox.alert('Starting new log. Wait 15 Minutes for graph to appear');</script>";
+	 echo "<script>bootbox.alert('Starting new log. Wait a few minutes for graph to appear');</script>";
       shell_exec("sudo systemctl stop bcMeter");
     sleep(3);
 		shell_exec("sudo systemctl start bcMeter");
@@ -2060,7 +2073,7 @@ echo <<<JS
 <script>
 var dialog = bootbox.dialog({
 		title: 'Start new log?',
-		message: "<p>This will start a new log. It takes 15 Minutes for the new chart to appear. </p>",
+		message: "<p>This will start a new log. It takes a few minutes for the new chart to appear. </p>",
 		size: 'small',
 		buttons: {
 				cancel: {

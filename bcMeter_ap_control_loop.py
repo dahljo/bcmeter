@@ -97,8 +97,9 @@ if (use_display is True):
 		}
 		logger.debug("Display found (1)")
 		
-	except ImportError:
-		logger.error("No display driver installed, update the device (1)")
+	except Exception as e:
+		logger.error(f"Display Error: {e}")
+		use_display = False
 
 def show_display(message, line, clear):
 	if (use_display is True):
@@ -498,8 +499,8 @@ def ap_control_loop(wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_
 						stop_bcMeter_service()
 						show_display(f"Shutting down", False, 0)
 						show_display(f"No Config", False, 1)
-						#stop_access_point()
-						#os.system("shutdown now -h")
+						stop_access_point()
+						os.system("shutdown now -h")
 			else:
 				if (wifi_ssid != 0) and (wifi_pwd != 0): #we've been online already but lost wifi signal. try to reconnect...
 					logger.debug(f"try to reconnect to {wifi_ssid}")

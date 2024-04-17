@@ -1,0 +1,161 @@
+{
+    "run_hotspot": {
+        "value": false,
+        "description": "Hotspot Mode",
+        "type": "boolean",
+        "parameter": "device"
+    },
+    "heating": {
+        "value": false,
+        "description": "Enable heating",
+        "type": "boolean",
+        "parameter": "device"
+    },
+    "sample_spot_diameter": {
+        "value": 0.5,
+        "description": "Set the Diameter of the sample spot size in cm",
+        "type": "number",
+        "parameter": "administration"
+    },
+    "sample_time": {
+        "value": 300,
+        "description": "Time in seconds between two samples.",
+        "type": "number",
+        "parameter": "session"
+    },
+    "filter_scattering_factor": {
+        "value": 1.39,
+        "description": "Scattering of Filter. 1.39 for magee ae33, 1.66 for pallflex t60a20 in aethlabs maeth51",
+        "type": "number",
+        "parameter": "administration"
+    },
+    "device_specific_correction_factor": {
+        "value": 1,
+        "description": "Device specific correction factor",
+        "type": "number",
+        "parameter": "device"
+    },
+    "airflow_per_minute": {
+        "value": 0.1,
+        "description": "Adjust airflow per minute in liter",
+        "type": "number",
+        "parameter": "session"
+    },
+    "airflow_sensor": {
+        "value": true,
+        "description": "Airflow Sensor available",
+        "type": "boolean",
+        "parameter": "device"
+    },
+    "af_sensor_type": {
+        "value": 1,
+        "description": "Type of Airflow Sensor. Set to 0 for P0001A1 and 1 for P0010A2",
+        "type": "number",
+        "parameter": "device"
+    },
+    "reverse_dutycycle": {
+        "value": false,
+        "description": "Reverse pump duticycle; off for most generic without controller!",
+        "type": "boolean",
+        "parameter": "administration"
+    },
+    "pump_dutycycle": {
+        "value": 40,
+        "description": "Power 0-255 for the pump. Set automatically if airflow sensor.",
+        "type": "number",
+        "parameter": "administration"
+    },
+    "pwm_freq": {
+        "value": 30,
+        "description": "Pulse width modulation frequency for pump duty cycle.",
+        "type": "number",
+        "parameter": "administration"
+    },
+    "swap_channels": {
+        "value": false,
+        "description": "Swap data channels if you see continous negative values or on Rev 2 bcMeters.",
+        "type": "boolean",
+        "parameter": "administration"
+    },
+    "led_brightness": {
+        "value": 100,
+        "description": "IR LED Brightness",
+        "type": "number",
+        "parameter": "administration"
+    },
+    "compair_upload": {
+        "value": false,
+        "description": "Upload Data to CompAIR. Needs coordinates.",
+        "type": "boolean",
+        "parameter": "session"
+    },
+    "get_location": {
+        "value": false,
+        "description": "Get rough location by IP automatically each time?",
+        "type": "boolean",
+        "parameter": "session"
+    },
+    "location": {
+        "value": [
+            0.0,
+            0.0
+        ],
+        "description": "Location of the bcMeter. Keep syntax exactly like that [lat,lon]",
+        "type": "array",
+        "parameter": "session"
+    },
+    "use_display": {
+        "value": false,
+        "description": "bcMeter is provided with a display",
+        "type": "boolean",
+        "parameter": "device"
+    },
+    "enable_wifi": {
+        "value": true,
+        "description": "Disable for use with LAN.",
+        "type": "boolean",
+        "parameter": "device"
+    },
+    "is_ebcMeter": {
+        "value": false,
+        "description": "Use the device for direct emission measurement",
+        "type": "boolean",
+        "parameter": "administration"
+    },
+    "send_log_by_mail": {
+        "value": false,
+        "description": "Periodically receive log files by mail.",
+        "type": "boolean",
+        "parameter": "session"
+    },
+    "mail_logs_to": {
+        "value": "your@email.address",
+        "description": "Enter e-mail adress(es) to send the log files to, comma separated",
+        "type": "string",
+        "parameter": "session"
+    },
+    "filter_status_mail": {
+        "value": false,
+        "description": "Rececive a mail when filter change is suggested",
+        "type": "boolean",
+        "parameter": "session"
+    },
+    "disable_pump_control": {
+        "value": false,
+        "description": "ON to disable internal pump control",
+        "type": "boolean",
+        "parameter": "device"
+    },
+    "mail_sending_interval": {
+        "value": 24,
+        "description": "Send logs every X hours (between 6 and 24)",
+        "type": "number",
+        "parameter": "session"
+    },
+    "email_service_password": {
+        "value": "email_service_password",
+        "description": "this is the password if you want to receive emails. contact jd@bcmeter.org if you want to use the service",
+        "type": "string",
+        "parameter": "device"
+    }
+}

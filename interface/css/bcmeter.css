@@ -69,10 +69,6 @@ html, body{
 		 margin-top: 395px
 	}
 
-	#report-button {
-		margin: 0 10px;
-		display: block!important;
-	}
 
 
 	#resetZoom {
@@ -159,3 +155,40 @@ text {
 table td, .table th {
  padding: 0!important;
 }
+
+.status-div {
+	max-width: 30%;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+      text-align: center;
+      border-radius: 5px;
+    }
+
+.log-container {
+display: flex;
+justify-content: space-between;
+font-size: 12px;
+}
+
+.log-box {
+flex-basis: 30%;
+padding: 10px;
+border: 1px solid #ccc;
+}
+
+        .modal-content {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 20px;
+        }
+        .table {
+            margin-top: 20px;
+        }
+        .btn-primary, .btn-danger {
+            margin: 5px;
+        }
+        /* Additional styles for your switch */
+        .bootstrap-switch .bootstrap-switch-handle-on, .bootstrap-switch .bootstrap-switch-handle-off {
+            white-space: nowrap; /* Ensures text doesn't wrap */
+        }

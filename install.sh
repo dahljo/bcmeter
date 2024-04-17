@@ -1,4 +1,9 @@
 #!/bin/bash
+if (( $EUID != 0 )); then
+    echo "Run with sudo"
+    exit
+fi
+
 APT_PACKAGES="\
     i2c-tools \
     zram-tools \
@@ -28,9 +33,11 @@ PYTHON_PACKAGES="\
     tabulate \
     adafruit-blinka \
     adafruit-circuitpython-sht4x \
-    oled-text"
+    oled-text \
+    Flask \
+    flask-cors"
 
-
+INSTALLER_VERSION=0.5
 
 $BCMINSTALLLOG="/home/pi/bcMeter_install.log"
 if [ -f "$BCMINSTALLLOG" ]; then
@@ -39,7 +46,7 @@ if [ -f "$BCMINSTALLLOG" ]; then
 fi
 
 
-exec > >(tee -a /home/pi/bcMeter_install.log) 2>&1
+exec > >(tee -a $BCMINSTALLLOG) 2>&1
 
 echo "checking if the base system is up to date"
 
@@ -50,24 +57,26 @@ echo "installing/updating python3 packages"
 # Install Python packages
 pip3 install $PYTHON_PACKAGES
 
+if ! grep -q "PIGPIO_ADDR=soft" /etc/environment; then
+ sh -c "echo 'PIGPIO_ADDR=soft' >> /etc/environment"
+fi
+
+if ! grep -q "PIGPIO_PORT=8888" /etc/environment; then
+        sh -c "echo 'PIGPIO_PORT=8888' >> /etc/environment"
+fi
+
 # Enable zramswap.service
 systemctl enable zramswap.service
 BCMINSTALLED=/tmp/bcmeter_installed
 UPDATING=/tmp/bcmeter_updating
 
 
-    if [ -f "$UPDATING" ]; then
-        echo "script is in update procedure. remove /tmp/bcmeter_updating if you really know that this is not true to run this script again. "
-        exit
-    fi
-
-
-
-
-if (( $EUID != 0 )); then
-    echo "Run with sudo"
+if [ -f "$UPDATING" ]; then
+    echo "script is in update procedure. remove /tmp/bcmeter_updating if you really know that this is not true to run this script again. "
     exit
 fi
+
+
 
 if [ "$1" == "revert" ]; then
 echo "reverting"
@@ -83,6 +92,7 @@ TOCOMPARE=3
 
 if [ $SIZE -lt $TOCOMPARE ]; then
     raspi-config nonint do_expand_rootfs
+    echo "resizing partition to full size"
 fi
 
 if [ "$1" == "update" ]; then
@@ -139,45 +149,8 @@ touch $UPDATING
     if [ "$major_version" -lt "$git_major_version" ] || [ "$minor_version" -lt "$git_minor_version" ] || [ "$patch_version" -lt "$git_patch_version" ]
     then
         echo "running update"
-        systemctl stop bcMeter_ap_control_loop
-        systemctl stop bcMeter
-
-        rm /lib/systemd/system/bcMeter_ap_control_loop.service
-        touch /lib/systemd/system/bcMeter_ap_control_loop.service
-
-tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
-[Unit]
-Description=bcMeter manage-access point & connections to wifi
-After=multi-user.target
-
-[Service]
-Type=idle
-ExecStart=/usr/bin/python3 /home/pi/bcMeter_ap_control_loop.py
-KillSignal=SIGINT
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
-        rm /lib/systemd/system/bcMeter.service
-        touch /lib/systemd/system/bcMeter.service
-tee /lib/systemd/system/bcMeter.service <<EOF
-[Unit]
-Description=bcMeter.org service
-After=multi-user.target
-
-[Service]
-Type=idle
-ExecStart=/usr/bin/python3 /home/pi/bcMeter.py
-KillSignal=SIGINT
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        chmod 644 /lib/systemd/system/bcMeter.service
         echo "Backing up old Parameters and WiFi"
-        cp /home/pi/bcMeterConf.py  /home/pi/bcMeterConf.orig
+        cp /home/pi/bcMeter_config.json  /home/pi/bcMeter_config.orig
         cp /home/pi/bcMeter_wifi.json  /home/pi/bcMeter_wifi.json.orig
         echo "Updating from github"
         rm -rf /home/pi/bcmeter/ /home/pi/interface/
@@ -185,7 +158,7 @@ EOF
         mv /home/pi/bcmeter/* /home/pi/
         rm -rf /home/pi/gerbers/ /home/pi/stl/
         echo "Restoring Parameters"
-        mv /home/pi/bcMeterConf.orig /home/pi/bcMeterConf.py
+        mv /home/pi/bcMeter_config.orig /home/pi/bcMeter_config.json
         mv /home/pi/bcMeter_wifi.json.orig /home/pi/bcMeter_wifi.json  
         systemctl restart bcMeter_ap_control_loop
      else echo "most recent version installed"
@@ -195,8 +168,6 @@ fi
 
 if [ "$1" != "update" ]; then
 echo "Updating the system"
-
-
 
     if [ -f "$BCMINSTALLED" ]; then
         echo "script already installed. remove /tmp/bcmeter_installed if you really want to run this script again. "
@@ -217,16 +188,16 @@ echo "Updating the system"
         git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter &&  mv /home/pi/bcmeter/* /home/pi/ && rm -rf /home/pi/gerbers/ /home/pi/stl/
     fi
 
-
-
     mkdir /home/pi/logs
     touch /home/pi/logs/log_current.csv
 
-
-
-    echo "Configuring"
-    raspi-config nonint do_onewire 1
+    echo "Configuring bcMeter"
+    raspi-config nonint do_onewire 0
+    if ! grep -q "dtoverlay=w1-gpio,gpiopin=5" /boot/config.txt; then
     sh -c "echo 'dtoverlay=w1-gpio,gpiopin=5' >> /boot/config.txt"
+    
+
+    fi
     raspi-config nonint do_boot_behaviour B2
     echo "enabled autologin - you can disable this with sudo raspi-config anytime"
     raspi-config nonint do_i2c 0
@@ -250,22 +221,6 @@ echo "Updating the system"
     echo "configuration complete."
 
 
-    touch /lib/systemd/system/bcMeter.service
-tee /lib/systemd/system/bcMeter.service <<EOF
-    [Unit]
-    Description=bcMeter.org service
-    After=multi-user.target
-
-    [Service]
-    Type=idle
-    ExecStart=/usr/bin/python3 /home/pi/bcMeter.py
-
-    [Install]
-    WantedBy=multi-user.target
-EOF
-
-    chmod 644 /lib/systemd/system/bcMeter.service
-    systemctl daemon-reload 
 
 fi
 
@@ -276,15 +231,7 @@ chmod -R 777 /home/pi/*
 touch $BCMINSTALLED 
 rm $UPDATING
 
-if [ "$1" != "update" ]; then
-APINSTALLED=/tmp/bcmeter_ap_installed
 
-if [ -f "$APINSTALLED" ]; then
-    cp /etc/dnsmasq.conf.orig /etc/dnsmasq.conf
-    cp /etc/hostapd/hostapd.conf.orig /etc/hostapd/hostapd.conf
-fi
-
-systemctl stop dnsmasq && systemctl stop hostapd
 
 tee -a /etc/dhcpcd.conf <<EOF
 #bcMeterConfig
@@ -331,10 +278,24 @@ sh -c "iptables-save > /etc/iptables.ipv4.nat"
 
 sed -i '/^exit 0/c\#ifconfig eth0 down\niptables-restore < /etc/iptables.ipv4.nat\nexit 0' /etc/rc.local
 
+    if [ ! -f "$APINSTALLED" ]; then 
 
-chmod +x /home/pi/bcMeter_ap_control_loop.py
+    sed -i -e 's/listen \[::\]:80 default_server;/#listen \[::\]:80 default_server;/g' /etc/nginx/sites-enabled/default
+    sed -i '1 s/$/ ipv6.disable=1/' /boot/cmdline.txt
+    echo "net.ipv6.conf.all.disable_ipv6=1" | tee -a /etc/sysctl.conf
+    fi
+
+sysctl -p
+touch $APINSTALLED
+
+chmod 777 -R /home/pi
+
+
+systemctl stop bcMeter_ap_control_loop
+systemctl stop bcMeter
+
+rm /lib/systemd/system/bcMeter_ap_control_loop.service
 touch /lib/systemd/system/bcMeter_ap_control_loop.service
-
 tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
 [Unit]
 Description=bcMeter manage-access point & connections to wifi
@@ -348,9 +309,9 @@ KillSignal=SIGINT
 [Install]
 WantedBy=multi-user.target
 EOF
-
 chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
-
+echo "set up wifi service"
+rm /lib/systemd/system/bcMeter.service
 touch /lib/systemd/system/bcMeter.service
 tee /lib/systemd/system/bcMeter.service <<EOF
 [Unit]
@@ -365,22 +326,36 @@ KillSignal=SIGINT
 [Install]
 WantedBy=multi-user.target
 EOF
-
 chmod 644 /lib/systemd/system/bcMeter.service
-if [ ! -f "$APINSTALLED" ]; then 
+echo "set up bcMeter service"
+rm /lib/systemd/system/bcMeter_flask.service
+touch /lib/systemd/system/bcMeter_flask.service
+tee /lib/systemd/system/bcMeter_flask.service <<EOF
+[Unit]
+Description=bcMeter.org flask webservice
+After=multi-user.target
 
-sed -i -e 's/listen \[::\]:80 default_server;/#listen \[::\]:80 default_server;/g' /etc/nginx/sites-enabled/default
-sed -i '1 s/$/ ipv6.disable=1/' /boot/cmdline.txt
-echo "net.ipv6.conf.all.disable_ipv6=1" | tee -a /etc/sysctl.conf
-fi
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 /home/pi/app.py
+KillSignal=SIGINT
 
-sysctl -p
-touch $APINSTALLED
+[Install]
+WantedBy=multi-user.target
+EOF
+chmod 644 /lib/systemd/system/bcMeter_flask.service
+echo "set up flask webserver service"
 
-systemctl unmask hostapd && systemctl enable hostapd
-systemctl daemon-reload && systemctl enable bcMeter_ap_control_loop.service
+systemctl enable bcMeter_ap_control_loop
+systemctl enable bcMeter_flask
+systemctl daemon-reload 
+systemctl start bcMeter_flask
 
-chmod 777 -R /home/pi
+
+
+touch /home/pi/maintenance_logs/compair_frost_upload.log
+
+if [ "$1" != "update" ]; then
 
 echo "bcMeter will now boot into configuration mode now (WiFi Name bcMeter, password bcMeterbcMeter) Reboot now? (yes/no): "
 
@@ -388,16 +363,17 @@ echo "bcMeter will now boot into configuration mode now (WiFi Name bcMeter, pass
 read confirmation
 
 # Check user input
-if [ "$confirmation" = "yes" ]; then
-    # Perform the reboot
-    echo "Rebooting..."
-    systemctl start hostapd && systemctl start dnsmasq 
-    reboot now
-else
+    if [ "$confirmation" = "yes" ]; then
+        # Perform the reboot
+        echo "Rebooting..."
+        reboot now
+    else
 
-    echo "Reboot canceled. Starting hostapd (Hotspot) now. Connection closed. Please reboot manually once you're done to enter Hotspot"
+        echo "Reboot canceled. Starting hostapd (Hotspot) now. Connection closed. Please reboot manually once you're done to enter Hotspot"
+        systemctl unmask hostapd && systemctl start hostapd
+    fi
+
 fi
 
-fi
-
+echo "INSTALLED"
 

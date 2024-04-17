@@ -11,22 +11,37 @@ import signal
 import requests
 import uuid
 import json
-import bcMeterConf
+from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config
 import importlib
 import logging
 from datetime import datetime
-
+import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
 from board import SCL, SDA, I2C
 import busio, smbus
+from sys import argv
+from threading import Thread
 
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.8.0"
+ctrl_lp_ver="0.9.3"
+subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
+bcMeter_button_gpio = 16
 
-enable_wifi = getattr(bcMeterConf, 'enable_wifi', True)
-is_ebcMeter = getattr(bcMeterConf, 'is_ebcMeter', False)
-use_display = getattr(bcMeterConf, 'use_display', False)
+if os.path.exists('/home/pi/bcMeter_config.json'):
+	config = load_config_from_json()
+else:
+	config = convert_config_to_json()
+	config = {key: value['value'] for key, value in config.items()}
+	print("json conversion of config complete")
+
+debug = True if (len(argv) > 1) and (argv[1] == "debug") else False
+
+enable_wifi = config.get('enable_wifi', True)
+is_ebcMeter = config.get('is_ebcMeter', False)
+use_display = config.get('use_display', False)
+bcMeter_started = str(datetime.now().strftime("%y%m%d_%H%M%S"))
+devicename = socket.gethostname()
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -72,8 +87,6 @@ if len(log_files) > 11:
 	for file_to_remove in files_to_remove:
 		os.remove(os.path.join(log_folder, file_to_remove))
 
-use_display = getattr(bcMeterConf, 'use_display', False)
-
 
 logger.debug(f"bcMeter Network Handler started (v{ctrl_lp_ver})")
 
@@ -84,40 +97,11 @@ if (enable_wifi is False):
 	sys.exit()
 
 
-if (use_display is True):
-	try:
-		from oled_text import OledText, Layout64, BigLine, SmallLine
-		oled = OledText(i2c, 128, 64)
-
-		oled.layout = {
-			1: BigLine(5, 0, font="Arimo.ttf", size=20),
-			2: SmallLine(5, 25, font="Arimo.ttf", size=14),
-			3: SmallLine(5, 40, font="Arimo.ttf", size=14)
-
-		}
-		logger.debug("Display found (1)")
-		
-	except Exception as e:
-		logger.error(f"Display Error: {e}")
-		use_display = False
-
-def show_display(message, line, clear):
-	if (use_display is True):
-		if clear is True:
-			oled.clear()
-		oled.text(str(message),line+1)
 
 
 show_display(f"Init WiFi", True, 0)
 show_display(f"Ctrl Loop {ctrl_lp_ver}", False, 1)
 
-
-
-
-# endpoint for checking internet connection (this is Google's public DNS server)
-DNS_HOST = "8.8.8.8"
-DNS_PORT = 53
-DNS_TIME_OUT = 3
 
 #wifi credentials file
 WIFI_CREDENTIALS_FILE='/home/pi/bcMeter_wifi.json'
@@ -126,6 +110,7 @@ WIFI_CREDENTIALS_FILE='/home/pi/bcMeter_wifi.json'
 
 #stop hotspot from being active after 10 Minutes of running (can be overridden by parameter run_hotspot=True)
 keep_hotspot_alive_without_successful_connection = 600
+
 
 def get_wifi_bssid(ssid):
 	logger.debug('... Getting wifi bssid for ssid={}'.format(ssid))
@@ -228,16 +213,6 @@ def force_wlan0_reset():
 
 
 
-def check_connection():
-	for _ in range(2):
-		try:
-			# Attempt to create a socket connection to Google's DNS server (8.8.8.8) on port 53.
-			socket.create_connection(("8.8.8.8", 53), timeout=1)
-			return True
-		except OSError:
-			time.sleep(1)
-	return False
-
 def get_uptime():
 	uptime = time.time()-current_datetime_timestamp
 	return uptime
@@ -300,7 +275,7 @@ def get_wifi_credentials():
 	try:
 		with open(WIFI_CREDENTIALS_FILE) as wifi_file:
 			data=json.load(wifi_file)
-			if (data['wifi_ssid'] == '') and (data['wifi_pwd'] == ''):
+			if (data['wifi_ssid'] == '') or (data['wifi_pwd'] == ''):
 				return 0, 0
 			return data['wifi_ssid'], data['wifi_pwd']
 	except FileNotFoundError as e:
@@ -348,30 +323,30 @@ def create_wpa_supplicant(wifi_ssid, wifi_pwd):
 
 
 def is_wifi_in_range(wifi_name):
-    retries = 3
-    attempts=1
-    max_attempts = 3
-    while attempts <= max_attempts:
-        try:
-            # Running the command to list all available Wi-Fi networks
-            for _ in range(retries):
-                scan_output = subprocess.check_output(['iwlist', 'wlan0', 'scan'], stderr=subprocess.STDOUT).decode('utf-8')
-                # Checking if the specified Wi-Fi name is in the output
-                if wifi_name in scan_output:
-                    logger.debug("Found known WiFi in range!")
-                    return True
-                time.sleep(2)  # Wait before retrying the scan
-            logger.debug("Did not see my last WiFi :( So creating my own")
-            return False
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Attempt {attempts}: Command '{e.cmd}' returned non-zero exit status {e.returncode}. Trying again in 3 seconds...")
-            time.sleep(3)  # Wait for 3 seconds before retrying the entire function
+	retries = 3
+	attempts=1
+	max_attempts = 3
+	while attempts <= max_attempts:
+		try:
+			# Running the command to list all available Wi-Fi networks
+			for _ in range(retries):
+				scan_output = subprocess.check_output(['iwlist', 'wlan0', 'scan'], stderr=subprocess.STDOUT).decode('utf-8')
+				# Checking if the specified Wi-Fi name is in the output
+				if wifi_name in scan_output:
+					logger.debug("Found known WiFi in range!")
+					return True
+				time.sleep(2)  # Wait before retrying the scan
+			logger.debug("Did not see my last WiFi :( So creating my own")
+			return False
+		except subprocess.CalledProcessError as e:
+			logger.error(f"Attempt {attempts}: Command '{e.cmd}' returned non-zero exit status {e.returncode}. Trying again in 3 seconds...")
+			time.sleep(3)  # Wait for 3 seconds before retrying the entire function
 
-        attempts += 1  # Increment the attempt counter
+		attempts += 1  # Increment the attempt counter
 
-    # After exhausting all attempts, log and return False
-    logger.error("Failed to execute WiFi Scan after multiple attempts. Giving up.")
-    return False
+	# After exhausting all attempts, log and return False
+	logger.error("Failed to execute WiFi Scan after multiple attempts. Giving up.")
+	return False
 
 def connect_to_wifi(wifi_ssid, wifi_pwd, we_already_had_a_successful_connection):
 	logger.debug("trying to establish connection to wifi %s ", wifi_ssid)
@@ -411,17 +386,18 @@ def connect_to_wifi(wifi_ssid, wifi_pwd, we_already_had_a_successful_connection)
 		logger.debug(f"Connection attempt {attempt+1}")
 		if check_connection():
 			stop_access_point()
-			run_bcMeter_service()
+			if not check_service_running('bcMeter'):
+				run_bcMeter_service()
 
-			show_display(f"Conn OK", False, 0)
-			show_display(f"Starting bcMeter", False, 1)
+				show_display(f"Conn OK", False, 0)
+				show_display(f"Starting up", False, 1)
 
 
 			break
 		elif attempt < retries:
 			logger.debug("Connection not OK, retry" if attempt == 0 else "Still no connection, resetting interface")
 			force_wlan0_reset()
-			sleep(3)
+			time.sleep(3)
 	else:
 		logger.error(f"Unable to establish a connection after {retries} retries. Check credentials")
 
@@ -434,7 +410,7 @@ def prime_control_loop():
 	is_online = False
 	wifi_ssid, wifi_pwd=get_wifi_credentials()
 
-	if (wifi_ssid != 0) and (wifi_pwd != 0):
+	if (wifi_ssid and wifi_pwd) and (wifi_ssid != 0 and wifi_pwd != 0):
 		logger.debug("checking for WiFi config")
 		wifi_in_range=is_wifi_in_range(wifi_ssid) 
 		if (wifi_in_range is False):
@@ -442,10 +418,11 @@ def prime_control_loop():
 			setup_access_point()
 		else:
 			logger.debug(f"found data for {wifi_ssid}, trying to connect")
+			print(f"found data for {wifi_ssid}, trying to connect")
 			we_already_had_a_successful_connection = True
 			connect_to_wifi(wifi_ssid,wifi_pwd, we_already_had_a_successful_connection)
 			is_online = check_connection()
-	elif (wifi_ssid == 0) or (wifi_pwd == 0):
+	else:
 			logger.debug(f"no wifi config found, opening hotspot")
 			setup_access_point()
 	
@@ -477,43 +454,122 @@ def check_service_running(service_name):
 		return False
 
 
-def ap_control_loop(wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection):
+
+def ap_control_loop():
+	update_interface_status(4)
+	wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection = prime_control_loop()
 	logger.debug("Entering main loop")
+	print("Entering main loop")
 	keep_running = False
-	while True:
-		is_online= check_connection()
-		importlib.reload(bcMeterConf)
-		uptime=get_uptime()
-		if (is_online is False) and (bcMeterConf.run_hotspot is False): 
-			wifi_ssid, wifi_pwd=get_wifi_credentials()
-			if (uptime >=keep_hotspot_alive_without_successful_connection): 
-				if (we_already_had_a_successful_connection is False) and (keep_running is False): #make sure to shutdown after 10 minutes but keep running if connection lost for other reasons
-					service_name = 'bcMeter.service'
-					if check_service_running(service_name):
-						print(f"{service_name} is running, so we keep measuring.")
-						keep_running = True
-						we_already_had_a_successful_connection = True
-						logger.debug("we seem to have lost connection")
-					else:
-						logger.debug("Shutting down because no configuration")
-						stop_bcMeter_service()
-						show_display(f"Shutting down", False, 0)
-						show_display(f"No Config", False, 1)
-						stop_access_point()
-						os.system("shutdown now -h")
+	try:
+		while True:
+
+			config = load_config_from_json()
+			is_online = check_connection()
+			uptime = get_uptime()
+			run_hotspot = config.get('run_hotspot', False)
+
+			bcMeter_running = check_service_running("bcMeter")
+			bcMeter_flask_running = check_service_running("bcMeter_flask")
+
+			if not bcMeter_running:
+				update_interface_status(4 if not is_online else 0)
+
+			if not bcMeter_flask_running:
+				subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
+
+			if not is_online:
+				if not run_hotspot:
+					wifi_ssid, wifi_pwd = get_wifi_credentials()
+					if uptime >= keep_hotspot_alive_without_successful_connection: 
+						if not we_already_had_a_successful_connection and not keep_running:
+							if bcMeter_running:
+								print(f"bcMeter is running, so we keep measuring.")
+								logger.debug("bcMeter is running, so we keep measuring.")
+								update_interface_status(3)
+								keep_running = True
+								we_already_had_a_successful_connection = True
+								logger.debug("we seem to have lost connection")
+								connect_to_wifi(wifi_ssid, wifi_pwd, we_already_had_a_successful_connection)
+							else:
+								logger.debug("Shutting down because no configuration")
+								stop_bcMeter_service()
+								show_display("Shutting down", False, 0)
+								show_display("No Config", False, 1)
+								stop_access_point()
+								os.system("shutdown now -h")
+				if wifi_ssid and wifi_pwd:
+					print(f"Reconnect to {wifi_ssid}")
+					logger.debug(f"Try to reconnect to {wifi_ssid}")
+					connect_to_wifi(wifi_ssid, wifi_pwd, we_already_had_a_successful_connection)
+
+			if is_online and not run_hotspot:
+				stop_access_point()
+				we_already_had_a_successful_connection = True
+
+			time.sleep(5)
+	except Exception as e:
+		logger.error(f"Exited AP Main loop: {e}")
+		print(f"Exited AP Main loop: {e}")
+
+
+GPIO.setwarnings(False) # Ignore warning for now
+try:
+	GPIO.setmode(GPIO.BCM) 
+except:
+	pass #was already set 
+GPIO.setup(bcMeter_button_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Set pin 10 to be an input pin and set initial value to be pulled low (off)
+
+button_press_count = 0
+last_press_time = 0
+
+def button_callback(channel):	
+	global button_press_count, last_press_time
+	current_time = time.time()
+	if (last_press_time == 0):
+		last_press_time = current_time
+	if current_time - last_press_time >5:
+		button_press_count=0
+		last_press_time = current_time
+	button_press_count += 1
+	print(button_press_count, current_time-last_press_time)
+	if button_press_count >5:
+		print("invalid presses")
+		button_press_count=0
+
+	if (current_time - last_press_time < 3):
+		if button_press_count >= 2:
+			if not check_service_running('bcMeter'):
+				print("Starting bcMeter")
+				run_bcMeter_service()
 			else:
-				if (wifi_ssid != 0) and (wifi_pwd != 0): #we've been online already but lost wifi signal. try to reconnect...
-					logger.debug(f"try to reconnect to {wifi_ssid}")
-					connect_to_wifi(wifi_ssid,wifi_pwd, we_already_had_a_successful_connection)
-		if (is_online is True) and (bcMeterConf.run_hotspot is False):
-			stop_access_point()
-	#		if (len(wifi_ssid) > 0) and (we_already_had_a_successful_connection is True): #while being online the wifi is deleted and we suspect the hotspot is required
-			we_already_had_a_successful_connection= True #if connection set up once, do not stop everything later just because for example weak wifi signal. 
-		if (is_online is False) and (we_already_had_a_successful_connection is True):
-			if (wifi_ssid != 0) and (wifi_pwd != 0):
-				connect_to_wifi(wifi_ssid,wifi_pwd, we_already_had_a_successful_connection)
-		time.sleep(5)
+				print("Stopping bcMeter")
+				stop_bcMeter_service()		# Add your action here
+
+		elif button_press_count == 5:
+			# Action for triple press
+			print("5 press detected")
+			# Add your action here
+	if current_time - last_press_time > 3:
+		button_press_count = 0
+		last_press_time = current_time
+	time.sleep(0.5)
 
 
-wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection = prime_control_loop()
-ap_control_loop(wifi_ssid, wifi_pwd, is_online, we_already_had_a_successful_connection)
+
+def button_thread():
+	GPIO.add_event_detect(bcMeter_button_gpio, GPIO.FALLING, callback=button_callback)
+	while True:
+		time.sleep(1)  # Polling interval
+
+# Start the button detection thread
+button_thread = Thread(target=button_thread)
+button_thread.daemon = True
+button_thread.start()
+if not debug:
+	ap_control_loop()
+else:
+	print("HAPPY DEBUGGING")
+	while True:
+		time.sleep(1)
+

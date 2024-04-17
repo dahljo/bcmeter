@@ -222,7 +222,7 @@ if (!isset($_SESSION['update_in_progress'])) {
         pclose($proc);
 
         // Display the content of the log file
-        $logContent = file_get_contents('/home/pi/bcMeter_install.log');
+        $logContent = file_get_contents('/home/pi/maintenance_logs/bcMeter_install.log');
         sendOutput($logContent);
 
         echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 30000);</script>";
@@ -243,7 +243,7 @@ case 'syslog':
 $zipFilePath = '/tmp/syslog_and_maintenance_logs.zip';
 
 // Command to zip /var/log/syslog and all files in /home/pi/maintenance_logs/
-$zipCommand = "zip -j $zipFilePath /var/log/syslog /home/pi/maintenance_logs/*";
+$zipCommand = "sudo zip -j $zipFilePath /var/log/syslog /home/pi/maintenance_logs/*";
 
 // Execute the command
 shell_exec($zipCommand);
@@ -275,25 +275,32 @@ if (file_exists($zipFilePath)) {
 break;
 
 
- case 'adc':
 
-session_write_close(); //important to not block the session
+ case 'calibration':
+    session_write_close(); // Important to not block the session
 
-$cmd = 'sudo strace -p'.$PID.' -s9999  -e write';
+    function executeCommand($cmd) {
+        while (@ob_end_flush()); // End all output buffers if any
+        $proc = popen($cmd, 'r');
+        echo '<pre>';
+        while (!feof($proc)) {
+            echo fread($proc, 4096);
+            @flush();
+        }
+        echo '</pre>';
 
-while (@ ob_end_flush()); // end all output buffers if any
+    }
 
-$proc = popen($cmd, 'r');
-echo '<pre>';
-while (!feof($proc))
-{
-    echo fread($proc, 4096);
-    @ flush();
-}
-echo '</pre>';
+    $cmd1 = 'sudo systemctl stop bcMeter';
+    executeCommand($cmd1);
+        sleep(2); 
+    $cmd2 = 'sudo python3 /home/pi/bcMeter.py cal';
+    executeCommand($cmd2);
+    echo "Wait for automatic redirect... <script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+
+    break;
 
 
-break;
 
 
     	default:

@@ -4,15 +4,16 @@ import json
 import uuid
 import random
 import socket
-import bcMeterConf
 import csv
 import os
 from time import sleep
 import logging
-import bcMeterConf
 import sys
 from datetime import datetime
 import importlib
+from bcMeter_shared import convert_config_to_json, load_config_from_json, check_connection, update_interface_status, show_display
+
+config = load_config_from_json()
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -60,12 +61,6 @@ if len(log_files) > 11:
 
 logger.debug("Compair FROST Upload initialized")
 
-
-# endpoint for checking internet connection (this is Google's public DNS server)
-DNS_HOST = "8.8.8.8"
-DNS_PORT = 53
-DNS_TIME_OUT = 3
-
 online = False
 
 frost_id = "bcMeter"
@@ -79,17 +74,6 @@ name_temperature = "Temperature"
 name_coordinates = "Position"
 name_filter_status ="Filter Status"
 
-def check_connection():
-	current_time = 0
-	while current_time < 5:
-		try:
-			socket.setdefaulttimeout(3)
-			socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
-			return True
-		except Exception:
-			current_time += 1
-			sleep(1)
-
 def get_location():
 	import json
 	import requests 
@@ -100,28 +84,29 @@ def get_location():
 	my_lon = float(my_loc['loc'].split(',')[1])
 	return [my_lat,my_lon]
 
-location= getattr(bcMeterConf,'location',[0,0])
+
 
 online = check_connection()
 print(online, "frost upload online")
 
-if (online is True) and (bcMeterConf.get_location is True):
-	location = get_location()
-	print("adding location to conf")
-	if not 'location' in open('bcMeterConf.py').read():
-		with open('bcMeterConf.py', 'a') as f:
-			f.write("location=" + str(location) + "#Location of the bcMeter. Keep syntax exactly like that [lat,lon]#session")
-	else:
-		with open('bcMeterConf.py', 'r') as f:
-			lines = f.readlines()
-		for i, line in enumerate(lines):
-			if line.startswith('location'):
-				lines[i] = "location=" + str(location) + "#Location of the bcMeter. Keep syntax exactly like that [lat,lon]#session"
-		with open('bcMeterConf.py', 'w') as f:
-			f.writelines(lines)
-	importlib.reload(bcMeterConf)
+location = config.get('location',[0,0])
 
-location = bcMeterConf.location[::-1] #reverse to comply to frost syntax
+
+if (config.get('get_location') is True) and online is True:
+	with open('bcMeter_config.json', 'r') as file:
+	    config = json.load(file)
+	location = get_location()  # This function needs to return an array [latitude, longitude]
+	print(f"location vor save: {location}")
+	config['location']['value'] = location
+	with open('bcMeter_config.json', 'w') as file:
+		json.dump(config, file, indent=4)
+	config = load_config_from_json()
+
+location=config.get('location')
+print(f"{location} in the middle")
+location_to_reverse = config.get('location')
+location = location_to_reverse[::-1] #reverse to comply to frost syntax
+print(f"location after save {location}")
 
 if (location[0]==0) and (location[1] == 0):
 	error_message="No valid Location for bcMeter given, cancelling. Enter manually or check options and internet connection"
@@ -446,9 +431,8 @@ def upload_sample(bcngm3,atn,bcmsen,bcmref,bcmtemperature, location, filter_stat
 	url = "https://sensorthings.wecompair.eu/FROST-Server/v1.1/CreateObservations"
 	try:
 		res = requests.post(url, json=observations)
-		print(res)
 		logger.debug(f"uploaded sample to FROST with return code {res}") 
-	except requests.exceptions.RequestException as e:
+	except Exception as e:
 		logger.error(f"An error occurred: {e}")
 
 def compair_frost_upload_offline_log(compair_offline_log_path):

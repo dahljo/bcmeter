@@ -34,6 +34,8 @@ if (file_exists($filename)) {
 <meta charset="utf-8">
 <head>    
   <link rel="stylesheet" type="text/css" href="css/bootstrap.min.css">
+  <link rel="stylesheet" type="text/css" href="css/bootstrap4-toggle.min.css">
+
   <link rel="stylesheet" type="text/css" href="css/bcmeter.css">
 
 
@@ -53,6 +55,40 @@ if ($is_ebcMeter === true) {
 }
 
  ?>
+ <div class="status-div" id="statusDiv"></div>
+
+ <div class="container">
+  <div class="row">
+<div class="col-sm-12">
+
+      <div style='display:none; margin: 20px 0;' id='hotspotwarning' class='alert'>
+
+
+      <div style='text-align:center;'><strong>You're currently offline</strong></div>
+      
+
+
+                  <!-- Begin Set Time -->
+                  <div style="display: block;margin: 0 auto;">
+                  <p style="text-align: center;" id="datetime_note"></p>
+                  <pre style='text-align:center;' id='datetime_device'></pre>
+                  <pre style='text-align:center;' id='datetime_local'></pre>
+                   </div>
+                <!-- end set time modal-->
+
+
+
+                  <div style="text-align: center";>
+                  <form method="POST">
+                    <input type="hidden" id="set_time" name="set_time" value="">
+                    <input type="submit" value="Set clock on bcMeter to your time" class="btn btn-primary" >
+                  </form>
+                </div>
+</div>
+      </div>
+    </div>
+  </div>
+
   <div id="report-value" style="text-align: center; display: block;margin: 20px 0;"></div>
 
        <?php
@@ -76,15 +112,8 @@ if ($is_ebcMeter === true) {
 
 
 
-          $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
-       if (!isset($grep))
-      {
-          echo "<script type='text/javascript'>setTimeout(() => {if (location.href.indexOf('stopped') === -1) { location.href = location.href + '?stopped';}}, 2000);</script>";
-      }
-      else
-      {
-                  echo "<script type='text/javascript'>setTimeout(() => {if (location.href.indexOf('stopped') >= 1) { location.href = location.href.replace('?stopped', '');}}, 1000);</script>";
-      }
+    $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
+
 ?>
 
 
@@ -152,34 +181,7 @@ if ($is_ebcMeter === true) {
 	<script src="js/bootbox.min.js"></script>
 
 <script>
-  if(window.location.href.indexOf("stopped") === -1){
-    if ( typeof window.history.pushState == 'function' ) {
-        window.history.pushState({}, "Hide", '<?php echo $_SERVER['PHP_SELF'];?>');
-    }
-  }
-
-
-
-
-<?php
-$filename = '/home/pi/bcMeterConf.py';
-$is_ebcMeter = false; // Default value
-
-if (file_exists($filename)) {
-    $lines = file($filename, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-
-    foreach ($lines as $line) {
-        if (strpos($line, 'is_ebcMeter=True') !== false) {
-            echo "let is_ebcmeter = true;";
-            break;
-        } elseif (strpos($line, 'is_ebcMeter=False') !== false) {
-           echo "let is_ebcmeter = false;";
-            break;
-        }
-    }
-}
-
-?>
+$(document).ready(function() {
 
 
 
@@ -210,8 +212,6 @@ if (file_exists($filename)) {
       yMax2Inputted = "",
       yRange = [],
       yRange2 = [],
-      xScale, 
-      yScale, 
       yScale2,
       brushedX = [],
       dataObj = {},
@@ -587,7 +587,7 @@ if (file_exists($filename)) {
      updateCurrentLogs = setInterval(() => {  
 
         dataFile(`${logPath}log_current.csv`);
-    }, 10000)
+    }, 5000)
 
     }
 
@@ -646,7 +646,22 @@ if (file_exists($filename)) {
     let BCngm3_value = (d) => d["BCngm3"];
     let BCngm3_unfiltered_value = (d) => d["BCngm3_unfiltered"];
     /* RENDER FUNCTION THAT CALLS CHART PLOT */
-    const render = () => {
+
+const render = () => {
+
+  // Clear previous contents
+  svg.selectAll("*").remove(); // This clears the previous SVG contents
+
+ if (!data || data.length === 0) {
+    updateScales(); // Update scales
+
+    drawGrid(); // Call drawGrid instead of displaying text
+    return; // Exit the function
+  }
+
+  // P
+
+
     yMenuDom.value = yColumn;
     yMenuDom2.value = yColumn2;
 
@@ -677,6 +692,73 @@ if (file_exists($filename)) {
       yLabel2 = yColumn2;
       plotChart();
     };
+
+
+const drawGrid = () => {
+  // Basic grid border
+  svg.append("rect")
+     .attr("x", margin.left)
+     .attr("y", margin.top)
+     .attr("width", width - margin.left - margin.right)
+     .attr("height", height - margin.top - margin.bottom)
+     .attr("fill", "none")
+     .attr("stroke", "lightgrey");
+
+  // Draw a single horizontal grid line vertically centered
+  const centerY = (margin.top + (height - margin.bottom)) / 2; // Vertically centered
+
+  svg.append("line")
+     .attr("x1", margin.left)
+     .attr("y1", centerY)
+     .attr("x2", width - margin.right)
+     .attr("y2", centerY)
+     .attr("stroke", "lightgrey")
+
+  // Add label "0" for the horizontal line
+  svg.append("text")
+     .attr("x", margin.left - 40)
+     .attr("y", centerY)
+     .attr("dy", "0.32em")
+     .attr("text-anchor", "end")
+     .text("0");
+
+  // Draw a single vertical line representing the current time
+  const currentTime = new Date();
+  const formatDate = d3.timeFormat("%H:%M:%S"); // Formatting the date
+  const middleX = (margin.left + (width - margin.right)) / 2; // Position it in the middle
+
+  svg.append("line")
+     .attr("x1", middleX)
+     .attr("y1", margin.top)
+     .attr("x2", middleX)
+     .attr("y2", height - margin.bottom)
+     .attr("stroke", "lightgrey")
+     .attr("stroke-width", 1); // Default stroke width
+
+  // Add label for the current time
+  svg.append("text")
+     .attr("x", middleX)
+     .attr("y", height - margin.bottom + 40) // Adjust as needed
+     .attr("text-anchor", "middle")
+     .style("font-size", "12px")
+     .text("Nothing to display yet...");
+    svg.append("text")
+     .attr("x", middleX)
+     .attr("y", height - margin.bottom + 25) // Adjust as needed
+     .attr("text-anchor", "middle")
+     .style("font-size", "12px")
+     .text(formatDate(currentTime));
+};
+
+let xScale = d3.scaleLinear();
+let yScale = d3.scaleLinear();
+
+const updateScales = () => {
+  xScale.domain([0, 1000]).range([margin.left, width - margin.right]);
+  yScale.domain([0, 1000]).range([height - margin.bottom, margin.top]);
+};
+
+
     const dataFile = (file, isCombineLogsSelected = false ) => {
       data = []
       data["columns"] = ["BCngm3","BCngm3_unfiltered", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen","Temperature","Humidity","Airflow"]
@@ -746,7 +828,7 @@ if (file_exists($filename)) {
                 }
                 
               if (len<0) {
-                document.getElementById("report-value").innerHTML = `<h4>Not enough data for graph/averages yet.</h4>`;
+                document.getElementById("report-value").innerHTML = `<h4> </h4>`;
               }
 }
 
@@ -790,11 +872,11 @@ if (file_exists($filename)) {
           } else {
             dataObj["combine_logs"] = combineLogs;
             selectLogs.value = "log_current.csv";
-            selectLogs.dispatchEvent(new Event("change"))                
+            selectLogs.dispatchEvent(new Event("change"))
+            render();                
           }
         }
       else{
-
           render();
       }
       });
@@ -891,182 +973,753 @@ if (file_exists($filename)) {
       }
 
     });
+
+
+
+
+          function getBaseUrl() {
+            // Construct the base URL using the current hostname and specifying port 5000
+            return window.location.protocol + '//' + window.location.hostname + ':5000';
+          }
+            loadConfig('session'); // Initially load session configurations
+            loadConfig('device'); // Initially load device configurations
+            loadConfig('administration'); // Initially load administration configurations
+
+  function activateAndLoadConfig(tabElement) {
+    tabElement.tab('show');
+    const configType = tabElement.attr('aria-controls');
+    loadConfig(configType);
+  }
+
+
+
+          // Listen to tab changes to refresh configurations if needed
+  $('#configTabs a').on('click', function(e) {
+    e.preventDefault();
+    activateAndLoadConfig($(this));
+  });
+
+
+
+  const initialTab = $('#configTabs a.active');
+  if (initialTab.length) {
+    activateAndLoadConfig(initialTab);
+  } else {
+    // If no active tab, load the first tab or a specific tab as needed
+    activateAndLoadConfig($('#configTabs a').first());
+  }
+
+
+          function loadConfig(configType) {
+            fetch(`${getBaseUrl()}/load-config`)
+              .then(response => response.json())
+              .then(data => {
+                const formId = configType === 'session' ? 'session-parameters-form' : configType === 'device' ? 'device-parameters-form' : 'administration-parameters-form';
+                const tbody = document.querySelector(`#${formId} tbody`);
+                tbody.innerHTML = ''; // Clear existing rows
+                Object.entries(data).forEach(([key, config]) => {
+                  if (config.parameter === configType) {
+                    const description = config.description;
+                    let valueField = '';
+                    if (config.type === 'boolean') {
+                      // For boolean, use a Bootstrap Switch
+                      const checkedAttr = config.value ? 'checked' : ''; // Add checked attribute if value is true
+                      valueField = `<input name="${key}" type="checkbox" ${checkedAttr} data-toggle="toggle" data-onstyle="info" data-offstyle="light">`;
+                    } else if (config.type === 'number' || config.type === 'float') {
+                      // For number, use a number input
+                      valueField = `<input type="number" class="form-control" name="${key}" value="${config.value}">`;
+                    } else if (config.type === 'string') {
+                      // For string, use a text input
+                      valueField = `<input type="text" class="form-control" name="${key}" value="${config.value}">`;
+                    } else if (config.type === 'array') {
+                      // For array, use a text input with JSON representation
+                      valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
+                    }
+                    const row = `<tr data-toggle="tooltip" data-placement="top" title="${description}">
+                      <td>${description}</td>
+                      <td>${valueField}</td>
+                    </tr>`;
+                    tbody.innerHTML += row;
+                  }
+                });
+
+                // Initialize Bootstrap Switches after all elements are generated
+                $('[data-toggle="toggle"]').bootstrapToggle();
+              })
+              .catch(error => console.error('Failed to load configuration:', error));
+          }
+
+          function saveConfiguration(configType) {
+           const formId = configType === 'session' ? 'session-parameters-form' : configType === 'device' ? 'device-parameters-form' : 'administration-parameters-form';
+          const form = document.getElementById(formId);
+          const updatedConfig = {};
+
+          // Process each input element within the form
+          form.querySelectorAll('input[type="checkbox"], input[type="number"], input[type="text"]').forEach(input => {
+            const key = input.name;
+            let value = input.value;
+            // For checkboxes, use the checked state
+            if (input.type === 'checkbox') {
+              value = input.checked;
+            } else if (input.classList.contains('array')) {
+              // For array inputs, parse the JSON string back into an array
+              try {
+                value = JSON.parse(input.value);
+              } catch (e) {
+                console.error('Failed to parse array input:', e);
+              }
+            }
+
+            // Retrieve the description from the corresponding tr element if it exists
+            const descriptionElement = input.closest('tr').getAttribute('title');
+            const description = descriptionElement ? descriptionElement.trim() : '';
+
+            // Skip if the key is empty
+            if (key) {
+              // Construct the configuration object with description and value
+              updatedConfig[key] = {
+                value: value,
+                description: description,
+                type: input.type === 'checkbox' ? 'boolean' : input.classList.contains('array') ? 'array' : typeof value,
+                parameter: configType
+              };
+            }
+          });
+
+            // Fetch the existing configurations
+            fetch(`${getBaseUrl()}/load-config`)
+              .then(response => response.json())
+              .then(existingConfig => {
+                // Merge the updated configurations with the existing ones
+                const mergedConfig = { ...existingConfig };
+
+                // Update the merged configurations with the updated ones
+                Object.keys(updatedConfig).forEach(key => {
+                  mergedConfig[key] = updatedConfig[key];
+                });
+
+                // Send the merged configuration to the server for saving
+                fetch(`${getBaseUrl()}/save-config`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(mergedConfig)
+                  })
+                  .then(response => {
+                    if (!response.ok) {
+                      throw new Error('Failed to save configuration');
+                    }
+                    console.log('Configuration saved successfully');
+                  })
+                  .catch(error => console.error('Failed to save configuration:', error));
+              })
+              .catch(error => console.error('Failed to load configuration:', error));
+          }
+
+     // Function to handle saving configuration based on active tab
+function saveConfigurationBasedOnTab(tabId) {
+  if (tabId === 'session-tab') {
+    saveConfiguration('session');
+  } else if (tabId === 'device-tab') {
+    saveConfiguration('device');
+  } else if (tabId === 'administration-tab') {
+    saveConfiguration('administration');
+  }
+}
+
+// Event listener for saving on "Enter" key press
+document.addEventListener("keydown", function(event) {
+  if (event.key === "Enter") {
+    // Check if the modal is open before triggering save
+    if ($('#device-parameters').hasClass('show')) {
+      var activeTabId = $('.nav-tabs .nav-link.active').attr('id');
+      saveConfigurationBasedOnTab(activeTabId);
+      $('#device-parameters').modal('hide'); // Close the modal after saving
+    }
+  }
+});
+
+// Event listeners for saving on button click
+document.getElementById("saveSessionSettings").addEventListener("click", function(event) {
+  event.preventDefault();
+  saveConfigurationBasedOnTab('session-tab');
+  $('#device-parameters').modal('hide'); // Close the modal after saving
+});
+
+document.getElementById("saveDeviceSettings").addEventListener("click", function(event) {
+  event.preventDefault();
+  saveConfigurationBasedOnTab('device-tab');
+  $('#device-parameters').modal('hide'); // Close the modal after saving
+});
+
+document.getElementById("saveAdministrationSettings").addEventListener("click", function(event) {
+  event.preventDefault();
+  saveConfigurationBasedOnTab('administration-tab');
+  $('#device-parameters').modal('hide'); // Close the modal after saving
+});
+
+
+  $('#bcMeter_reboot').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+              bootbox.dialog({
+                  title: 'Reboot bcMeter?',
+                  message: "<p>Do you want to reboot the device?</p>",
+                  size: 'small',
+                  buttons: {
+                      cancel: {
+                          label: "No",
+                          className: 'btn-success',
+                          callback: function(){
+
+                          }
+                      },
+                      ok: {
+                          label: "Yes",
+                          className: 'btn-danger',
+                          callback: function(){
+                              window.location.href='includes/status.php?status=reboot';
+
+                          }
+                      }
+                  }
+              });
+           
+        });
+
+
+        $('#bcMeter_stop').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+              bootbox.dialog({
+                  title: 'Stop logging',
+                  message: "<p>This will stop the current measurement. Sure?</p>",
+                  size: 'small',
+                  buttons: {
+                      cancel: {
+                          label: "No",
+                          className: 'btn-success',
+                          callback: function(){
+
+                          }
+                      },
+                      ok: {
+                          label: "Yes",
+                          className: 'btn-danger',
+                          callback: function(){
+
+
+                          $.ajax({
+                              type: 'post',
+                              data: 'exec_stop',
+                              success: function(response){
+                              
+                              }
+                           });
+                  
+                            
+
+
+
+
+                          }
+                      }
+                  }
+              });
+           
+        });
+
+
+
+
+
+        $('#bcMeter_debug').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+              bootbox.dialog({
+                  title: 'Enter debug mode?',
+                  message: "<p>Do you want to switch to debug mode? Device will be unresponsive for 10-20 seconds</p>",
+                  size: 'small',
+                  buttons: {
+                      cancel: {
+                          label: "No",
+                          className: 'btn-success',
+                          callback: function(){
+
+                          }
+                      },
+                      ok: {
+                          label: "Yes",
+                          className: 'btn-danger',
+                          callback: function(){
+
+                            $.ajax({
+                              type: 'post',
+                              data: 'exec_debug',
+                              success: function(response){
+                                 window.location.href='includes/status.php?status=debug';
+                              }
+                           });
+
+                              
+
+                          }
+                      }
+                  }
+              });
+           
+        });
+
+
+
+
+                $('#force_wifi').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+              bootbox.dialog({
+                  title: 'Reset Wifi?',
+                  message: "<p>This will trigger a manual reload of the WiFi credentials and cut your current connection. </p>",
+                  size: 'small',
+                  buttons: {
+                      cancel: {
+                          label: "No",
+                          className: 'btn-success',
+                          callback: function(){
+
+                          }
+                      },
+                      ok: {
+                          label: "Yes",
+                          className: 'btn-danger',
+                        callback: function() {
+                            // Make AJAX call to initiate the backend process
+                            $.ajax({
+                                type: 'post',
+                                data: {force_wifi: true}, // Adjusted to pass data as an object
+                                success: function(response) {
+                                    // Handle success
+                                },
+                                error: function() {
+                                    // Handle error
+                                }
+                            });
+                        }
+                      }
+                  }
+              });
+           
+        });
+
+
+
+
+
+
+
+
+        $('#bcMeter_calibration').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+          bootbox.dialog({
+              title: 'Calibrate bcMeter?',
+              message: "<p>Calibrate only with new filterpaper. Avoid direct sunlight. Continue? </p>",
+              size: 'medium',
+              buttons: {
+                  cancel: {
+                      label: "No",
+                      className: 'btn-success',
+                      callback: function(){
+                      }
+                  },
+                  ok: {
+                      label: "Yes",
+                      className: 'btn-danger',
+                      callback: function(){
+                          window.location.href='includes/status.php?status=calibration';
+
+                      }
+                  }
+              }
+          });
+           
+        });
+
+
+
+
+
+        $('#bcMeter_update').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+          bootbox.dialog({
+              title: 'Update bcMeter?',
+              message: "<p>The most recent files will be downloaded. If possible, your parameters will be kept but please save them and check after the update if they are the same. </p>",
+              size: 'medium',
+              buttons: {
+                  cancel: {
+                      label: "No",
+                      className: 'btn-success',
+                      callback: function(){
+                      }
+                  },
+                  ok: {
+                      label: "Yes",
+                      className: 'btn-danger',
+                      callback: function(){
+                          window.location.href='includes/status.php?status=update';
+
+                      }
+                  }
+              }
+          });
+           
+        });
+
+
+
+
+
+
+        $('#saveGraph').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+           bootbox.dialog({
+            title: 'Save graph as',
+            message: "<p>Choose the type of file you want to save the current measurements as</p>",
+            size: 'large',
+            buttons: {
+                1: {
+                    label: "CSV (MS Office/Google Docs)",
+                    className: 'btn-info',
+                    callback: function(){
+                        saveCSV();
+
+                    }
+                },
+                2: {
+                    label: "PNG (Web/Mail)",
+                    className: 'btn-info',
+                    callback: function(){
+                        savePNG();
+
+                    }
+                },
+                3: {
+                    label: "SVG (DTP)",
+                    className: 'btn-info',
+                    callback: function(){
+                        saveSVG();
+                    }
+                }
+            }
+          });
+
+        });
+
+
+
+
+
+
+
+
+
+
+
+
+        $('#startNewLog').click(function(e) {
+            e.preventDefault(); // Prevent the default submit behavior
+
+            bootbox.dialog({
+                title: 'Start new log?',
+                message: "<p>This will start a new log. It takes a few minutes for the new chart to appear.</p>",
+                size: 'small',
+                buttons: {
+                    cancel: {
+                        label: "No",
+                        className: 'btn-success',
+                        callback: function() {
+                            // Cancel callback
+                        }
+                    },
+                    ok: {
+                        label: "Yes",
+                        className: 'btn-danger',
+                        callback: function() {
+                            // Make AJAX call to initiate the backend process
+                            $.ajax({
+                                type: 'post',
+                                data: {exec_new_log: true}, // Adjusted to pass data as an object
+                                success: function(response) {
+                                    // Handle success
+                                },
+                                error: function() {
+                                    // Handle error
+                                }
+                            });
+                        }
+                    }
+                }
+            });
+        });
+
+
+
+        /*document.getElementById("fetchWifiButton").addEventListener("click", function() {
+          // Function to fetch Wi-Fi list
+          $.get("includes/wlan_list.php", function(data, status) {
+              var ssid_arr = JSON.parse(data);
+              var select = document.getElementById("js-wifi-dropdown");
+
+              for (var i = 0; i < ssid_arr.length; i++) {
+                  if (currentWifiSsid != ssid_arr[i]) { // current ssid is added in setup/index.php
+                      var el = document.createElement("option");
+                      el.textContent = ssid_arr[i];
+                      el.value = ssid_arr[i];
+                      select.appendChild(el);
+                  }
+              }
+
+              // Hide loading indicator after fetching
+              $('.loading-available-networks').hide();
+          });*/
+
+
+
+    var optionsButton = document.querySelector('[data-target="#pills-devicecontrol"]');
+    optionsButton.addEventListener('click', function() {
+        var target = document.querySelector(this.getAttribute('data-target'));
+        if (target.style.display === "none") {
+            target.style.display = "block";
+        } else {
+            target.style.display = "none";
+        }
+    });
+
+
+
+
+  // ----------- password
+  $( ".toggle-password" ).click(function() {
+      $(this).toggleClass("closed");
+      var input = $("#pass_log_id");
+      if (input.attr("type") === "password") {
+      input.attr("type", "text");
+      } else {
+      input.attr("type", "password");
+      }
+  });
+  // ----------- edit existing password
+  $( ".js-edit-password" ).click(function() {
+    $('.wifi-pwd-field-exist').hide();
+    $('.wifi-pwd-field').show();
+  });
+  
+
+  // ---------- wifi  
+  var dropdown = document.getElementById('js-wifi-dropdown');
+    dropdown.onchange = function () {
+    if(this[this.selectedIndex].value == "custom-network-selection"){
+      document.getElementById('custom-network').style.display='block';
+    }else {
+      document.getElementById('custom-network').style.display='none';
+    }
+  };
+  
+  
+  
+  
+  //get wlan list from jquery get  --> 
+  $.get("includes/wlan_list.php", function(data, status){
+    
+    var ssid_arr = JSON.parse(data);
+    var select = document.getElementById("js-wifi-dropdown");
+  
+    for(var i = 0; i < ssid_arr.length; i++) {
+      if(currentWifiSsid!=ssid_arr[i]){         // current ssid is added in setup/index.php
+        var el = document.createElement("option");
+        el.textContent = ssid_arr[i];
+        el.value = ssid_arr[i];
+        select.appendChild(el);
+      }
+    }
+    
+    $('.loading-available-networks').hide();
+    
+  });
+
+
+
+
+
+    setInterval(function() {
+      var date = new Date();
+      var timestamp = (date.getTime() / 1000).toFixed(0);
+      var currentDateTime = date.toLocaleString('default', {
+        month: 'short'
+      }) + " " + date.getDate() + " " + date.getFullYear() + " " + date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
+      document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + currentDateTime;
+      document.getElementById("set_time").value = timestamp;
+
+      $.ajax({
+        url: "includes/gettime.php", // The page containing php script
+        type: "post", // Request type
+        data: { datetime: "now" },
+        cache: false, // Prevent the browser from caching the result
+        timeout: 1000, // Set timeout for the request (e.g., 5000 milliseconds)
+        success: function(result) {
+          document.getElementById("datetime_note").innerHTML = "Synchronize the time of bcMeter to get correct timestamps";
+          document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + result;
+          if (document.getElementById("devicetime")) {
+            document.getElementById("devicetime").innerHTML = "Time on bcMeter: " + result;
+          }
+          document.getElementById('hotspotwarning').classList.remove('alert-danger');
+          document.getElementById('hotspotwarning').classList.add('alert');
+        },
+        error: function(xhr, status, error) {
+          var errorMessage = xhr.status + ': ' + xhr.statusText;
+          document.getElementById("datetime_device").innerHTML = "No connection to bcMeter";
+          document.getElementById("datetime_local").innerHTML = "";
+          document.getElementById("set_time").value = "";
+          document.getElementById("datetime_note").innerHTML = "";
+          if (document.getElementById("devicetime")) {
+            document.getElementById("devicetime").innerHTML = "";
+          }
+          document.getElementById('hotspotwarning').classList.remove('alert');
+          document.getElementById('hotspotwarning').classList.add('alert-danger');
+        }
+      });
+    }, 1000);
+  
+
+
+    $('#force_wifi').click(function() {
+        $('#wifisetup').modal('hide'); // This line uses Bootstrap's jQuery plugin to hide the modal
+    });
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+
   </script>
 
 
-<ul class="nav nav-pills mb-3 nav-fill" id="pills-tab" role="tablist" style="width: 50%;margin:0 auto 0 auto;">
-  <li class="nav-item">
-    <a class="nav-link active" id="pills-log-tab" data-toggle="pill" href="#pills-log" role="tab" aria-controls="pills-log" aria-selected="true">Session</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" id="report-button" data-toggle="pill" href="#pills-filter" role="tab" aria-controls="pills-filter" aria-selected="false">Filter Status</a>
-  </li>
-  <li class="nav-item">
-    <a class="nav-link" id="pills-devicecontrol-tab" data-toggle="pill" href="#pills-devicecontrol" role="tab" aria-controls="pills-devicecontrol" aria-selected="false">Device</a>
-  </li>
-</ul>
+<form style="display: block; text-align:center;" method="post">
+    <input type="submit" id="startNewLog" name="newlog" value="Start" class="btn btn-info" />
+    <input type="submit" id="bcMeter_stop" name="bcMeter_stop" value="Stop" class="btn btn-secondary" />
+    <input type="submit" id="saveGraph" name="saveGraph" value="Download" class="btn btn-info bootbox-accept" />
+<button type="button" class="btn btn-info" data-toggle="pill" data-target="#pills-devicecontrol" role="tab">Administration</button>
 
+    <!-- Trigger Modal Button for Filter Status -->
+    <button type="button" class="btn btn-info" data-toggle="modal" data-target="#filterStatusModal" id="report-button">Filter</button>
+</form>
 
-
-<div class="tab-content" id="pills-tabContent">
-  <div class="tab-pane fade show active" id="pills-log" role="tabpanel" aria-labelledby="pills-log-tab">
-        <form style="display: block; text-align:center;" method="post">
-
-      <input type="submit" name="newlog" value="Start" class="btn btn-primary" />
-      <input type="submit" name="stopbcm" value="Stop" class="btn btn-secondary" />
-      <button type="button" class="btn btn-info" data-toggle="modal" data-target="#editparameters"> Session Parameters </button>
-      <button type="button" class="btn btn-info" data-toggle="modal" data-target="#wifisetup"> WiFi Settings </button>
-      <button type="submit" name="saveGraph" value="Save Log" class="btn btn-info bootbox-accept" />Save Log</button>
-      <input type="submit" name="shutdown" value="Shutdown" class="btn btn-danger" />
-    </form>
-  </div>
-
-
-  <div class="tab-pane fade" id="pills-filter" role="tabpanel" aria-labelledby="report-button"> 
-    <!--form style="display: block; text-align:center;" method="post">
-      <button type="button" class="btn btn-info" data-toggle="modal" data-target="#calibration"> Calibrate</button>
-      <br/>Calibration right after you inserted a new filter!
-    </form-->
-    <p style="margin 0 auto; display:block; text-align: center;"> 5 colors of this button are possible: Green, red, orange, grey and black. Red means: be prepared to change. <br /> When grey, it should be changed. <br />
-    Data will still be gathered. When black, the paper cannot load any more black carbon. </p>
-  </div>
-
-  <div class="tab-pane fade" id="pills-devicecontrol" role="tabpanel" aria-labelledby="pills-devicecontrol-tab">
-    <form style="display: block; text-align:center;" method="post">
-      <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#downloadOld"> All logs </button>
-      <div class="modal fade" id="downloadOld" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered" role="document">
-          <div class="modal-content">
+<!-- Filter Status Modal -->
+<div class="modal fade" id="filterStatusModal" tabindex="-1" role="dialog" aria-labelledby="filterStatusModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title" id="exampleModalLongTitle">Old logs</h5>
-              <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                <span aria-hidden="true">&times;</span>
-              </button>
+                <h5 class="modal-title" id="filterStatusModalLabel">Filter Status</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
             </div>
             <div class="modal-body">
-              <table class='container'>
-                <thead>
-                  <tr>
-                    <th>Download log from</th>
-                  </tr>
-                </thead>
-                <tbody> <?php
-                $hostname = $_SERVER['HTTP_HOST'];
-                  // List all .csv files in current directory
-                  $dir = "../logs";
-                  $files = scandir($dir);
-
-
-                   foreach ($files as $file) : 
-                              if (pathinfo($file, PATHINFO_EXTENSION) === 'csv' && $file != 'log_current.csv') :
-
-                                  // Extract the date and time from the filename
-                                  $date_time = explode("_", substr($file, 0, -4))[1];
-                                  $date_time_day = explode("_", substr($file, 0, -4))[0];
-
-                                  $date_time = $date_time_day ." ". substr($date_time, 0, 2) . ":" . substr($date_time, 2, 2) . ":" . substr($date_time, 4, 2);
-                          ?> <tr>
-                    <td><?= $date_time ?></td>
-                    <td><a href='<?= $dir ."/". $file ?>' download='<?=$hostname . '_' . $file;?>'><button type="button" value='Test' class='btn btn-primary'>Download</button></a></td>
-                  </tr> <?php endif; ?> <?php endforeach; ?> </tbody>
-              </table>
+                <p>5 colors are possible: Green, red, orange, grey and black. Red means: be prepared to change. <br /> When grey, it should be changed. <br />Data will still be gathered. When black, the paper cannot load any more black carbon.</p>
             </div>
             <div class="modal-footer">
-              <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
             </div>
-          </div>
         </div>
-      </div>
-      <input type="hidden" name="randcheck" />
-      <button type="button" class="btn btn-info" data-toggle="modal" data-target="#editdeviceparameters"> Device parameters </button>
-      <input type="submit" name="deleteOld" value="Delete old logs" class="btn btn-secondary" />
-      <input type="submit" name="restart" value="Reboot" class="btn btn-secondary" />
-      <input type="submit" name="update" value="Update bcMeter" class="btn btn-secondary" />
-      <button type="button" class="btn btn-info" data-toggle="modal" data-target="#edithostname"> Change Hostname </button> 
-      <button type="button" class="btn btn-info" data-toggle="modal" data-target="#systemlogs"> System Logs </button>
-      <?php
-          $macAddr = 'bcMeter_0x' . $macAddr;
-      echo "<br />thingID: $macAddr<br />Version: $VERSION";
-?>
+    </div>
+</div>
 
+<br />
+
+<div class="tab-pane fade" id="pills-devicecontrol" role="tabpanel" aria-labelledby="pills-devicecontrol-tab" style="display: none;">
+    <form style="text-align:center;" method="post">
+          <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#wifisetup">WiFi Settings</button>
+        <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#device-parameters">Settings</button>
+        <button type="button" class="btn btn-info" data-toggle="modal" data-target="#downloadOld"> All logs </button>
+                <input type="submit" name="deleteOld" value="Delete old logs" class="btn btn-info" />
+        <input type="submit" id="bcMeter_calibration" name="bcMeter_calibration" value="Calibration" class="btn btn-info" />
+
+                <button type="button" class="btn btn-info" data-toggle="modal" data-target="#systemlogs"> System Logs </button>
+        <input type="hidden" name="randcheck" />
+        <input type="submit" id="bcMeter_update" name="bcMeter_update" value="Update bcMeter" class="btn btn-info" />
+        <button type="button" class="btn btn-info" data-toggle="modal" data-target="#edithostname"> Change Hostname </button> 
+                <input type="submit" name="bcMeter_reboot" id="bcMeter_reboot" value="Reboot" class="btn btn-info" />
+
+            <input type="submit" name="shutdown" value="Shutdown" class="btn btn-danger" />
+
+        <?php
+            $hostname = $_SERVER['HTTP_HOST'];
+            $macAddr = 'bcMeter_0x' . $macAddr;
+            echo "<br />thingID: $macAddr<br />Version: $VERSION";
+        ?>
     </form>
 
-    <style>
-        .log-container {
-            display: flex;
-            justify-content: space-between;
-            font-size: 12px;
-        }
+    <!-- Modal for Downloading Old Logs -->
+    <div class="modal fade" id="downloadOld" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exampleModalLongTitle">Old logs</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <table class='container'>
+                        <thead>
+                            <tr>
+                                <th>Download log from</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php
+                            $hostname = $_SERVER['HTTP_HOST'];
+                            // List all .csv files in current directory
+                            $dir = "../logs";
+                            $files = scandir($dir);
 
-        .log-box {
-            flex-basis: 30%;
-            padding: 10px;
-            border: 1px solid #ccc;
-        }
-    </style>
-<?php
+                            foreach ($files as $file) :
+                                if (pathinfo($file, PATHINFO_EXTENSION) === 'csv' && $file != 'log_current.csv') :
 
+                                    // Extract the date and time from the filename
+                                    $date_time = explode("_", substr($file, 0, -4))[1];
+                                    $date_time_day = explode("_", substr($file, 0, -4))[0];
 
-function processLogFile($log)
-
-
-{
-  $logFilePath = '';
-
-    if ($log == 'bcMeter') {
-        $logFilePath = '../maintenance_logs/bcMeter.log';
-    } 
-    if ($log == 'apControlLoop') {
-        $logFilePath = '../maintenance_logs/ap_control_loop.log';
-    }
-    if ($log == 'compairFrostUpload') {
-        $logFilePath = '../maintenance_logs/compair_frost_upload.log';
-    }
-
-
-
-    // Read the entire log file into an array
-    $lines = file($logFilePath, FILE_IGNORE_NEW_LINES);
-
-  // Initialize variables to keep track of previous content and its count
-    $prevContent = '';
-    $contentCount = 0;
-
-    foreach ($lines as $line) {
-        if (preg_match('/(DEBUG|ERROR): (.+)/', $line, $matches)) {
-            $content = $matches[2]; // Extract the content after "DEBUG:" or "ERROR:"
-            if ($content === $prevContent) {
-                // If the content matches the previous one, increment the count
-                $contentCount++;
-            } else {
-                // If the content is different, display the previous content and reset the count
-                if ($contentCount > 1) {
-                    echo "$prevContent (Repeated $contentCount times)<br>";
-                } else {
-                    echo "$line<br>";
-                }
-                $prevContent = $content;
-                $contentCount = 1;
-            }
-        }
-    }
-
-    // Display the final content and its count
-    if ($contentCount > 0) {
-        echo "$prevContent (Repeated $contentCount times)<br>";
-    } else {
-        echo "$prevContent<br>";
-    }
-}
-
-?>
-
-
-<br /><br />
-
-
-
-
+                                    $date_time = $date_time_day ." ". substr($date_time, 0, 2) . ":" . substr($date_time, 2, 2) . ":" . substr($date_time, 4, 2);
+                            ?>
+                                    <tr>
+                                        <td><?= $date_time ?></td>
+                                        <td><a href='<?= $dir ."/". $file ?>' download='<?=$hostname . '_' . $file;?>'><button type="button" value='Test' class='btn btn-primary'>Download</button></a></td>
+                                    </tr>
+                            <?php endif; ?>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 
 
@@ -1081,7 +1734,7 @@ function processLogFile($log)
 
   </div>
 </div>
-<!-- begin edit devicecontrol modal -->
+<!-- begin edit hostname modal -->
 <div class="modal fade" id="edithostname" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered" role="document">
     <div class="modal-content">
@@ -1103,193 +1756,9 @@ function processLogFile($log)
   </div>
 </div>
 <!-- End Edit Parameters -->
-<!-- begin edit session parameters modal -->
-<div class="modal fade" id="editparameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 90%;">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="exampleModalLongTitle">Edit parameters of bcMeter</h5>
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-          <span aria-hidden="true">&times;</span>
-        </button>
-      </div>
-      <div class="modal-body"> <?php 
-$file = "/home/pi/bcMeterConf.py";
-if (isset($_POST['save'])) {
-    $fileContent = "";
-    foreach ($_POST['var'] as $key => $var) {
-        $value = $_POST['value'][$key];
-        if (strpos($var, "mail_logs_to") !== false) {
-            // Check if the value is not already enclosed in single quotes
-            if (!preg_match("/^'.*'$/", $value)) {
-                $value = "'" . $value . "'";
-            }
-        }   
 
 
-
-        if (strpos($var, "password") !== false) {
-            // Check if the value is not already enclosed in single quotes
-            if (!preg_match("/^'.*'$/", $value)) {
-                $value = "'" . $value . "'";
-            }
-        }                        
-        if ($value !== ""){
-            $comment = $_POST['comment'][$key];
-            if (($var !="")) {
-                $param = $_POST['param'][$key];
-                if (($param !="")) {
-                    $fileContent .= $var . "=" . $value . "#" . $comment . "#". $param ."\n";
-                }
-                else {
-                    $fileContent .= $var . "=" . $value . "#" . $comment . "\n";
-                }
-            }
-        }
-    }
-
-    // Trim to remove whitespace from the beginning and end of the content
-    $fileContent = trim($fileContent);
-
-    // Split the content into lines
-    $lines = explode("\n", $fileContent);
-    // Filter out empty lines
-    $lines = array_filter($lines, function($line) {
-        return trim($line) !== '';
-    });
-    $uniqueLines = array_unique($lines); // Remove duplicate lines
-
-    // Rebuild fileContent with only unique and non-empty lines
-    $fileContent = implode("\n", $uniqueLines);
-
-    // Ensure the content ends with a newline
-    if (substr($fileContent, -1) !== "\n") {
-        $fileContent .= "\n";
-    }
-
-    file_put_contents($file, $fileContent);
-}
-
-
-
-$content = file_get_contents($file);
-$lines = explode("\n", $content);
-
-?>
-
-        <form method="post">
-          <table class="table table-bordered" id="session-parameters">
-            <thead>
-              <tr>
-                <th scope="col" style="width: 60%;">Description</th>
-                <th scope="col" style="width: 20%;">Value</th>
-                <th scope="col" style="width: 20%;">Name of Variable</th>
-              </tr>
-            </thead>
-            <tbody> <?php foreach ($lines as $line) : 
-                                  $parts = explode("=", $line);
-                                    if (count($parts) > 1) {
-                                        $skipline = 0;
-                                        $hideline = 0;
-                                      $variable = $parts[0];
-                                      $rest = $parts[1];
-                                      $value = "";
-                                      $comment = "";
-                                      $parameterUse="";
-                                      if (strpos($rest, "#") !== false) {
-                                          $valueParts = explode("#", $rest);
-                                          if (strpos($valueParts, "#") == false) {
-                                            $value =  preg_replace('/[\s\t]+/', '', $valueParts[0]);
-                                            if(!strpos($value, '[') && !strpos($value, ']')  && !strpos($value, '@')   )  {
-                                             $value =  preg_replace('/,/', '.', $valueParts[0]);
-                                            }
-                                            $comment = $valueParts[1];
-                                            if ($valueParts[2]) {
-                                              $parameterUse =$valueParts[2];
-                                              if ($parameterUse == "device")
-                                                $hideline=1;
-                                            }
-                                            else {
-                                              $hideline=1;
-                                            }
-                                          } 
-                   
-                                      }
-
-                                  }
-                                  else {
-                                    $skipline = 1;
-                                  }
-                                if ($skipline==0 && $hideline == 0) {
-                              ?> <tr>
-                <td><input type="text" class="form-control" name="comment[]" value="<?php echo $comment; ?>" readonly></td> <?php if ($value == 'True' || $value == 'False') { ?> <td>
-                  <select class="form-control" name="value[]">
-                    <option value="True" <?php if ($value == 'True') { ?> selected<?php } ?>>True</option>
-                    <option value="False" <?php if ($value == 'False') { ?> selected<?php } ?>>False</option>
-                  </select>
-                </td> <?php } 
-
-                                  else { ?> <td><input type="text" class="form-control" name="value[]" value="<?php echo str_replace(array('"', "'"), '',$value); ?>"  onchange="checkForRemoval(this)"></td> <?php } ?> <td><input type="text" class="form-control" name="var[]" value="<?php echo $variable; ?>" readonly></td>
-                <td><input type="text" class="form-control" name="param[]" value="<?php echo $parameterUse; ?>" readonly></td>
-              </tr> <?php }
-
-                                                              if ($hideline == 1) {
-                              ?> <tr hidden>
-                <td><input type="text" class="form-control" name="comment[]" value="<?php echo $comment; ?>" readonly></td> <?php if ($value == 'True' || $value == 'False') { ?> <td>
-                  <select class="form-control" name="value[]">
-                    <option value="True" <?php if ($value == 'True') { ?> selected<?php } ?>>True</option>
-                    <option value="False" <?php if ($value == 'False') { ?> selected<?php } ?>>False</option>
-                  </select>
-                </td> <?php } 
-
-                                  else { ?> <td><input type="text" class="form-control" name="value[]" value="<?php echo $value; ?>"></td> <?php } ?> <td><input type="text" class="form-control" name="var[]" value="<?php echo $variable; ?>" readonly></td>
-                <td><input type="text" class="form-control" name="param[]" value="<?php echo $parameterUse; ?>" readonly></td>
-              </tr> <?php }
-
-
-
-                               endforeach; ?> </tbody>
-          </table>
-                    To remove a variable, put "remove" as value. <br />
-
-          <button type="submit" class="btn btn-primary" name="save">Save</button>
-          <button type="submit" class="btn btn-secondary" name="cancel">Cancel</button>
-          <button type="button" class="btn btn-info" id="addNew">Add new</button> 
-        </form>
-
-  
-
-        <script>
-            document.getElementById("addNew").onclick = function() {
-              var table = document.getElementById('session-parameters');
-              var newRow = table.insertRow(-1);
-              var cell1 = newRow.insertCell(0);
-              var cell2 = newRow.insertCell(1);
-              var cell3 = newRow.insertCell(2);
-              var cell4 = newRow.insertCell(3);
-
-              cell1.innerHTML = '<input type="text" class="form-control" name="comment[]" value="Description">';
-              
-              cell2.innerHTML = '<input type="text" class="form-control" name="value[]" value="Value" onchange="checkForRemoval(this)">';
-              
-              cell3.innerHTML = '<input type="text" class="form-control" name="var[]" value="Name of the Variable">';
-              cell4.innerHTML = '<input type="text" class="form-control" name="param[]" value="session" readonly>';
-            };
-
-            // Function to check the value and remove the row if necessary
-            function checkForRemoval(element) {
-              if (element.value.toLowerCase() === "remove") {
-                var row = element.closest('tr'); // Find the row of the input element
-                row.parentNode.removeChild(row); // Remove the found row from the table
-              }
-            }
-        </script>
-      </div>
-    </div>
-  </div>
-</div>
-<!-- End Edit session Parameters -->
-<!-- begin edit device parameters modal -->
+<!-- begin Log modal -->
 <div class="modal fade" id="systemlogs" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 90%;">
     <div class="modal-content">
@@ -1301,195 +1770,227 @@ $lines = explode("\n", $content);
       </div>
       <div class="modal-body"> 
 
-        <p style="text-align:center">Reload interface and go again to "Device" to see the most recent log data. They are currently not updated automatically.</p>
+        <p style="text-align:center"></p>
         <div class="accordion" id="accordionExample">
-          <div class="card">
-            <div class="card-header" id="headingOne">
-              <h2 class="mb-0">
+    <div class="card">
+        <div class="card-header" id="headingOne">
+            <h2 class="mb-0">
                 <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseOne" aria-expanded="false" aria-controls="collapseOne">
-        bcMeter.log        </button>
-              </h2>
-            </div>
-
-            <div id="collapseOne" class="collapse" aria-labelledby="headingOne" data-parent="#accordionExample">
-              <div class="card-body">
-         <div class="log-box">
-                    <?php
-                    processLogFile('bcMeter');
-                    ?>
-                </div>      </div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-header" id="headingTwo">
-              <h2 class="mb-0">
-                <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
-        ap_control_loop.log        </button>
-              </h2>
-            </div>
-            <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionExample">
-              <div class="card-body">
-           <div class="log-box">
-                    <?php
-                        processLogFile('apControlLoop');
-                    ?>
-                </div>      </div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-header" id="headingThree">
-              <h2 class="mb-0">
-                <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
-        compair_frost_upload.log
+                    bcMeter.log
                 </button>
-              </h2>
-            </div>
-            <div id="collapseThree" class="collapse" aria-labelledby="headingThree" data-parent="#accordionExample">
-              <div class="card-body">
-                <div class="log-box">
-                    <?php
-                        processLogFile('compairFrostUpload');
-                    ?>
-                </div>      </div>
-            </div>
-          </div>
+            </h2>
         </div>
+        <div id="collapseOne" class="collapse" aria-labelledby="headingOne" data-parent="#accordionExample">
+            <div class="card-body">
+                <div class="log-box" id="logBcMeter">
+                    <!-- Log content will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header" id="headingTwo">
+            <h2 class="mb-0">
+                <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
+                    ap_control_loop.log
+                </button>
+            </h2>
+        </div>
+        <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionExample">
+            <div class="card-body">
+                <div class="log-box" id="logApControlLoop">
+                    <!-- Log content will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header" id="headingThree">
+            <h2 class="mb-0">
+                <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
+                    compair_frost_upload.log
+                </button>
+            </h2>
+        </div>
+        <div id="collapseThree" class="collapse" aria-labelledby="headingThree" data-parent="#accordionExample">
+            <div class="card-body">
+                <div class="log-box" id="logCompairFrostUpload">
+                    <!-- Log content will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function fetchAndProcessLogFile(logType, elementId) {
+    fetch(`../maintenance_logs/${logType}.log`)
+        .then(response => {
+
+            if (!response.ok) {
+                document.getElementById(elementId).innerHTML = 'Log file not found.';
+            }
+            else {
+               return response.text();
+          }
+
+        })
+        .then(data => {
+            const lines = data.split('\n');
+            let prevContent = '';
+            let contentCount = 0;
+            let output = '';
+
+            lines.forEach(line => {
+                const matches = line.match(/(DEBUG|ERROR): (.+)/);
+                if (matches) {
+                    const content = matches[2];
+                    if (content === prevContent) {
+                        contentCount++;
+                    } else {
+                        if (contentCount > 1) {
+                            output += `${prevContent} (Repeated ${contentCount} times)<br>`;
+                        } else if (prevContent !== '') {
+                            output += `${prevContent}<br>`;
+                        }
+                        prevContent = content;
+                        contentCount = 1;
+                    }
+                }
+            });
+
+            if (contentCount > 1) {
+                output += `${prevContent} (Repeated ${contentCount} times)<br>`;
+            } else if (prevContent !== '') {
+                output += `${prevContent}<br>`;
+            }
+
+            document.getElementById(elementId).innerHTML = output;
+        })
+        .catch(error => {
+
+        });
+}
+
+
+function startLogFetching() {
+    const logs = [
+        { type: 'bcMeter', elementId: 'logBcMeter' },
+        { type: 'ap_control_loop', elementId: 'logApControlLoop' },
+        { type: 'compair_frost_upload', elementId: 'logCompairFrostUpload' }
+    ];
+
+    logs.forEach(log => {
+
+        fetchAndProcessLogFile(log.type, log.elementId);
+      
+        setInterval(() => fetchAndProcessLogFile(log.type, log.elementId), 15000);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', startLogFetching);
+</script>
+
 
 <br />
 
 <form method="post" action="">
-    <input type="submit" name="syslog" value="Syslog" class="btn btn-danger" />
-</form>
+    <input type="submit" name="syslog" value="Download logs" class="btn btn-info" style="display: block;width: 50%;margin: 0 auto;" />
+</form><br />
+<p style="display:block; margin 0 auto;">In case of problems, please download the logs and send it to jd@bcmeter.org!</p>
       </div>
     </div>
   </div>
 </div>
-<!-- End Edit device Parameters -->
-
-
-
-
-
+<!-- End Log Parameters -->
+<!-- Start Edit device Parameters -->
+<script src="js/bootstrap4-toggle.min.js"></script>
 <!-- begin edit device parameters modal -->
-<div class="modal fade" id="editdeviceparameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
+<div class="modal fade" id="device-parameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 90%;">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="exampleModalLongTitle">Edit device parameters of bcMeter</h5>
+        <h5 class="modal-title" id="exampleModalLongTitle">Edit Parameters</h5>
         <button type="button" class="close" data-dismiss="modal" aria-label="Close">
           <span aria-hidden="true">&times;</span>
         </button>
       </div>
       <div class="modal-body">
-       <form method="post">
-          <table class="table table-bordered" id="device-parameters">
-            <thead>
-              <tr>
-                <th scope="col" style="width: 60%;">Description</th>
-                <th scope="col" style="width: 20%;">Value</th>
-                <th scope="col" style="width: 20%;">Name of Variable</th>
-              </tr>
-            </thead>
-            <tbody> <?php foreach ($lines as $line) : 
-                                  $parts = explode("=", $line);
-                                    if (count($parts) > 1) {
-                                        $skipline = 0;
-                                        $hideline = 0;
-                                      $variable = $parts[0];
-                                      $rest = $parts[1];
-                                      $value = "";
-                                      $comment = "";
-                                      $parameterUse="";
-                                      if (strpos($rest, "#") !== false) {
-                                          $valueParts = explode("#", $rest);
-                                          if (strpos($valueParts, "#") == false) {
-                                            $value =  preg_replace('/[\s\t]+/', '', $valueParts[0]);
-                                            if(!strpos($value, '[') && !strpos($value, ']')){
-                                             $value =  preg_replace('/,/', '.', $valueParts[0]);
-                                            }
-                                            $comment = $valueParts[1];
-                                            if ($valueParts[2]) {
-                                              $parameterUse =$valueParts[2];
-                                              if ($parameterUse == "session")
-                                                $hideline=1;
-                                            }
-                                            else {
-                                              $hideline=1;
-                                            }
-                                          } 
-                   
-                                      }
+        <div class="container mt-3">
+          <!-- Nav tabs -->
+          <ul class="nav nav-tabs" id="configTabs" role="tablist">
+            <li class="nav-item">
+              <a class="nav-link active" id="session-tab" data-toggle="tab" href="#session" role="tab" aria-controls="session" aria-selected="true">Session Parameters</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" id="device-tab" data-toggle="tab" href="#device" role="tab" aria-controls="device" aria-selected="false">Device Parameters</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" id="administration-tab" data-toggle="tab" href="#administration" role="tab" aria-controls="administration" aria-selected="false">Administration Parameters</a>
+            </li>
+          </ul>
+          <!-- Tab panes -->
+          <div class="tab-content">
+            <div class="tab-pane active" id="session" role="tabpanel" aria-labelledby="session-tab">
+              <!-- Session parameters form -->
+              <form id="session-parameters-form">
+                <table class="table table-bordered">
+                  <thead>
+                    <tr>
+                      <th scope="col" style="width: 80%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
+                      <th scope="col" style="width: 20%;">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                      <!-- Dynamic Session Configuration Rows Will Be Inserted Here by JavaScript -->
+                  </tbody>
+                </table>
+                <button type="button" class="btn btn-primary" id="saveSessionSettings">Save Session Settings</button>
+              </form>
+            </div>
+            <div class="tab-pane" id="device" role="tabpanel" aria-labelledby="device-tab">
+              <!-- Device parameters form -->
+              <form id="device-parameters-form">
+                <table class="table table-bordered">
+                  <thead>
+                    <tr>
+                      <th scope="col" style="width: 90%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
+                      <th scope="col" style="width: 10%;">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                      <!-- Dynamic Device Configuration Rows Will Be Inserted Here by JavaScript -->
+                  </tbody>
+                </table>
+                <button type="button" class="btn btn-primary" id="saveDeviceSettings">Save Device Settings</button>
+              </form>
+            </div>
+            <div class="tab-pane" id="administration" role="tabpanel" aria-labelledby="administration-tab">
+              <!-- Administration parameters form -->
+              <form id="administration-parameters-form">
+                <table class="table table-bordered">
+                  <thead>
+                    <tr>
+                      <th scope="col" style="width: 90%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
+                      <th scope="col" style="width: 10%;">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                      <!-- Dynamic Administration Configuration Rows Will Be Inserted Here by JavaScript -->
+                  </tbody>
+                </table>
+                <button type="button" class="btn btn-primary" id="saveAdministrationSettings">Save Administration Settings</button>
+              </form>
+            </div>
+          </div>
+        </div>
 
-                                  }
-                                  else {
-                                    $skipline = 1;
-                                  }
-                                if ($skipline==0 && $hideline == 0) {
-                              ?> <tr>
-                <td><input type="text" class="form-control" name="comment[]" value="<?php echo $comment; ?>" readonly></td> <?php if ($value == 'True' || $value == 'False') { ?> <td>
-                  <select class="form-control" name="value[]">
-                    <option value="True" <?php if ($value == 'True') { ?> selected<?php } ?>>True</option>
-                    <option value="False" <?php if ($value == 'False') { ?> selected<?php } ?>>False</option>
-                  </select>
-                </td> <?php } 
-
-                                  else { ?> <td><input type="text" class="form-control" name="value[]" value="<?php echo str_replace(array('"', "'"), '',$value); ?>" onchange="checkForRemoval(this)"></td> <?php } ?> <td><input type="text" class="form-control" name="var[]" value="<?php echo $variable; ?>" readonly></td>
-                <td><input type="text" class="form-control" name="param[]" value="<?php echo $parameterUse; ?>" readonly></td>
-              </tr> <?php }
-
-                                                              if ($hideline == 1) {
-                              ?> <tr hidden>
-                <td><input type="text" class="form-control" name="comment[]" value="<?php echo $comment; ?>" readonly></td> <?php if ($value == 'True' || $value == 'False') { ?> <td>
-                  <select class="form-control" name="value[]">
-                    <option value="True" <?php if ($value == 'True') { ?> selected<?php } ?>>True</option>
-                    <option value="False" <?php if ($value == 'False') { ?> selected<?php } ?>>False</option>
-                  </select>
-                </td> <?php } 
-
-                                  else { ?> <td><input type="text" class="form-control" name="value[]" value="<?php echo $value; ?>"></td> <?php } ?> <td><input type="text" class="form-control" name="var[]" value="<?php echo $variable; ?>" readonly></td>
-                <td><input type="text" class="form-control" name="param[]" value="<?php echo $parameterUse; ?>" readonly></td>
-              </tr> <?php }
-
-
-
-                               endforeach; ?> </tbody>
-          </table>
-          To remove a variable, put "remove" as value. <br />
-          <button type="submit" class="btn btn-primary" name="save">Save</button>
-          <button type="submit" class="btn btn-secondary" name="cancel">Cancel</button>
-          <button type="button" class="btn btn-info" id="addNewDevSetting">Add new</button> 
-        </form>
-        <script>
-            document.getElementById("addNewDevSetting").onclick = function() {
-              var table = document.getElementById('device-parameters');
-              var newRow = table.insertRow(-1);
-              var cell1 = newRow.insertCell(0);
-              var cell2 = newRow.insertCell(1);
-              var cell3 = newRow.insertCell(2);
-              var cell4 = newRow.insertCell(3);
-
-              cell1.innerHTML = '<input type="text" class="form-control" name="comment[]" value="Description">';
-              
-              cell2.innerHTML = '<input type="text" class="form-control" name="value[]" value="Value" onchange="checkForRemoval(this)">';
-              
-              cell3.innerHTML = '<input type="text" class="form-control" name="var[]" value="Name of the Variable">';
-              cell4.innerHTML = '<input type="text" class="form-control" name="param[]" value="session" readonly>';
-            };
-
-            // Function to check the value and remove the row if necessary
-            function checkForRemoval(element) {
-              if (element.value.toLowerCase() === "remove") {
-                var row = element.closest('tr'); // Find the row of the input element
-                row.parentNode.removeChild(row); // Remove the found row from the table
-              }
-            }
-        </script>         
-        </form>
       </div>
     </div>
   </div>
 </div>
 <!-- End Edit device Parameters -->
+
 
 
 
@@ -1559,7 +2060,6 @@ $lines = explode("\n", $content);
                           
                           $credsUpdated=true;
 
-                          //echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
                         }
 
                         // check for existing wifi credentials
@@ -1568,16 +2068,16 @@ $lines = explode("\n", $content);
                         $currentWifiPwd=$data["wifi_pwd"];
                         $currentWifiPwdHidden=str_repeat("•", strlen($currentWifiPwd));
 
-                         if (isset($_POST['reset_wifi_json'])) {
-                        $wifiFile='/home/pi/bcMeter_wifi.json';
-                          $wifi_ssid = "";
-                           $wifi_pwd ="";
-                         $data = array("wifi_ssid"=>$wifi_ssid, "wifi_pwd"=>$wifi_pwd);
-                          file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
-                          //echo "<script>window.location.href='includes/status.php?status=reboot';</script>";
+                        if (isset($_POST['reset_wifi_json'])) {
+                            $wifiFile='/home/pi/bcMeter_wifi.json';
+                            $wifi_ssid = "";
+                            $wifi_pwd = "";
+                            $data = array("wifi_ssid" => $wifi_ssid, "wifi_pwd" => $wifi_pwd);
+                            file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
 
-                      }
-
+                            // Redirect to the same page to reload it
+                            header('Location: ' . $_SERVER['PHP_SELF']);
+                        }
                         $sendBackground=false;
 
                         // send interrupt to bcMeter_ap_control_loop service and try to connect to the wifi network
@@ -1598,55 +2098,22 @@ $lines = explode("\n", $content);
                         }
                         ?> <script>
           var currentWifiSsid = "<?php echo $currentWifiSsid; ?>";
-          var progressBarStarted = false;
-          var progressBarTimeSec = 40000;
-          let mac = "<?php echo $macAddressDec ?>";
-          let conn_location = null;
-          let telraam_online = null;
-          //set check_time when the connect button was clicked
-          let check_time = null;
-          if ("<?php echo $interruptSent; ?>") {
-            check_time = new Date().getTime() / 1000; //epoch in seconds
-          }
-          //set the title after the languages are loaded
-          $("#page_title").html('<?php echo $language["welcome_title"]; ?>');
-        </script>
-        <script src="js/main.js?version=5"></script>
 
-        <body>
-          <div class="making-the-connection" style="display:none;">
-            <h2><?php echo $language["making_the_connection_title"]; ?></h2>
-            <span class="connection-info"><?php echo $language["making_the_connection_info"]; ?></span><br><br>
-            <div id="progress-container">
-              <div id="progress" class="waiting">
-                <dt></dt>
-                <dd></dd>
-              </div>
-            </div>
-            <div id="progress-note-ok" class="progress-note success-notifcation no-background" style="display:none;"><?php echo $language["progress_note_ok"]; ?></div>
-            <div id="progress-note-nok" class="progress-note error" style="display:none;"><?php echo $language["progress_note_nok"]; ?></div>
-            <div class="progress-close-button js-close-connection-modal" style="display: none"> <?php echo $language["making_the_connection_btn"]; ?> </div>
-          </div> <?php // if ($version!=='') { ?> <div class="version"> <?php //echo $version; ?></div> <?php// } ?> <!--ul class="lang-link">
-                              <?php $now=time() //add epoch time to urls to prevent caching?>
-                              <li><a href="?lang=nl&t=<?php echo $now; ?>">nl</a></li>
-                              <li><a href="?lang=fr&t=<?php echo $now; ?>">fr</a></li>
-                              <li><a href="?lang=en&t=<?php echo $now; ?>">en</a></li>
-                              <li><a href="?lang=si&t=<?php echo $now; ?>">si</a></li>
-                              <li><a href="?lang=es&t=<?php echo $now; ?>">es</a></li>
-                              <li><a href="?lang=de&t=<?php echo $now; ?>">de</a></li>
-                            </ul-->
+
+          //set the title after the languages are loaded
+
+
+  
+
+
+        </script>
+       
+
+
           <div class="box" <?php echo ($credsUpdated==true) ? 'style="display: block"' :'style="display: none"';?>>
             <div class='success-notifcation' <?php echo ($credsUpdated==true) ? 'style="display: block"' :'style="display: none"';?>> <?php echo $language["save_success"]; ?> </div>
           </div>
           <div class="content">
-            <form name="connect_now_form" method="POST" action="index.php"><br /> <?php
-                                    if ($currentWifiSsid!==null && $currentWifiSsid!=='') {
-                                        echo "<div class=\"alert alert-success\" role=\"alert\">".$language["current_wifi_setup"]. ": ". $currentWifiSsid. "</div>";
-                                
-                                    } else {
-                                      
-                                    }
-                                  ?> </form>
             <div class="tab-content tab-wifi">
               <div class="entering-the-connection-info">
                 <br />
@@ -1688,6 +2155,9 @@ $lines = explode("\n", $content);
                   </div><br />
                   <sub>If you like to run the bcMeter independently without being connected to a WiFi, you can adjust it in the Settings.
                 </form>
+                <br /><!--button id="fetchWifiButton">Scan for Wi-Fi</button-->
+                <input type="submit" name="force_wifi" id="force_wifi" value="Reconnect" class="btn btn-info" />
+
               </div> <!-- end entering-the-connection-info -->
             </div> <!-- tab-wifi -->
           </div>
@@ -1700,96 +2170,107 @@ $lines = explode("\n", $content);
 <br />
 
 
-<div class="container">
-  <div class="row">
-    <div class="col-sm-12">
-          <?php
-        $output = exec('ps -A | grep -i hostapd');
-
-        // Check if the command returned any output
-          echo "<div style='display:block; margin: 20px 0;' class='alert alert-"; 
-
-
-                     if(!isset($grep)){echo "warning'";}
-            else {echo "success'";} 
-            echo " role='alert'>";
-
-            $numbers = preg_replace('/^\s+| python3 \/home\/pi\/bcMeter.py/', "", $grep);
-            $numbers = explode(" ", $numbers);
-            $PID = $numbers[0];
-            $DEVICETIME = shell_exec('date');
-            $STARTED = implode(" ", array_slice($numbers,1));
-                      $getHostname = 'sudo raspi-config nonint get_hostname';
-            $hostname = shell_exec($getHostname);
-         if (!isset($grep))
-        {
-            echo "<div style='text-align:center;'>$hostname stopped.<br/></div>";
-
-            if(!empty($output)) {
-                                     echo "<div style='text-align:center;'><strong>You're currently in Hotspot mode, go to WiFi Setup or set up hotspot mode, else bcMeter will turn off soon!</strong></div>";
-
-                  ?>
-
-                  <!-- Begin Set Time -->
-
-
-        <script type="text/javascript">
-          // Create a timestamp using JavaScript
-          setInterval(function() {
-            var date = new Date();
-            var timestamp = (date.getTime() / 1000).toFixed(0);
-            var currentDateTime = date.toLocaleString('default', {
-              month: 'short'
-            }) + " " + date.getDate() + " " + date.getFullYear() + " " + date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
-            document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + currentDateTime;
-            document.getElementById("set_time").value = timestamp;
-            $.ajax({
-              url: "includes/gettime.php", //the page containing php script
-              type: "post", //request type,
-              data: {
-                datetime: "now"
-              },
-              success: function(result) {
-                document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + result;
-                if (document.getElementById("devicetime")) {
-                  document.getElementById("devicetime").innerHTML = "Time on bcMeter: " + result;
-                }
-              }
-            });
-          }, 1000);
-        </script>
-        <div style="display: block;margin: 0 auto;">
-        <p style="text-align: center;"> If both times are more than 1 minute different, set the time of your browser to be the time of the bcmMeter now. </p>
-        <pre style='text-align:center;' id='datetime_device'></pre>
-        <pre style='text-align:center;' id='datetime_local'></pre>
-    </div>
-<!-- end set time modal-->
 
 
 
-                  <div style="text-align: center";>
-                  <form method="POST">
-                    <input type="hidden" id="set_time" name="set_time" value="">
-                    <input type="submit" value="Set clock on bcMeter to your time" class="btn btn-primary" >
-                  </form>
-                </div>
-                <?php
 
-                }
 
+
+<br /> <br />
+
+
+
+
+<script>
+function updateStatus(status, deviceName, creationTimeString) {
+    const statusDiv = document.getElementById('statusDiv');
+    statusDiv.className = 'status-div'; // Reset classes
+    let formattedCreationTime = ''; // Declare formattedCreationTime here
+
+    const year = parseInt("20" + creationTimeString.substring(0, 2));
+    const month = parseInt(creationTimeString.substring(2, 4)) - 1; // Adjust for 0-indexed month in JavaScript
+    const day = parseInt(creationTimeString.substring(4, 6));
+    const hours = parseInt(creationTimeString.substring(7, 9));
+    const minutes = parseInt(creationTimeString.substring(9, 11));
+    const seconds = parseInt(creationTimeString.substring(11, 13));
+
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day) && !isNaN(hours) && !isNaN(minutes) && !isNaN(seconds)) {
+        const creationDate = new Date(year, month, day, hours, minutes, seconds);
+        formattedCreationTime = creationDate.toLocaleString(); // Assign value to formattedCreationTime
+    } else {
+        console.error("Invalid creationTimeString format.");
+    }
+
+    statusDiv.textContent = 
+        (status === -1) ? deviceName + " status unknown" :
+        (status === 0) ? deviceName + " stopped" :
+        (status === 1) ? deviceName + " initializing" :
+        (status === 2) ? deviceName + " running since " + formattedCreationTime :
+        (status === 3) ? deviceName + " running in Hotspot Mode since " + formattedCreationTime :
+        (status === 4) ? "Hotspot mode active, " + deviceName + " not measuring" : ""; // Added for status 4
+
+    // Adjust class addition for -1 status case if desired
+    statusDiv.classList.add(
+        status === -1 ? 'bg-secondary' :
+        status === 0 ? 'bg-danger' :
+        status === 1 ? 'bg-warning' :
+        status === 2 ? 'bg-success' :
+        status === 3 ? 'bg-info' :
+        status === 4 ? 'bg-info' : '' // Added for status 4
+    );
+
+    statusDiv.classList.add('text-white');
+
+    var hotspotWarningDiv = document.getElementById('hotspotwarning');
+
+    if (status === 4) {
+        hotspotWarningDiv.style.display = 'block';
+        hotspotWarningDiv.className = 'alert alert-warning';
+
+    } else {
+        hotspotWarningDiv.style.display = 'none';
+    }
+}
+
+
+function fetchStatus() {
+    fetch('/tmp/BCMETER_WEB_STATUS')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
         }
-        else {
+        return response.text(); // Change to text() to log the raw response
+      })
+      .then(data => {
+        try {
+          const jsonData = JSON.parse(data);
+          const status = jsonData.bcMeter_status;
+          const creationTimeString = jsonData.log_creation_time;
+          const deviceName = jsonData.hostname;
 
-
-             echo "<div style='text-align:center;'>$hostname logging since $STARTED<br /></div>";
-                       if(!empty($output)) {
-                       echo "<div style='text-align:center;'><strong>You're currently in Hotspot mode, go to WiFi Setup or set up hotspot mode, else bcMeter will turn off soon!</strong></div>";
-                       }
+          updateStatus(status, deviceName, creationTimeString);
+        } catch (error) {
+          console.error('Error parsing JSON:', error);
+          //throw new Error('Error parsing JSON');
         }
-        ?>
-      </div>
-    </div>
-  </div>
+      })
+      .catch(error => {
+        console.error('There was a problem with the fetch operation:', error);
+        //const defaultDate = new Date().toLocaleString();
+        //updateStatus(-1, "Device", defaultDate);
+      });
+}
+
+
+  // Fetch status on page load
+  fetchStatus();
+  // Refresh status every 5 seconds
+  setInterval(fetchStatus, 5000);
+
+
+
+
+</script>
 
 
 <?php
@@ -1858,7 +2339,6 @@ if (isset($_POST["syslog"]))
 
 echo <<< javascript
 <script>
-console.log("SYSLOG")
 var dialog = bootbox.dialog({
     title: 'Download Syslog?',
     message: "<p>Do you want to download the syslog for debugging?</p>",
@@ -1924,82 +2404,12 @@ javascript;
 
 }
 
-if (!empty($_POST["restart"]) )
+
+if (isset($_POST["force_wifi"]))
 {
-
-	 echo <<< javascript
-<script>
-var dialog = bootbox.dialog({
-		title: 'Reboot bcMeter?',
-		message: "<p>Do you want to reboot the device?</p>",
-		size: 'small',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-								window.location.href='includes/status.php?status=reboot';
-
-						}
-				}
-		}
-});
-</script>
-javascript;
-
+shell_exec("sudo systemctl restart bcMeter_ap_control_loop");
 }
 
-if (isset($_POST["stopbcm"]))
-{   
-
-echo <<<JS
-<script>
-var dialog = bootbox.dialog({
-		title: 'Stop logging',
-		message: "<p>This will stop the current measurement. Sure?</p>",
-		size: 'small',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-
-
-						$.ajax({
-								type: 'post',
-								data: 'exec_stop',
-								success: function(response){
-									 setTimeout(window.location.reload.bind(window.location), 3000);
-								}
-						 });
-		
-							
-
-
-
-
-						}
-				}
-		}
-});
-</script>
-
-JS;
-}   		
 
 
 if (isset($_POST["exec_stop"]))
@@ -2008,196 +2418,25 @@ shell_exec("sudo systemctl stop bcMeter");
 }
 
 
-if (isset($_POST["debug"]))
-{
-
-echo <<< javascript
-<script>
-var dialog = bootbox.dialog({
-		title: 'Enter debug mode?',
-		message: "<p>Do you want to switch to debug mode? Device will be unresponsive for 10-20 seconds</p>",
-		size: 'small',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-
-							$.ajax({
-								type: 'post',
-								data: 'exec_debug',
-								success: function(response){
-									 window.location.href='includes/status.php?status=debug';
-								}
-						 });
-
-								
-
-						}
-				}
-		}
-});
-</script>
-javascript;
-
-}
-
 
 if (isset($_POST["exec_debug"]))
 {
 	shell_exec("sudo kill -SIGINT $PID");
-
 }
 
 
 if (isset($_POST["startbcm"]))
 {
 	 echo "<script>bootbox.alert('Starting new log. Wait a few minutes for graph to appear');</script>";
-      shell_exec("sudo systemctl stop bcMeter");
-    sleep(3);
-		shell_exec("sudo systemctl start bcMeter");
-		echo "<script>setTimeout(window.location.reload.bind(window.location), 10000);</script>";
+      shell_exec("sudo systemctl restart bcMeter");
 }
 
-if (isset($_POST["newlog"]))
-{
 
-echo <<<JS
-<script>
-var dialog = bootbox.dialog({
-		title: 'Start new log?',
-		message: "<p>This will start a new log. It takes a few minutes for the new chart to appear. </p>",
-		size: 'small',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-
-						 $.ajax({
-								type: 'post',
-								data: 'exec_new_log',
-								success: function(response){
-									 setTimeout(window.location.reload.bind(window.location), 3000);
-								}
-						 });
-
-
-
-						}
-				}
-		}
-});
-</script>
-
-JS;
-}   
+   
 
 if (isset($_POST["exec_new_log"])){
-
-		shell_exec("sudo systemctl stop bcMeter");
-		sleep(3);
-		shell_exec('sudo systemctl start bcMeter');
-		sleep(3);
-		echo "setTimeout(window.location.reload.bind(window.location), 10000);";
-
+		shell_exec("sudo systemctl restart bcMeter");
 }
-
-
-
-
-if (isset($_POST["saveGraph"]))
-{
-
-echo <<<END
-		<script>var dialog = bootbox.dialog({
-		title: 'Save graph as',
-		message: "<p>Choose the type of file you want to save the current measurements as</p>",
-		size: 'large',
-		buttons: {
-				1: {
-						label: "CSV (MS Office/Google Docs)",
-						className: 'btn-info',
-						callback: function(){
-								saveCSV();
-
-						}
-				},
-				2: {
-						label: "PNG (Web/Mail)",
-						className: 'btn-info',
-						callback: function(){
-								savePNG();
-
-						}
-				},
-				3: {
-						label: "SVG (DTP)",
-						className: 'btn-info',
-						callback: function(){
-								saveSVG();
-						}
-				}
-		}
-});;</script>
-
-END;
-
-}
-
-
-
-
-
-
-if (isset($_POST["update"]))
-{ 
-
-
-echo <<< javascript
-<script>
-var dialog = bootbox.dialog({
-		title: 'Update bcMeter?',
-		message: "<p>The most recent files will be downloaded. If possible, your parameters will be kept but please save them and check after the update if they are the same. </p>",
-		size: 'medium',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-								window.location.href='includes/status.php?status=update';
-
-						}
-				}
-		}
-});
-</script>
-javascript;
-
-
-
-}   
-
 
 
 ?>

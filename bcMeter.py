@@ -10,7 +10,7 @@ from datetime import datetime
 import re
 from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
-bcMeter_version = "0.9.915 2024-04-15"
+bcMeter_version = "0.9.917 2024-05-17"
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -73,7 +73,7 @@ led_brightness = int(config.get('led_brightness', 100))
 airflow_sensor = config.get('airflow_sensor', False)
 pump_dutycycle = int(config.get('pump_dutycycle', 20))
 reverse_dutycycle = config.get('reverse_dutycycle', False)
-sample_spot_diameter = float(config.get('sample_spot_diameter', 0.5))
+sample_spot_diameter = float(str(config.get('sample_spot_diameter', 0.5)).replace(',', '.'))
 is_ebcMeter = config.get('is_ebcMeter', False)
 mail_logs_to = config.get('mail_logs_to', "")
 send_log_by_mail = config.get('send_log_by_mail', False)
@@ -571,7 +571,7 @@ def read_adc(mcp_i2c_address, sample_time):
 				atn_current=round((numpy.log(voltage_channel1/voltage_channel2)*-100),5)
 			except:
 				pass
-		if ((airflow_sensor is True) or (airflow_only is True)) and (i % 5 == 0):
+		if ((airflow_sensor is True) or (airflow_only is True)) and (i % 5 == 0) and (calibration is False):
 			initialise(airflow_channel, rate_12bit)
 			airflow_sample_sum = 0
 			while airflow_sample_index<=airflow_samples_to_take:
@@ -606,7 +606,7 @@ def read_adc(mcp_i2c_address, sample_time):
 			print(f"{i}, {round(sum_channel1/i,3)}, {round(sum_channel2/i,3)}, {round(average_channel3,3)}, current: {round(voltage_channel1,3)}, {round(voltage_channel2,3)}, {round(voltage_channel3,3)} ")
 			pass
 	if (skipsampling is False):
-		average_channel3 = (sum_channel3 / j) if (airflow_sensor is True) else 0
+		average_channel3 = (sum_channel3 / j) if (airflow_sensor is True) and (calibration is False) else 0
 		#'''	
 		average_channel1 = sum_channel1 / i
 		average_channel2 = sum_channel2 / i
@@ -640,7 +640,7 @@ def airflow_by_voltage(voltage,sensor_type):
 			0.72:0.05,
 			0.82:0.077,
 			1.08:0.155,
-			1.13:0.24,
+			1.16:0.22,
 			1.77:0.5,
 			1.90:0.6
 		}
@@ -701,7 +701,7 @@ def set_pwm_dutycycle(pump_dutycycle, stop_event):
 
 def check_airflow(current_mlpm):
 	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config
-	desired_airflow_in_mlpm = float(config.get('airflow_per_minute', 0.1))
+	desired_airflow_in_mlpm = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
 	disable_pump_control = True if airflow_only is True else False
 	
 	if(disable_pump_control is False):
@@ -895,18 +895,18 @@ def send_email(payload):
 			logger.error("Email alert: %s", e)
 
 def apply_temperature_correction(BCngm3_unfiltered, temperature_current):
-    # Constants obtained from polynomial regression; EXPERIMENTAL
-    intercept = -15358.619
-    temperature_coefficient = 1918.009
-    temperature_squared_coefficient = -54.284
-    
-    # Calculate the correction factor based on temperature
-    correction_factor = intercept + temperature_current * temperature_coefficient + temperature_current**2 * temperature_squared_coefficient
-    
-    # Apply the correction factor to BCngm3_unfiltered
-    corrected_BCngm3_unfiltered = BCngm3_unfiltered * correction_factor
-    
-    return corrected_BCngm3_unfiltered
+	# Constants obtained from polynomial regression; EXPERIMENTAL
+	intercept = -15358.619
+	temperature_coefficient = 1918.009
+	temperature_squared_coefficient = -54.284
+	
+	# Calculate the correction factor based on temperature
+	correction_factor = intercept + temperature_current * temperature_coefficient + temperature_current**2 * temperature_squared_coefficient
+	
+	# Apply the correction factor to BCngm3_unfiltered
+	corrected_BCngm3_unfiltered = BCngm3_unfiltered * correction_factor
+	
+	return corrected_BCngm3_unfiltered
 
 
 def bcmeter_main(stop_event):
@@ -949,16 +949,18 @@ def bcmeter_main(stop_event):
 	while(True):
 		get_location = config.get('get_location', False)
 		location = config.get('location', [0,0])
-		device_specific_correction_factor = float(config.get('device_specific_correction_factor', 1))
-		filter_scattering_factor = float(config.get('filter_scattering_factor', 1.39))
+		device_specific_correction_factor = float(str(config.get('device_specific_correction_factor', 1)).replace(',', '.'))
+		filter_scattering_factor = float(str(config.get('filter_scattering_factor', 1.39)).replace(',', '.'))
 		mail_sending_interval = int(config.get('mail_sending_interval', 6))
 		filter_status_mail = config.get('filter_status_mail', False)
 		send_log_by_mail = config.get('send_log_by_mail', False)
 		email_service_password = config.get('email_service_password', 'email_service_password')
 		led_brightness = int(config.get('led_brightness', 100))
 		sample_time = int(config.get('sample_time', 300))
-		sens_correction = float(config.get('sens_correction',1))
-		ref_correction = float(config.get('ref_correction',1))
+		sens_correction = float(str(config.get('sens_correction', 1)).replace(',', '.'))
+		ref_correction = float(str(config.get('ref_correction', 1)).replace(',', '.'))
+		sample_spot_diameter = float(str(config.get('sample_spot_diameter', 0.5)).replace(',', '.'))
+
 
 		pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
 		start = time()
@@ -979,7 +981,7 @@ def bcmeter_main(stop_event):
 			#logger.debug("measurement took ", delay)
 			volume_air_per_sample=(delay/60)*airflow_per_minute #liters of air between samples	
 		else:
-			airflow_per_minute = float(config.get('airflow_per_minute', 0.100))
+			airflow_per_minute = float(config.get('airflow_per_minute', 0.100).replace(',', '.'))
 			volume_air_per_sample=(sample_time/60)*airflow_per_minute #liters of air between samples
 		main_sensor_value_current=main_sensor_value#-main_sensor_bias
 		reference_sensor_value_current=reference_sensor_value#-reference_sensor_bias
@@ -1006,16 +1008,18 @@ def bcmeter_main(stop_event):
 			logger.debug("no temperature sensor detected")
 			temperature_current = 1
 		if (reference_sensor_value_current == 0): reference_sensor_value_current = 1 #avoid later divide by 0; just for debug
-		if (main_sensor_value_current == 0): main_sensor_value_current = 1#avoid later divide by 0; just for debug
+		if (main_sensor_value_current == 0): main_sensor_value_current = 1#avoid later divide by 0; just for debug#
+		filter_status_quotient = main_sensor_value_current/reference_sensor_value_current
 		filter_status = (
-			5 if reference_sensor_value_current/main_sensor_value_current <= 2 else
-			4 if 3 < reference_sensor_value_current/main_sensor_value_current > 2 else
-			3 if 4 < reference_sensor_value_current/main_sensor_value_current > 3 else
-			2 if 6 < reference_sensor_value_current/main_sensor_value_current > 4 else
-			1 if 8 < reference_sensor_value_current/main_sensor_value_current > 6 else
-			0 if 10 < reference_sensor_value_current/main_sensor_value_current > 8 else
-			-1
+		    5 if filter_status_quotient > 0.8 else
+		    4 if 0.8 < filter_status_quotient <= 0.7 else
+		    3 if 0.7 < filter_status_quotient <= 0.66 else
+		    2 if 0.66 < filter_status_quotient <= 0.6 else
+		    1 if 0.6 < filter_status_quotient <= 0.55 else
+		    0 if filter_status_quotient <= 0.55 else
+		    -1
 		)
+
 
 		current_time = time()
 		mail_sending_interval_in_seconds = mail_sending_interval*60*60
@@ -1237,7 +1241,8 @@ def housekeeping(stop_event):
 
 def blink_led(pattern, change_blinking_pattern):
 	if debug:
-		print(f"blinking pattern = {pattern}")
+		#print(f"blinking pattern = {pattern}")
+		pass
 	while not change_blinking_pattern.is_set():
 		R_PIN=G_PIN=B_PIN=1#remove for RGB Led; valid for mono LED
 

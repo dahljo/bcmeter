@@ -24,7 +24,7 @@ from threading import Thread
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.9.3"
+ctrl_lp_ver="0.9.4"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 bcMeter_button_gpio = 16
 
@@ -220,6 +220,8 @@ def get_uptime():
 
 def setup_access_point():
 	#deactivate_dnsmasq_service()
+	p = subprocess.Popen(["sudo", "systemctl", "unmask","hostapd"])
+	p.communicate()
 	stop_access_point()
 	#reset wpa_supplicant
 	file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
@@ -467,8 +469,9 @@ def ap_control_loop():
 			config = load_config_from_json()
 			is_online = check_connection()
 			uptime = get_uptime()
+			is_ebcMeter = config.get('is_ebcMeter', False)
 			run_hotspot = config.get('run_hotspot', False)
-
+			run_hotspot = True if (is_ebcMeter) else run_hotspot
 			bcMeter_running = check_service_running("bcMeter")
 			bcMeter_flask_running = check_service_running("bcMeter_flask")
 

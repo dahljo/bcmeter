@@ -278,7 +278,7 @@ break;
 
  case 'calibration':
     session_write_close(); // Important to not block the session
-
+echo 'Starting calibration... Takes a minute';
     function executeCommand($cmd) {
         while (@ob_end_flush()); // End all output buffers if any
         $proc = popen($cmd, 'r');

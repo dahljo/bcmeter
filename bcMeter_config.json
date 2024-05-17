@@ -3,13 +3,13 @@
         "value": false,
         "description": "Hotspot Mode",
         "type": "boolean",
-        "parameter": "device"
+        "parameter": "session"
     },
     "heating": {
         "value": false,
         "description": "Enable heating",
         "type": "boolean",
-        "parameter": "device"
+        "parameter": "session"
     },
     "sample_spot_diameter": {
         "value": 0.5,
@@ -36,7 +36,7 @@
         "parameter": "device"
     },
     "airflow_per_minute": {
-        "value": 0.1,
+        "value": 0.25,
         "description": "Adjust airflow per minute in liter",
         "type": "number",
         "parameter": "session"
@@ -87,13 +87,13 @@
         "value": false,
         "description": "Upload Data to CompAIR. Needs coordinates.",
         "type": "boolean",
-        "parameter": "session"
+        "parameter": "compair"
     },
     "get_location": {
         "value": false,
-        "description": "Get rough location by IP automatically each time?",
+        "description": "Get rough location by IP automatically each time the log starts?",
         "type": "boolean",
-        "parameter": "session"
+        "parameter": "compair"
     },
     "location": {
         "value": [
@@ -102,7 +102,7 @@
         ],
         "description": "Location of the bcMeter. Keep syntax exactly like that [lat,lon]",
         "type": "array",
-        "parameter": "session"
+        "parameter": "compair"
     },
     "use_display": {
         "value": false,
@@ -126,23 +126,23 @@
         "value": false,
         "description": "Periodically receive log files by mail.",
         "type": "boolean",
-        "parameter": "session"
+        "parameter": "email"
     },
     "mail_logs_to": {
         "value": "your@email.address",
         "description": "Enter e-mail adress(es) to send the log files to, comma separated",
         "type": "string",
-        "parameter": "session"
+        "parameter": "email"
     },
     "filter_status_mail": {
         "value": false,
         "description": "Rececive a mail when filter change is suggested",
         "type": "boolean",
-        "parameter": "session"
+        "parameter": "email"
     },
     "disable_pump_control": {
         "value": false,
-        "description": "ON to disable internal pump control",
+        "description": "Disable internal pump control",
         "type": "boolean",
         "parameter": "device"
     },
@@ -150,11 +150,11 @@
         "value": 24,
         "description": "Send logs every X hours (between 6 and 24)",
         "type": "number",
-        "parameter": "session"
+        "parameter": "email"
     },
     "email_service_password": {
         "value": "email_service_password",
-        "description": "this is the password if you want to receive emails. contact jd@bcmeter.org if you want to use the service",
+        "description": "Contact jd@bcmeter.org for the mail sending service password - not public for spam protection",
         "type": "string",
         "parameter": "device"
     }

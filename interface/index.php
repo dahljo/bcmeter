@@ -11,18 +11,26 @@ $macAddr = exec("/sbin/ifconfig wlan0 | grep 'ether' | awk '{print $2}'");
 $macAddr = str_replace(':', '', $macAddr);
 
 
-$filename = '/home/pi/bcMeterConf.py';
-$is_ebcMeter = false; // Default value
 
-if (file_exists($filename)) {
-    $lines = file($filename, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
 
-    foreach ($lines as $line) {
-        if (strpos($line, 'is_ebcMeter=True') !== false) {
-            $is_ebcMeter = true;
-        } 
+function getEbcMeterValue() {
+    $jsonFilePath = '/home/pi/bcMeter_config.json';
+    if (file_exists($jsonFilePath)) {
+        $jsonData = file_get_contents($jsonFilePath);
+        $configData = json_decode($jsonData, true);
+        if (isset($configData['is_ebcMeter']['value'])) {
+            return $configData['is_ebcMeter']['value'];
+        } else {
+            return null;
+        }
+    } else {
+        // File does not exist
+        return null;
     }
 }
+
+$is_ebcMeter = getEbcMeterValue();
+
 
 
 
@@ -182,216 +190,240 @@ if ($is_ebcMeter === true) {
 
 <script>
 $(document).ready(function() {
+/* VARS*/
+
+let tooltip,
+    hoveredTime = 0,
+    idx = 0,
+    isHidden = false,
+    yValue,
+    yValue2,
+    yValueScale,
+    yValueScale2,
+    yLabel,
+    yLabel2,
+    data = [],
+    combineLogs = [],
+    combinedLogCurrentIndex = 2,
+    yMinInputted = "",
+    yMin2Inputted = "",
+    yMaxInputted = "",
+    yMax2Inputted = "",
+    yRange = [],
+    yRange2 = [],
+    yScale2,
+    brushedX = [],
+    dataObj = {},
+    updateCurrentLogs;
+
+<?php
+
+if ($is_ebcMeter === true) {
+    echo "let is_ebcmeter = true;";
+    echo "let yColumn = 'BCngm3_unfiltered';";
+    echo "let yColumn2 = 'bcmSen';";
+}
+else {
+  echo "let is_ebcmeter = false;";
+  echo "let yColumn = 'BCngm3';";
+  echo "let yColumn2 = 'BC_rolling_avg_of_6';";
+}
+
+?>
 
 
+const updateCurrentLogsFunction = () => {
+    updateCurrentLogs = setInterval(() => {
 
-    let selectLogs = document.getElementById("logs_select")
-    current_file = selectLogs.value;
-    if (current_file == 'log_current.csv') {
-        updateCurrentLogsFunction()
-      } 
-    /* VARS*/
-    let yColumn2 = "BC_rolling_avg_of_6",
-      yColumn = "BCngm3",
-      tooltip,
-      hoveredTime = 0,
-      idx = 0,
-      isHidden = false,
-      yValue, 
-      yValue2, 
-      yValueScale, 
-      yValueScale2, 
-      yLabel, 
-      yLabel2,
-      data = [],
-      combineLogs = [],
-      combinedLogCurrentIndex = 2,
-      yMinInputted = "",
-      yMin2Inputted = "",
-      yMaxInputted = "",
-      yMax2Inputted = "",
-      yRange = [],
-      yRange2 = [],
-      yScale2,
-      brushedX = [],
-      dataObj = {},
-      updateCurrentLogs;
+        dataFile(`${logPath}log_current.csv`);
+    }, 5000)
 
-  if (typeof is_ebcmeter === 'undefined') {
+}
+
+
+let selectLogs = document.getElementById("logs_select")
+current_file = selectLogs.value;
+if (current_file == 'log_current.csv') {
+    updateCurrentLogsFunction()
+}
+
+
+if (typeof is_ebcmeter === 'undefined') {
     is_ebcmeter = false;
-  }
-
-  if (is_ebcmeter === true) {
-    yColumn = "BCngm3_unfiltered";
-    yColumn2 = "bcmSen";
-  }
+}
 
 
-    /* CONSTANTS */
-    const noData ="<div class='alert alert-warning' role='alert'>Not enough data yet.</div>";
-    const svg = d3.select("svg");
-    const width = +svg.attr("width");
-    const height = +svg.attr("height");
-    const parseTime = d3.timeParse("%d-%m-%Y %H:%M:%S");
-    const title = "bcMeter";
-    const margin = {
-      top: 15,
-      right: 110,
-      bottom: 55,
-      left: 110
-    };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
-    const xValue = (d) => d.bcmTime;
-    const download = document.getElementById("download");
-    const yMinDoc = document.getElementById("y-menu-min");
-    const yMaxDoc = document.getElementById("y-menu-max");
-    const yMin2Doc = document.getElementById("y-menu2-min");
-    const yMax2Doc= document.getElementById("y-menu2-max");
-    const resetZoom = document.getElementById("resetZoom");
-    const yMenuDom = document.getElementById("y-menu")
-    const yMenuDom2= document.getElementById("y-menu2")
-    const bisect = d3.bisector(d => d.bcmTime).left;
-    const xLabel = "bcmTime";
 
-    /* PRESET AND PREPOPULATE */
-    combineLogs["columns"] = ["BCngm3", "BCngm3_unfiltered", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen", "Temperature", "sht_humidity", "airflow"]
-    data["columns"] = ["BCngm3", "BCngm3_unfiltered", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen", "Temperature", "sht_humidity", "airflow"]
 
-    /* FUNCTION AND EVENT LISTENER */
-    /* EVENT LISTENER FOR MIN AND MAX VALUES */
-    yMinDoc.addEventListener("focusout", ()=>{
-      yMinInputted = yMinDoc.value;
-      render()
-    }) 
 
-    yMaxDoc.addEventListener("focusout", ()=>{
-      yMaxInputted = yMaxDoc.value;
-      render()
-    }) 
+/* CONSTANTS */
+const noData = "<div class='alert alert-warning' role='alert'>Not enough data yet.</div>";
+const svg = d3.select("svg");
+const width = +svg.attr("width");
+const height = +svg.attr("height");
+const parseTime = d3.timeParse("%d-%m-%Y %H:%M:%S");
+const title = "bcMeter";
+const margin = {
+    top: 15,
+    right: 110,
+    bottom: 55,
+    left: 110
+};
+const innerWidth = width - margin.left - margin.right;
+const innerHeight = height - margin.top - margin.bottom;
+const xValue = (d) => d.bcmTime;
+const download = document.getElementById("download");
+const yMinDoc = document.getElementById("y-menu-min");
+const yMaxDoc = document.getElementById("y-menu-max");
+const yMin2Doc = document.getElementById("y-menu2-min");
+const yMax2Doc = document.getElementById("y-menu2-max");
+const resetZoom = document.getElementById("resetZoom");
+const yMenuDom = document.getElementById("y-menu")
+const yMenuDom2 = document.getElementById("y-menu2")
+const bisect = d3.bisector(d => d.bcmTime).left;
+const xLabel = "bcmTime";
 
-    yMin2Doc.addEventListener("focusout", ()=>{
-      yMin2Inputted = yMin2Doc.value;
-      render()
-    }) 
+/* PRESET AND PREPOPULATE */
+combineLogs["columns"] = ["BCngm3", "BCngm3_unfiltered", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen", "Temperature", "sht_humidity", "airflow"]
+data["columns"] = ["BCngm3", "BCngm3_unfiltered", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen", "Temperature", "sht_humidity", "airflow"]
 
-    yMax2Doc.addEventListener("focusout", ()=>{
-      yMax2Inputted = yMax2Doc.value;
-      render()
-    }) 
+/* FUNCTION AND EVENT LISTENER */
+/* EVENT LISTENER FOR MIN AND MAX VALUES */
+yMinDoc.addEventListener("focusout", () => {
+    yMinInputted = yMinDoc.value;
+    render()
+})
 
-    /* TO RESET TO DEFAULT AFTER ZOOMING */
-    resetZoom.addEventListener("click", ()=>{
-      brushedX = [];
-      plotChart();
-    })
+yMaxDoc.addEventListener("focusout", () => {
+    yMaxInputted = yMaxDoc.value;
+    render()
+})
 
-    /* FUNTION TO SET Y AXIS VALUE TO USE, EITHER INPUTTED OR D3.JS CALCULATED */
-    const setYAxis = () => {
+yMin2Doc.addEventListener("focusout", () => {
+    yMin2Inputted = yMin2Doc.value;
+    render()
+})
 
-      const yMin = yMinDoc.value; 
-      const yMax = yMaxDoc.value; 
-      const yMin2 = yMin2Doc.value; 
-      const yMax2= yMax2Doc.value;  
-      
-      let [yDataMin, yDataMax] = d3.extent(data, yValueScale)
-      let [yDataMin2, yDataMax2]= d3.extent(data, yValueScale2)
+yMax2Doc.addEventListener("focusout", () => {
+    yMax2Inputted = yMax2Doc.value;
+    render()
+})
 
-      yRange = [];
-      yRange2 = [];
+/* TO RESET TO DEFAULT AFTER ZOOMING */
+resetZoom.addEventListener("click", () => {
+    brushedX = [];
+    plotChart();
+})
 
-      yMinInputted == '' ? yRange.push(yDataMin) : yRange.push(Number(yMin));
-      yMaxInputted == '' ? yRange.push(yDataMax) : yRange.push(Number(yMax))
-      yMin2Inputted == '' ? yRange2.push(yDataMin2) : yRange2.push(Number(yMin2))
-      yMax2Inputted == '' ? yRange2.push(yDataMax2) : yRange2.push(Number(yMax2))
+/* FUNTION TO SET Y AXIS VALUE TO USE, EITHER INPUTTED OR D3.JS CALCULATED */
+const setYAxis = () => {
 
-      yMinDoc.value = yRange[0]; 
-      yMaxDoc.value = yRange[1]; 
+    const yMin = yMinDoc.value;
+    const yMax = yMaxDoc.value;
+    const yMin2 = yMin2Doc.value;
+    const yMax2 = yMax2Doc.value;
 
-      if(!isHidden){
-        yMin2Doc.value = yRange2[0]; 
-        yMax2Doc.value = yRange2[1]; 
-      } 
+    let [yDataMin, yDataMax] = d3.extent(data, yValueScale)
+    let [yDataMin2, yDataMax2] = d3.extent(data, yValueScale2)
+
+    yRange = [];
+    yRange2 = [];
+
+    yMinInputted == '' ? yRange.push(yDataMin) : yRange.push(Number(yMin));
+    yMaxInputted == '' ? yRange.push(yDataMax) : yRange.push(Number(yMax))
+    yMin2Inputted == '' ? yRange2.push(yDataMin2) : yRange2.push(Number(yMin2))
+    yMax2Inputted == '' ? yRange2.push(yDataMax2) : yRange2.push(Number(yMax2))
+
+    yMinDoc.value = yRange[0];
+    yMaxDoc.value = yRange[1];
+
+    if (!isHidden) {
+        yMin2Doc.value = yRange2[0];
+        yMax2Doc.value = yRange2[1];
     }
+}
 
 
-    /* FUNCTION CALLED ON MENU SELECT */
-    const yOptionClicked = (value) => {
-      yColumn = value
-      render();
-    }
-    const yOptionClicked2 = (value) => {
-      yColumn2 = value
-      render();
-    }
+/* FUNCTION CALLED ON MENU SELECT */
+const yOptionClicked = (value) => {
+    yColumn = value
+    render();
+}
+const yOptionClicked2 = (value) => {
+    yColumn2 = value
+    render();
+}
 
-    /* WHEN BRUSH END THIS FUNCTION IS TRIGGER TO CREATE THE BRUSH ZOOM */
-    const brushed = (event) => {  
-        let [x1, x2] = event.selection
-        brushedX = []
-        brushedX.push(xScale.invert(x1))
-        brushedX.push(xScale.invert(x2))
-        d3.select(".selection")
-          .style("display", "none")
-        plotChart()
-    }
+/* WHEN BRUSH END THIS FUNCTION IS TRIGGER TO CREATE THE BRUSH ZOOM */
+const brushed = (event) => {
+    let [x1, x2] = event.selection
+    brushedX = []
+    brushedX.push(xScale.invert(x1))
+    brushedX.push(xScale.invert(x2))
+    d3.select(".selection")
+        .style("display", "none")
+    plotChart()
+}
 
-    /* THE BRUSH */
-    const brush = d3.brushX()
-      .extent([[0, 0], [innerWidth, innerHeight]])
-      .on("end", brushed)
+/* THE BRUSH */
+const brush = d3.brushX()
+    .extent([
+        [0, 0],
+        [innerWidth, innerHeight]
+    ])
+    .on("end", brushed)
 
 
-    /* FUNCTION THAT PLOT THE CHART */
-    const plotChart = () => {
-      setYAxis();
-      xScaleRange = brushedX.length == 0 ? d3.extent(data, xValue) : brushedX;
+/* FUNCTION THAT PLOT THE CHART */
+const plotChart = () => {
+    setYAxis();
+    xScaleRange = brushedX.length == 0 ? d3.extent(data, xValue) : brushedX;
 
     /* CHART CONTAINER */
     const g = svg.selectAll('.container').data([null]);
     const gEnter = g
-      .enter().append("g")
-      .attr('class', 'container');
+        .enter().append("g")
+        .attr('class', 'container');
     gEnter.merge(g)
-      .attr("transform", `translate(${margin.left}, ${margin.top})`);
+        .attr("transform", `translate(${margin.left}, ${margin.top})`);
 
-      // SCALE FOR BOTH X AND Y AXIS
-      xScale = d3.scaleTime()
+    // SCALE FOR BOTH X AND Y AXIS
+    xScale = d3.scaleTime()
         .domain(xScaleRange)
         .range([0, innerWidth])
         .nice();
 
-      yScale = d3.scaleLinear()
+    yScale = d3.scaleLinear()
         .domain(yRange)
         .range([innerHeight, 0])
-      .nice();
+        .nice();
 
-      yScale2 = d3.scaleLinear()
+    yScale2 = d3.scaleLinear()
         .domain(yRange2)
         .range([innerHeight, 0])
         .nice();
 
-      /*CLIP PATH*/
-      gEnter.append("clipPath")
+    /*CLIP PATH*/
+    gEnter.append("clipPath")
         .attr("id", "rectClipPath")
         .append("rect")
         .attr("width", innerWidth)
         .attr("height", innerHeight)
         .attr("fill", "red")
 
-      /* Y-AXIS */
-      const yAxis = d3.axisLeft(yScale)
+    /* Y-AXIS */
+    const yAxis = d3.axisLeft(yScale)
         .ticks(9)
         .tickSize(-innerWidth)
         .tickPadding(8);
-      const yAxisG = g.select('.y-axis');
-      const yAxisGEnter = gEnter
+    const yAxisG = g.select('.y-axis');
+    const yAxisGEnter = gEnter
         .append('g')
         .attr('class', 'y-axis');
-      yAxisG.merge(yAxisGEnter)
+    yAxisG.merge(yAxisGEnter)
         .call(yAxis);
-      yAxisG.selectAll(".domain").remove();
-      const yAxisLabelText = yAxisGEnter
+    yAxisG.selectAll(".domain").remove();
+    const yAxisLabelText = yAxisGEnter
         .append("text")
         .attr('class', 'y-axis-label')
         .attr("y", -70)
@@ -403,18 +435,18 @@ $(document).ready(function() {
         .transition().duration(1000)
         .text(yLabel);
 
-      const yAxis2 = d3.axisRight(yScale2)
+    const yAxis2 = d3.axisRight(yScale2)
         .ticks(9)
         .tickSize(innerWidth)
         .tickPadding(8);
-      const yAxisG2 = g.select('.y-axis2');
-      const yAxisGEnter2 = gEnter
+    const yAxisG2 = g.select('.y-axis2');
+    const yAxisGEnter2 = gEnter
         .append('g')
         .attr('class', 'y-axis2')
-      yAxisG2.merge(yAxisGEnter2)
+    yAxisG2.merge(yAxisGEnter2)
         .call(yAxis2);
-      yAxisG2.selectAll(".domain").remove();
-      const yAxisLabelText2 = yAxisGEnter2
+    yAxisG2.selectAll(".domain").remove();
+    const yAxisLabelText2 = yAxisGEnter2
         .append("text")
         .attr('class', 'y-axis-label2')
         .attr("y", innerWidth + 70)
@@ -426,19 +458,19 @@ $(document).ready(function() {
         .transition().duration(1000)
         .text(yLabel2);
 
-      /* X-AXIS */
-      const xAxis = d3
+    /* X-AXIS */
+    const xAxis = d3
         .axisBottom(xScale)
         .tickSize(-innerHeight)
         .tickPadding(15);
-      const xAxisG = g.select('.x-axis');
-      const xAxisGEnter = gEnter
+    const xAxisG = g.select('.x-axis');
+    const xAxisGEnter = gEnter
         .append("g")
         .attr('class', 'x-axis');
-      xAxisG.merge(xAxisGEnter)
+    xAxisG.merge(xAxisGEnter)
         .attr("transform", `translate(0, ${innerHeight})`)
         .call(xAxis);
-      const xAxisLabelText = xAxisGEnter
+    const xAxisLabelText = xAxisGEnter
         .append("text")
         .attr('class', 'x-axis-label')
         .attr("y", 50)
@@ -449,26 +481,26 @@ $(document).ready(function() {
         .merge(xAxisG.select('.x-axis-label'))
         .text(xLabel);
 
-      /* LINE CHART GENERATOR */
-      const lineGenerator = d3.line()
+    /* LINE CHART GENERATOR */
+    const lineGenerator = d3.line()
         .x((d) => xScale(xValue(d)))
         .y((d) => yScale(yValue(d)))
 
-      const lineGenerator2 = d3.line()
+    const lineGenerator2 = d3.line()
         .x((d) => xScale(xValue(d)))
         .y((d) => yScale2(yValue2(d)))
 
-      /* TO HANDLE NULL VALUE FOR ROLLING AVERAGE */
-      if (yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") {
+    /* TO HANDLE NULL VALUE FOR ROLLING AVERAGE */
+    if (yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") {
         lineGenerator.defined(d => d[yColumn] !== null)
-      }
-      if (yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") {
+    }
+    if (yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") {
         lineGenerator2.defined(d => d[yColumn2] !== null)
-      }
+    }
 
-      /* GENERATE PATH */
+    /* GENERATE PATH */
 
-            gEnter.append("path")
+    gEnter.append("path")
         .attr('class', 'line-chart')
         .attr('stroke', '#1f77b4')
         .attr('fill', 'none')
@@ -478,8 +510,8 @@ $(document).ready(function() {
         .transition().duration(1000)
         .attr('d', lineGenerator(data));
 
-        
-      gEnter.append("path")
+
+    gEnter.append("path")
         .attr('class', 'line-chart2')
         .attr('stroke', '#ff7f0e')
         .attr('fill', 'none')
@@ -491,16 +523,16 @@ $(document).ready(function() {
 
 
 
-      /* MOVING LINE */
-      gEnter.append("line")
+    /* MOVING LINE */
+    gEnter.append("line")
         .attr("class", "selected-time-line")
         .attr("y1", 0)
         .style("opacity", "0")
         .merge(g.select('.selected-time-line'))
 
 
-      /* ADDING CIRCLE ON MOUSE MOVE */
-      gEnter.append("circle")
+    /* ADDING CIRCLE ON MOUSE MOVE */
+    gEnter.append("circle")
         .attr("r", 4)
         .attr("class", "y-circle")
         .attr("fill", "#1f77b4")
@@ -510,7 +542,7 @@ $(document).ready(function() {
         .merge(g.select('.y-circle'))
 
 
-      gEnter.append("circle")
+    gEnter.append("circle")
         .attr("r", 4)
         .attr("class", "y2-circle")
         .attr("fill", "#ff7f0e")
@@ -519,1091 +551,1128 @@ $(document).ready(function() {
         .style("opacity", "0")
         .merge(g.select('.y2-circle'))
 
-      let radar = gEnter.append("g").call(brush)
-        .on("mousemove", function (e) {
-          if (data.length != 0) {
-            const x = d3.pointer(e)[0];
-            hoveredTime = xScale.invert(x);
-            let bi = bisect(data, hoveredTime)-1
-            bi_lower = bi < 0 ? 0 : bi;
-            bi_upper = bi + 1 > data.length-1 ? data.length-1 : bi + 1
-            let idx  = -new Date(data[bi_lower]["bcmTime"]).getTime() - -new Date(hoveredTime).getTime() > -new Date(hoveredTime).getTime() - -new Date(data[bi_upper]["bcmTime"]).getTime() 
-            ? bi_upper 
-            : bi_lower
+    let radar = gEnter.append("g").call(brush)
+        .on("mousemove", function(e) {
+            if (data.length != 0) {
+                const x = d3.pointer(e)[0];
+                hoveredTime = xScale.invert(x);
+                let bi = bisect(data, hoveredTime) - 1
+                bi_lower = bi < 0 ? 0 : bi;
+                bi_upper = bi + 1 > data.length - 1 ? data.length - 1 : bi + 1
+                let idx = -new Date(data[bi_lower]["bcmTime"]).getTime() - -new Date(hoveredTime).getTime() > -new Date(hoveredTime).getTime() - -new Date(data[bi_upper]["bcmTime"]).getTime() ?
+                    bi_upper :
+                    bi_lower
 
-            const temp = data[idx];
-            let diff = e.offsetX - e.pageX
-            const maxLeft = innerWidth/2 > e.offsetX
-            ? xScale(data[idx][xLabel])+margin.right + 30 - diff
+                const temp = data[idx];
+                let diff = e.offsetX - e.pageX
+                const maxLeft = innerWidth / 2 > e.offsetX ?
+                    xScale(data[idx][xLabel]) + margin.right + 30 - diff
 
-            : xScale(data[idx][xLabel]) - 25 - diff
+                    :
+                    xScale(data[idx][xLabel]) - 25 - diff
 
-            let tooltipMessage = (!isHidden) ? `<div><b>Date:</b>  ${temp["bcmTimeRaw"]}</div>
+                let tooltipMessage = (!isHidden) ? `<div><b>Date:</b>  ${temp["bcmTimeRaw"]}</div>
                 <div><b>${yColumn}:</b>  ${temp[yColumn]}</div>
                 <div><b>${yColumn2}:</b>  ${temp[yColumn2]}</div>
                 ` : `<div><b>Date:</b>  ${temp["bcmTimeRaw"]}</div>
                 <div><b>${yColumn}:</b>  ${temp[yColumn]}</div>
                 `
-            d3.select('.tooltip').style("left", maxLeft + 10 + "px")
-              .style("top", e.pageY + "px")
-              .style("pointer-events", "none")
-              .style("opacity", "1")
-              .html( tooltipMessage )
+                d3.select('.tooltip').style("left", maxLeft + 10 + "px")
+                    .style("top", e.pageY + "px")
+                    .style("pointer-events", "none")
+                    .style("opacity", "1")
+                    .html(tooltipMessage)
 
-            d3.select(".selected-time-line")
-              .attr("x1", xScale(temp[xLabel]))
-              .attr("x2", xScale(temp[xLabel]))
-              .attr("y2", innerHeight)
-              .style("opacity", "1")
-              
-            if(!isHidden){
-            d3.select('.y2-circle')
-              .attr("cx", xScale(temp[xLabel]))
-              .attr("cy", yScale2(temp[yColumn2]))
-              .style("opacity", temp[yColumn2] ? 1 : 0)
+                d3.select(".selected-time-line")
+                    .attr("x1", xScale(temp[xLabel]))
+                    .attr("x2", xScale(temp[xLabel]))
+                    .attr("y2", innerHeight)
+                    .style("opacity", "1")
+
+                if (!isHidden) {
+                    d3.select('.y2-circle')
+                        .attr("cx", xScale(temp[xLabel]))
+                        .attr("cy", yScale2(temp[yColumn2]))
+                        .style("opacity", temp[yColumn2] ? 1 : 0)
+                }
+
+                d3.select('.y-circle')
+                    .attr("cx", xScale(temp[xLabel]))
+                    .attr("cy", yScale(temp[yColumn]))
+                    .style("opacity", "1");
             }
+        })
 
+        .on("mouseout", function(e) {
+            d3.select('.tooltip')
+                .style("opacity", "0");
+            d3.select(".selected-time-line")
+                .style("opacity", "0");
             d3.select('.y-circle')
-              .attr("cx", xScale(temp[xLabel]))
-              .attr("cy", yScale(temp[yColumn]))
-              .style("opacity", "1");
-          }
+                .style("opacity", "0");
+            d3.select('.y2-circle')
+                .style("opacity", "0");
         })
-
-        .on("mouseout", function (e) {
-          d3.select('.tooltip')
-            .style("opacity", "0");
-          d3.select(".selected-time-line")
-            .style("opacity", "0");
-          d3.select('.y-circle')
-            .style("opacity", "0");
-          d3.select('.y2-circle')
-            .style("opacity", "0");
-        })
-        .attr("clip-path", "url(#rectClipPath)")     
-    }
-
-    const updateCurrentLogsFunction = () => {
-     updateCurrentLogs = setInterval(() => {  
-
-        dataFile(`${logPath}log_current.csv`);
-    }, 5000)
-
-    }
+        .attr("clip-path", "url(#rectClipPath)")
+}
 
 
 
-    /* CREATE MENU */
-    function selectUpdate(options, id, selectedOption) {
-      const select = d3.select(id);
-      let option = select.selectAll('option').data(options);
-      option.enter().append('option')
+
+/* CREATE MENU */
+function selectUpdate(options, id, selectedOption) {
+    const select = d3.select(id);
+    let option = select.selectAll('option').data(options);
+    option.enter().append('option')
         .merge(option)
         .attr('value', d => d)
         .property("selected", d => d === selectedOption)
         .text(d => d);
-    }
-    
-    selectLogs.addEventListener("change", function(){
-      brushedX = [];
-      current_file = selectLogs.value; 
-      data = dataObj[current_file];
-       if(data) {
+}
+
+selectLogs.addEventListener("change", function() {
+    brushedX = [];
+    current_file = selectLogs.value;
+    data = dataObj[current_file];
+    if (data) {
         let len = data.length - 1;
         render();
 
         // Calculate averages once
-        let avg12 = d3.mean([...data].splice(len-12, 12), BCngm3_value);
+        let avg12 = d3.mean([...data].splice(len - 12, 12), BCngm3_value);
         let avgAll = d3.mean(data, BCngm3_value);
 
         // Prepare output based on is_ebcmeter flag
         let unit = is_ebcmeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
 
         document.getElementById("report-value").innerHTML = `Averages: <h4 style='display:inline'>
-        ${(avg12 ).toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avg12</sub> » 
-        ${(avgAll ).toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avgALL</sub></h4>`;
-      }
+        ${(avg12 ).toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avg12</sub> » 
+        ${(avgAll ).toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avgALL</sub></h4>`;
+    }
 
-      if (current_file == 'log_current.csv') {
+    if (current_file == 'log_current.csv') {
         updateCurrentLogsFunction()
-      } else {
-      clearInterval(updateCurrentLogs)
-      }
-  })
+    } else {
+        clearInterval(updateCurrentLogs)
+    }
+})
 
 
 
-    yMenuDom.addEventListener("change", function(){
-      yOptionClicked(this.value)
-    })
-    yMenuDom2.addEventListener("change", function(){
-      yOptionClicked2(this.value)
-    })
-    selectUpdate(data["columns"], "#y-menu", yColumn);
-    selectUpdate(data["columns"], "#y-menu2", yColumn2)
+yMenuDom.addEventListener("change", function() {
+    yOptionClicked(this.value)
+})
+yMenuDom2.addEventListener("change", function() {
+    yOptionClicked2(this.value)
+})
+selectUpdate(data["columns"], "#y-menu", yColumn);
+selectUpdate(data["columns"], "#y-menu2", yColumn2)
 
 
-    let BCngm3_value = (d) => d["BCngm3"];
-    let BCngm3_unfiltered_value = (d) => d["BCngm3_unfiltered"];
-    /* RENDER FUNCTION THAT CALLS CHART PLOT */
+let BCngm3_value = (d) => d["BCngm3"];
+let BCngm3_unfiltered_value = (d) => d["BCngm3_unfiltered"];
+/* RENDER FUNCTION THAT CALLS CHART PLOT */
 
 const render = () => {
 
-  // Clear previous contents
-  svg.selectAll("*").remove(); // This clears the previous SVG contents
+    // Clear previous contents
+    svg.selectAll("*").remove(); // This clears the previous SVG contents
 
- if (!data || data.length === 0) {
-    updateScales(); // Update scales
+    if (!data || data.length === 0) {
+        updateScales(); // Update scales
 
-    drawGrid(); // Call drawGrid instead of displaying text
-    return; // Exit the function
-  }
+        drawGrid(); // Call drawGrid instead of displaying text
+        return; // Exit the function
+    }
 
-  // P
+    // P
 
 
     yMenuDom.value = yColumn;
     yMenuDom2.value = yColumn2;
 
     if (yColumn == "" || yColumn2 == "") {
-    yColumn = data.columns[0];
-    yColumn2 = data.columns[2];
-       }
-      yValue = (d) => d[yColumn];
-      yValue2 = (d) => d[yColumn2];
-      if ((((yColumn ==  "BCngm3_unfiltered") && yColumn2 == "BCngm3") ||
-        ((yColumn2 ==  "BCngm3_unfiltered") && yColumn == "BCngm3") && !isHidden)) {
+        yColumn = data.columns[0];
+        yColumn2 = data.columns[2];
+    }
+    yValue = (d) => d[yColumn];
+    yValue2 = (d) => d[yColumn2];
+    if ((((yColumn == "BCngm3_unfiltered") && yColumn2 == "BCngm3") ||
+            ((yColumn2 == "BCngm3_unfiltered") && yColumn == "BCngm3") && !isHidden)) {
         yValueScale = BCngm3_unfiltered_value;
         yValueScale2 = BCngm3_unfiltered_value;
 
-      } 
-      if ((((yColumn ==  "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") && yColumn2 == "BCngm3") ||
-        ((yColumn2 ==  "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") && yColumn == "BCngm3")) && !isHidden) {
+    }
+    if ((((yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") && yColumn2 == "BCngm3") ||
+            ((yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") && yColumn == "BCngm3")) && !isHidden) {
         yValueScale = BCngm3_value;
         yValueScale2 = BCngm3_value;
-      } 
-
-      
-      else {
+    } else {
         yValueScale = yValue;
         yValueScale2 = yValue2;
-      }
-      yLabel = yColumn;
-      yLabel2 = yColumn2;
-      plotChart();
-    };
+    }
+    yLabel = yColumn;
+    yLabel2 = yColumn2;
+    plotChart();
+};
 
 
 const drawGrid = () => {
-  // Basic grid border
-  svg.append("rect")
-     .attr("x", margin.left)
-     .attr("y", margin.top)
-     .attr("width", width - margin.left - margin.right)
-     .attr("height", height - margin.top - margin.bottom)
-     .attr("fill", "none")
-     .attr("stroke", "lightgrey");
+    // Basic grid border
+    svg.append("rect")
+        .attr("x", margin.left)
+        .attr("y", margin.top)
+        .attr("width", width - margin.left - margin.right)
+        .attr("height", height - margin.top - margin.bottom)
+        .attr("fill", "none")
+        .attr("stroke", "lightgrey");
 
-  // Draw a single horizontal grid line vertically centered
-  const centerY = (margin.top + (height - margin.bottom)) / 2; // Vertically centered
+    // Draw a single horizontal grid line vertically centered
+    const centerY = (margin.top + (height - margin.bottom)) / 2; // Vertically centered
 
-  svg.append("line")
-     .attr("x1", margin.left)
-     .attr("y1", centerY)
-     .attr("x2", width - margin.right)
-     .attr("y2", centerY)
-     .attr("stroke", "lightgrey")
+    svg.append("line")
+        .attr("x1", margin.left)
+        .attr("y1", centerY)
+        .attr("x2", width - margin.right)
+        .attr("y2", centerY)
+        .attr("stroke", "lightgrey")
 
-  // Add label "0" for the horizontal line
-  svg.append("text")
-     .attr("x", margin.left - 40)
-     .attr("y", centerY)
-     .attr("dy", "0.32em")
-     .attr("text-anchor", "end")
-     .text("0");
-
-  // Draw a single vertical line representing the current time
-  const currentTime = new Date();
-  const formatDate = d3.timeFormat("%H:%M:%S"); // Formatting the date
-  const middleX = (margin.left + (width - margin.right)) / 2; // Position it in the middle
-
-  svg.append("line")
-     .attr("x1", middleX)
-     .attr("y1", margin.top)
-     .attr("x2", middleX)
-     .attr("y2", height - margin.bottom)
-     .attr("stroke", "lightgrey")
-     .attr("stroke-width", 1); // Default stroke width
-
-  // Add label for the current time
-  svg.append("text")
-     .attr("x", middleX)
-     .attr("y", height - margin.bottom + 40) // Adjust as needed
-     .attr("text-anchor", "middle")
-     .style("font-size", "12px")
-     .text("Nothing to display yet...");
+    // Add label "0" for the horizontal line
     svg.append("text")
-     .attr("x", middleX)
-     .attr("y", height - margin.bottom + 25) // Adjust as needed
-     .attr("text-anchor", "middle")
-     .style("font-size", "12px")
-     .text(formatDate(currentTime));
+        .attr("x", margin.left - 40)
+        .attr("y", centerY)
+        .attr("dy", "0.32em")
+        .attr("text-anchor", "end")
+        .text("0");
+
+    // Draw a single vertical line representing the current time
+    const currentTime = new Date();
+    const formatDate = d3.timeFormat("%H:%M:%S"); // Formatting the date
+    const middleX = (margin.left + (width - margin.right)) / 2; // Position it in the middle
+
+    svg.append("line")
+        .attr("x1", middleX)
+        .attr("y1", margin.top)
+        .attr("x2", middleX)
+        .attr("y2", height - margin.bottom)
+        .attr("stroke", "lightgrey")
+        .attr("stroke-width", 1); // Default stroke width
+
+    // Add label for the current time
+    svg.append("text")
+        .attr("x", middleX)
+        .attr("y", height - margin.bottom + 40) // Adjust as needed
+        .attr("text-anchor", "middle")
+        .style("font-size", "12px")
+        .text("Nothing to display yet...");
+    svg.append("text")
+        .attr("x", middleX)
+        .attr("y", height - margin.bottom + 25) // Adjust as needed
+        .attr("text-anchor", "middle")
+        .style("font-size", "12px")
+        .text(formatDate(currentTime));
 };
 
 let xScale = d3.scaleLinear();
 let yScale = d3.scaleLinear();
 
 const updateScales = () => {
-  xScale.domain([0, 1000]).range([margin.left, width - margin.right]);
-  yScale.domain([0, 1000]).range([height - margin.bottom, margin.top]);
+    xScale.domain([0, 1000]).range([margin.left, width - margin.right]);
+    yScale.domain([0, 1000]).range([height - margin.bottom, margin.top]);
 };
 
+let filterStatus;
 
-    const dataFile = (file, isCombineLogsSelected = false ) => {
-      data = []
-      data["columns"] = ["BCngm3","BCngm3_unfiltered", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen","Temperature","Humidity","Airflow"]
-      
-      d3.dsv(';', file).then((rawData) => {
+const dataFile = (file, isCombineLogsSelected = false) => {
+    data = []
+    data["columns"] = ["BCngm3", "BCngm3_unfiltered", "BC_rolling_avg_of_6", "BC_rolling_avg_of_12", "bcmATN", "bcmRef", "bcmSen", "Temperature", "Humidity", "Airflow"]
+
+    d3.dsv(';', file).then((rawData) => {
         let movingIndex4 = 0
         let movingIndex6 = 0
         let movingIndex12 = 0
         rawData.forEach((d, i) => {
-          if (d.bcmTime) {
-            d.bcmTimeRaw = d.bcmDate + ' ' + d.bcmTime;
-            d.bcmTime = parseTime(d.bcmDate + ' ' + d.bcmTime);
-            d.bcmRef = +d.bcmRef;
-            d.bcmSen = +d.bcmSen;
-            d.bcmATN = +d.bcmATN;
-            d.relativeLoad = +d.relativeLoad;
-            d.BCngm3 = +d.BCngm3;
-            d.BCngm3_unfiltered= +d.BCngm3_unfiltered;
-            d.Temperature = +d.Temperature;
-            d.sht_humidity = +d.sht_humidity;
+            if (d.bcmTime) {
+                d.bcmTimeRaw = d.bcmDate + ' ' + d.bcmTime;
+                d.bcmTime = parseTime(d.bcmDate + ' ' + d.bcmTime);
+                d.bcmRef = +d.bcmRef;
+                d.bcmSen = +d.bcmSen;
+                d.bcmATN = +d.bcmATN;
+                d.relativeLoad = +d.relativeLoad;
+                d.BCngm3 = +d.BCngm3;
+                d.BCngm3_unfiltered = +d.BCngm3_unfiltered;
+                d.Temperature = +d.Temperature;
+                d.sht_humidity = +d.sht_humidity;
 
-            data.push(d)
-          }
+                data.push(d)
+            }
         });
 
 
-          let result = file.includes("../logs/log_current.csv");
-          if (result == true) { 
+        let result = file.includes("../logs/log_current.csv");
+        if (result == true) {
 
-              let len = data.length - 1;
+            let len = data.length - 1;
 
-              if (len>0) {
+            if (len > 0) {
                 let unit = is_ebcmeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
 
                 // Calculate averages once
-                let avg12 = d3.mean([...data].splice(len-12, 12), BCngm3_value);
+                let avg12 = d3.mean([...data].splice(len - 12, 12), BCngm3_value);
                 let avgAll = d3.mean(data, BCngm3_value);
 
                 document.getElementById("report-value").innerHTML = `Averages: <h4 style='display:inline'>
-                ${avg12.toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avg12</sub> » 
-                ${avgAll.toFixed(is_ebcmeter ? 3 : 0)} ${unit}<sub>avgALL</sub></h4>`;
+                ${avg12.toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avg12</sub> » 
+                ${avgAll.toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avgALL</sub></h4>`;
                 let bcmRef = data[len].bcmRef;
                 let bcmSen = data[len].bcmSen;
                 let btn = document.getElementById("report-button");
-                if (bcmSen == 0){
-                  if (bcmRef == 0) {
-                    btn.className = "btn btn-secondary";
+                if (bcmSen == 0) {
+                    if (bcmRef == 0) {
+                        btn.className = "btn btn-secondary";
 
-                  }
+                    }
                 }
 
 
 
 
-                let filterStatus = bcmRef/bcmSen;
-                if (filterStatus <= 2) {
-                    btn.className = "btn btn-success";
-                  } else if (filterStatus > 2 && filterStatus <= 3) {
-                    btn.className = "btn btn-warning";
-                  } else if (filterStatus > 3 && filterStatus <= 4) {
-                    btn.className = "btn btn-danger";
-                  } else if (filterStatus > 4 && filterStatus <= 6) {
-                    btn.className = "btn btn-secondary";
-                  } else if (filterStatus > 6) {
-                    btn.className = "btn btn-dark";
-                  }
-                }
-                
-              if (len<0) {
+
+                    filterStatus = bcmSen / bcmRef;
+
+                    if (filterStatus <= 0.6) {
+                        btn.className = "btn btn-dark"; 
+                    } else if (filterStatus > 0.6 && filterStatus <= 0.65) {
+                        btn.className = "btn btn-secondary";
+                    } else if (filterStatus > 0.66 && filterStatus <= 0.7) {
+                        btn.className = "btn btn-danger"; 
+                    } else if (filterStatus > 0.7 && filterStatus <= 0.8) {
+                        btn.className = "btn btn-warning"; 
+                    } else if (filterStatus > 0.8) {
+                        btn.className = "btn btn-success"; 
+                    }
+            }
+
+            if (len < 0) {
                 document.getElementById("report-value").innerHTML = `<h4> </h4>`;
-              }
-}
+            }
+        }
 
 
-          
 
 
-     /* MOVING AVERAGE = 6 */
+        /* MOVING AVERAGE = 6 */
 
         data.map((d, i) => {
-        if (i < 4 || i > data.length - 3) {
-            d.BC_rolling_avg_of_6 = null;
-        } else {
-          d.BC_rolling_avg_of_6 = +((((((data.slice(movingIndex6,  movingIndex6 + 6).reduce((p, c) => p + c.BCngm3_unfiltered, 0)) / 6)) 
-          +(((data.slice(movingIndex6 + 1, movingIndex6 + 1 + 6).reduce((p, c) =>  p + c.BCngm3_unfiltered, 0)) / 6))) / 2).toFixed(0))
-          movingIndex6++;
-        }
-        /* MOVING AVERAGE = 12 */
-        if (i < 7 || i > data.length - 6) {
-          d.BC_rolling_avg_of_12 = null;
-        } else {
-          d.BC_rolling_avg_of_12 = +((((((data.slice(movingIndex12, movingIndex12 + 12).reduce((p, c) => p + c.BCngm3_unfiltered, 0)) / 12)) 
-          +(((data.slice(movingIndex12 + 1, movingIndex12 + 1 + 12).reduce((p, c) => p + c.BCngm3_unfiltered, 0)) / 12))) / 2).toFixed(0))
-          movingIndex12++;
-        }
-        if(isCombineLogsSelected){
-          dataObj[file.split("/")[2]] = data
-          combineLogs.push(d)
-        }
+            if (i < 4 || i > data.length - 3) {
+                d.BC_rolling_avg_of_6 = null;
+            } else {
+                d.BC_rolling_avg_of_6 = +((((((data.slice(movingIndex6, movingIndex6 + 6).reduce((p, c) => p + c.BCngm3_unfiltered, 0)) / 6)) +
+                    (((data.slice(movingIndex6 + 1, movingIndex6 + 1 + 6).reduce((p, c) => p + c.BCngm3_unfiltered, 0)) / 6))) / 2).toFixed(0))
+                movingIndex6++;
+            }
+            /* MOVING AVERAGE = 12 */
+            if (i < 7 || i > data.length - 6) {
+                d.BC_rolling_avg_of_12 = null;
+            } else {
+                d.BC_rolling_avg_of_12 = +((((((data.slice(movingIndex12, movingIndex12 + 12).reduce((p, c) => p + c.BCngm3_unfiltered, 0)) / 12)) +
+                    (((data.slice(movingIndex12 + 1, movingIndex12 + 1 + 12).reduce((p, c) => p + c.BCngm3_unfiltered, 0)) / 12))) / 2).toFixed(0))
+                movingIndex12++;
+            }
+            if (isCombineLogsSelected) {
+                dataObj[file.split("/")[2]] = data
+                combineLogs.push(d)
+            }
 
 
 
         })
 
-  
 
-        if(isCombineLogsSelected){
-          combinedLogCurrentIndex++;
-          if(combinedLogCurrentIndex < logFilesSize){
-            dataFile(`${logPath}${logFiles[combinedLogCurrentIndex]}`, true)
-          } else {
-            dataObj["combine_logs"] = combineLogs;
-            selectLogs.value = "log_current.csv";
-            selectLogs.dispatchEvent(new Event("change"))
-            render();                
-          }
+
+        if (isCombineLogsSelected) {
+            combinedLogCurrentIndex++;
+            if (combinedLogCurrentIndex < logFilesSize) {
+                dataFile(`${logPath}${logFiles[combinedLogCurrentIndex]}`, true)
+            } else {
+                dataObj["combine_logs"] = combineLogs;
+                selectLogs.value = "log_current.csv";
+                selectLogs.dispatchEvent(new Event("change"))
+                render();
+            }
+        } else {
+            render();
         }
-      else{
-          render();
-      }
-      });
-    }
-    
+    });
+}
 
 
-    /* INITIAL LOAD */
-    let logPath = '../logs/';
-    let updatelogs;
-    let logFiles = <?php echo json_encode($logFiles);  ?>;
-    let logFilesSize = logFiles.length;
-    dataFile(`${logPath}${logFiles[combinedLogCurrentIndex]}`, true)
 
-    const serializeData = () => {
-      var png = (new XMLSerializer()).serializeToString(document.getElementById("line-chart"));
-      var svgBlob = new Blob([png], {
+/* INITIAL LOAD */
+let logPath = '../logs/';
+let updatelogs;
+let logFiles = <?php echo json_encode($logFiles); ?>;
+let logFilesSize = logFiles.length;
+dataFile(`${logPath}${logFiles[combinedLogCurrentIndex]}`, true)
+
+const serializeData = () => {
+    var png = (new XMLSerializer()).serializeToString(document.getElementById("line-chart"));
+    var svgBlob = new Blob([png], {
         type: "image/svg+xml;charset=utf-8"
-      });
-      var svgURL = URL.createObjectURL(svgBlob);
-      return {
+    });
+    var svgURL = URL.createObjectURL(svgBlob);
+    return {
         svgURL,
         svgBlob
-      }
     }
+}
 
-    const saveSVG = () => {
-      downloadFile(serializeData()["svgURL"], "svg")
-    }
+const saveSVG = () => {
+    downloadFile(serializeData()["svgURL"], "svg")
+}
 
-    const savePNG = () => {
-      var dom = document.createElement("canvas");
-      var ct = dom.getContext("2d");
-      dom.width = width;
-      dom.height = height;
-      var bolbURL = window.URL;
-      var img = new Image();
+const savePNG = () => {
+    var dom = document.createElement("canvas");
+    var ct = dom.getContext("2d");
+    dom.width = width;
+    dom.height = height;
+    var bolbURL = window.URL;
+    var img = new Image();
 
-      img.onload = function () {
+    img.onload = function() {
         ct.drawImage(img, 0, 0);
         bolbURL.createObjectURL(serializeData()["svgBlob"]);
         downloadFile(dom.toDataURL('image/png'), "png")
-      };
-      img.src = serializeData()["svgURL"];BCngm3
+    };
+    img.src = serializeData()["svgURL"];
+    BCngm3
+}
+
+const saveCSV = () => {
+    downloadCSVFile(`../logs/${current_file}`, "csv")
+}
+
+const downloadCSVFile = (url, ext) => {
+    var today = new Date();
+    var date = today.getFullYear().toString() + (today.getMonth() + 1).toString() + today.getDate().toString();
+    var time = today.getHours().toString() + today.getMinutes().toString() + today.getSeconds().toString();
+    var dateTime = date + '_' + time;
+    // var savingWord = (!isHidden) ? `bcMeter-(${yColumn}-vs-${yColumn2})` : `bcMeter-${yColumn}`;
+    download.href = url;
+    var hostName = location.hostname;
+    download.download = `${hostName}_${dateTime}.${ext}`;
+    download.click();
+}
+
+
+const downloadFile = (url, ext) => {
+    var today = new Date();
+    var date = today.getFullYear() + (today.getMonth() + 1) + today.getDate();
+    var time = today.getHours() + today.getMinutes() + today.getSeconds();
+    var dateTime = date + '_' + time;
+    // var savingWord = (!isHidden) ? `bcMeter-(${yColumn}-vs-${yColumn2})` : `bcMeter-${yColumn}`;
+    download.href = url;
+    var hostName = location.hostname;
+    download.download = `${hostName}_${dateTime}.${ext}`;
+    download.click();
+}
+
+
+
+document.getElementById("hide-y-menu2").addEventListener("click", function() {
+    isHidden = !isHidden;
+    if ((((yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") && yColumn2 == "BCngm3") ||
+            ((yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") && yColumn == "BCngm3")) && !isHidden) {
+        render()
     }
-
-    const saveCSV = () => { 
-      downloadCSVFile(`../logs/${current_file}`, "csv")
-    }
-
-    const downloadCSVFile = (url, ext) => {
-      var today = new Date();
-      var date = today.getFullYear().toString() + (today.getMonth()+1).toString() + today.getDate().toString();
-      var time = today.getHours().toString() + today.getMinutes().toString() + today.getSeconds().toString();
-      var dateTime = date+'_'+time;
-     // var savingWord = (!isHidden) ? `bcMeter-(${yColumn}-vs-${yColumn2})` : `bcMeter-${yColumn}`;
-      download.href = url;
-      var hostName = location.hostname;
-      download.download = `${hostName}_${dateTime}.${ext}`;
-      download.click();
-    }
-
-
-    const downloadFile = (url, ext) => {
-      var today = new Date();
-      var date = today.getFullYear()+(today.getMonth()+1) + today.getDate();
-      var time = today.getHours() + today.getMinutes() + today.getSeconds();
-      var dateTime = date+'_'+time;
-     // var savingWord = (!isHidden) ? `bcMeter-(${yColumn}-vs-${yColumn2})` : `bcMeter-${yColumn}`;
-      download.href = url;
-      var hostName = location.hostname;
-      download.download = `${hostName}_${dateTime}.${ext}`;
-      download.click();
-    }
-
-
-    
-    document.getElementById("hide-y-menu2").addEventListener("click", function() {
-      isHidden = !isHidden;
-      if ((((yColumn == "BC_rolling_avg_of_6" || yColumn == "BC_rolling_avg_of_12") && yColumn2 == "BCngm3") ||
-        ((yColumn2 == "BC_rolling_avg_of_6" || yColumn2 == "BC_rolling_avg_of_12") && yColumn == "BCngm3")) && !isHidden) {
-          render()
-      }
-      this.innerHTML = (isHidden) ? `Show` : `Hide`;
-      d3.select('.y-axis2').style("opacity", Number(!isHidden))
-      d3.select('.line-chart2').style("opacity", Number(!isHidden))
-      if(isHidden){
+    this.innerHTML = (isHidden) ? `Show` : `Hide`;
+    d3.select('.y-axis2').style("opacity", Number(!isHidden))
+    d3.select('.line-chart2').style("opacity", Number(!isHidden))
+    if (isHidden) {
         yMin2Doc.style.opacity = 0
         yMax2Doc.style.opacity = 0
-      }
-      else{
+    } else {
         yMin2Doc.style.opacity = 1
         yMax2Doc.style.opacity = 1
-      }
+    }
 
-    });
-
-
+});
 
 
-          function getBaseUrl() {
-            // Construct the base URL using the current hostname and specifying port 5000
-            return window.location.protocol + '//' + window.location.hostname + ':5000';
-          }
-            loadConfig('session'); // Initially load session configurations
-            loadConfig('device'); // Initially load device configurations
-            loadConfig('administration'); // Initially load administration configurations
 
-  function activateAndLoadConfig(tabElement) {
+
+function getBaseUrl() {
+    // Construct the base URL using the current hostname and specifying port 5000
+    return window.location.protocol + '//' + window.location.hostname + ':5000';
+}
+loadConfig('session'); // Initially load session configurations
+loadConfig('device'); // Initially load device configurations
+loadConfig('administration'); // Initially load administration configurations
+loadConfig('email'); // Initially load administration configurations
+loadConfig('compair'); // Initially load administration configurations
+
+function activateAndLoadConfig(tabElement) {
     tabElement.tab('show');
     const configType = tabElement.attr('aria-controls');
     loadConfig(configType);
-  }
+}
 
 
 
-          // Listen to tab changes to refresh configurations if needed
-  $('#configTabs a').on('click', function(e) {
+// Listen to tab changes to refresh configurations if needed
+$('#configTabs a').on('click', function(e) {
     e.preventDefault();
     activateAndLoadConfig($(this));
-  });
+});
 
 
 
-  const initialTab = $('#configTabs a.active');
-  if (initialTab.length) {
+const initialTab = $('#configTabs a.active');
+if (initialTab.length) {
     activateAndLoadConfig(initialTab);
-  } else {
+} else {
     // If no active tab, load the first tab or a specific tab as needed
     activateAndLoadConfig($('#configTabs a').first());
-  }
+}
 
 
-          function loadConfig(configType) {
-            fetch(`${getBaseUrl()}/load-config`)
-              .then(response => response.json())
-              .then(data => {
-                const formId = configType === 'session' ? 'session-parameters-form' : configType === 'device' ? 'device-parameters-form' : 'administration-parameters-form';
-                const tbody = document.querySelector(`#${formId} tbody`);
-                tbody.innerHTML = ''; // Clear existing rows
-                Object.entries(data).forEach(([key, config]) => {
-                  if (config.parameter === configType) {
+function loadConfig(configType) {
+    fetch(`${getBaseUrl()}/load-config`)
+        .then(response => response.json())
+        .then(data => {
+            const formId = (() => {
+                switch (configType) {
+                    case 'session':
+                        return 'session-parameters-form';
+                    case 'device':
+                        return 'device-parameters-form';
+                    case 'administration':
+                        return 'administration-parameters-form';
+                    case 'email':
+                        return 'email-parameters-form'; // Match the id for the email tab
+                    case 'compair':
+                        return 'compair-parameters-form'; // Match the id for the compair tab
+                    default:
+                        return ''; // Adjust this to handle other cases if needed
+                }
+            })();
+            const tbody = document.querySelector(`#${formId} tbody`);
+            tbody.innerHTML = ''; // Clear existing rows
+            Object.entries(data).forEach(([key, config]) => {
+                if (config.parameter === configType) {
                     const description = config.description;
                     let valueField = '';
                     if (config.type === 'boolean') {
-                      // For boolean, use a Bootstrap Switch
-                      const checkedAttr = config.value ? 'checked' : ''; // Add checked attribute if value is true
-                      valueField = `<input name="${key}" type="checkbox" ${checkedAttr} data-toggle="toggle" data-onstyle="info" data-offstyle="light">`;
+                        // For boolean, use a Bootstrap Switch
+                        const checkedAttr = config.value ? 'checked' : ''; // Add checked attribute if value is true
+                        valueField = `<input name="${key}" type="checkbox" ${checkedAttr} data-toggle="toggle" data-onstyle="info" data-offstyle="light">`;
                     } else if (config.type === 'number' || config.type === 'float') {
-                      // For number, use a number input
-                      valueField = `<input type="number" class="form-control" name="${key}" value="${config.value}">`;
+                        // For number, use a number input
+                        valueField = `<input type="number" class="form-control" name="${key}" value="${config.value}">`;
                     } else if (config.type === 'string') {
-                      // For string, use a text input
-                      valueField = `<input type="text" class="form-control" name="${key}" value="${config.value}">`;
+                        // For string, use a text input
+                        valueField = `<input type="text" class="form-control" name="${key}" value="${config.value}">`;
                     } else if (config.type === 'array') {
-                      // For array, use a text input with JSON representation
-                      valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
+                        // For array, use a text input with JSON representation
+                        valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
                     }
                     const row = `<tr data-toggle="tooltip" data-placement="top" title="${description}">
                       <td>${description}</td>
                       <td>${valueField}</td>
                     </tr>`;
                     tbody.innerHTML += row;
-                  }
-                });
+                }
+            });
 
-                // Initialize Bootstrap Switches after all elements are generated
-                $('[data-toggle="toggle"]').bootstrapToggle();
-              })
-              .catch(error => console.error('Failed to load configuration:', error));
-          }
+            // Initialize Bootstrap Switches after all elements are generated
+            $('[data-toggle="toggle"]').bootstrapToggle();
+        })
+        .catch(error => console.error('Failed to load configuration:', error));
+}
 
-          function saveConfiguration(configType) {
-           const formId = configType === 'session' ? 'session-parameters-form' : configType === 'device' ? 'device-parameters-form' : 'administration-parameters-form';
-          const form = document.getElementById(formId);
-          const updatedConfig = {};
+function saveConfiguration(configType) {
 
-          // Process each input element within the form
-          form.querySelectorAll('input[type="checkbox"], input[type="number"], input[type="text"]').forEach(input => {
-            const key = input.name;
-            let value = input.value;
-            // For checkboxes, use the checked state
-            if (input.type === 'checkbox') {
-              value = input.checked;
-            } else if (input.classList.contains('array')) {
-              // For array inputs, parse the JSON string back into an array
-              try {
+    const formId = (() => {
+        switch (configType) {
+            case 'session':
+                return 'session-parameters-form';
+            case 'device':
+                return 'device-parameters-form';
+            case 'administration':
+                return 'administration-parameters-form';
+            case 'email':
+                return 'email-parameters-form'; // Match the id for the email tab
+            case 'compair':
+                return 'compair-parameters-form'; // Match the id for the compair tab
+            default:
+                return ''; // Adjust this to handle other cases if needed
+        }
+    })();
+    const form = document.getElementById(formId);
+    const updatedConfig = {};
+
+    // Process each input element within the form
+    form.querySelectorAll('input[type="checkbox"], input[type="number"], input[type="text"]').forEach(input => {
+        const key = input.name;
+        let value = input.value;
+        // For checkboxes, use the checked state
+        if (input.type === 'checkbox') {
+            value = input.checked;
+        } else if (input.classList.contains('array')) {
+            // For array inputs, parse the JSON string back into an array
+            try {
                 value = JSON.parse(input.value);
-              } catch (e) {
+            } catch (e) {
                 console.error('Failed to parse array input:', e);
-              }
             }
+        }
+        if (input.type === 'number') {
+            value = value.replace(/,/g, '.');
 
-            // Retrieve the description from the corresponding tr element if it exists
-            const descriptionElement = input.closest('tr').getAttribute('title');
-            const description = descriptionElement ? descriptionElement.trim() : '';
+        }
+        // Retrieve the description from the corresponding tr element if it exists
+        const descriptionElement = input.closest('tr').getAttribute('title');
+        const description = descriptionElement ? descriptionElement.trim() : '';
 
-            // Skip if the key is empty
-            if (key) {
-              // Construct the configuration object with description and value
-              updatedConfig[key] = {
+        // Skip if the key is empty
+        if (key) {
+            // Construct the configuration object with description and value
+            updatedConfig[key] = {
                 value: value,
                 description: description,
-                type: input.type === 'checkbox' ? 'boolean' : input.classList.contains('array') ? 'array' : typeof value,
+                type: determineType(input),
                 parameter: configType
-              };
+            };
+        }
+
+        function determineType(input) {
+            if (input.type === 'checkbox') {
+                return 'boolean';
+            } else if (input.type === 'number') {
+                return 'number';
+            } else if (input.classList.contains('array')) {
+                return 'array';
+            } else if (input.type === 'text') {
+                return 'string';
+            } else {
+                return typeof value;
             }
-          });
+        }
+    });
 
-            // Fetch the existing configurations
-            fetch(`${getBaseUrl()}/load-config`)
-              .then(response => response.json())
-              .then(existingConfig => {
-                // Merge the updated configurations with the existing ones
-                const mergedConfig = { ...existingConfig };
+    // Fetch the existing configurations
+    fetch(`${getBaseUrl()}/load-config`)
+        .then(response => response.json())
+        .then(existingConfig => {
+            // Merge the updated configurations with the existing ones
+            const mergedConfig = {
+                ...existingConfig
+            };
 
-                // Update the merged configurations with the updated ones
-                Object.keys(updatedConfig).forEach(key => {
-                  mergedConfig[key] = updatedConfig[key];
-                });
+            // Update the merged configurations with the updated ones
+            Object.keys(updatedConfig).forEach(key => {
+                mergedConfig[key] = updatedConfig[key];
+            });
 
-                // Send the merged configuration to the server for saving
-                fetch(`${getBaseUrl()}/save-config`, {
+            // Send the merged configuration to the server for saving
+            fetch(`${getBaseUrl()}/save-config`, {
                     method: 'POST',
                     headers: {
-                      'Content-Type': 'application/json'
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify(mergedConfig)
-                  })
-                  .then(response => {
+                })
+                .then(response => {
                     if (!response.ok) {
-                      throw new Error('Failed to save configuration');
+                        throw new Error('Failed to save configuration');
                     }
                     console.log('Configuration saved successfully');
-                  })
-                  .catch(error => console.error('Failed to save configuration:', error));
-              })
-              .catch(error => console.error('Failed to load configuration:', error));
-          }
-
-     // Function to handle saving configuration based on active tab
-function saveConfigurationBasedOnTab(tabId) {
-  if (tabId === 'session-tab') {
-    saveConfiguration('session');
-  } else if (tabId === 'device-tab') {
-    saveConfiguration('device');
-  } else if (tabId === 'administration-tab') {
-    saveConfiguration('administration');
-  }
+                })
+                .catch(error => console.error('Failed to save configuration:', error));
+        })
+        .catch(error => console.error('Failed to load configuration:', error));
 }
+
+// Function to handle saving configuration based on active tab
+function saveConfigurationBasedOnTab(tabId) {
+    const tabToConfigMap = {
+        'session-tab': 'session',
+        'device-tab': 'device',
+        'administration-tab': 'administration',
+        'email-tab': 'email',
+        'compair-tab': 'compair'
+    };
+
+    const configType = tabToConfigMap[tabId];
+    if (configType) {
+        saveConfiguration(configType);
+    }
+}
+
 
 // Event listener for saving on "Enter" key press
 document.addEventListener("keydown", function(event) {
-  if (event.key === "Enter") {
-    // Check if the modal is open before triggering save
-    if ($('#device-parameters').hasClass('show')) {
-      var activeTabId = $('.nav-tabs .nav-link.active').attr('id');
-      saveConfigurationBasedOnTab(activeTabId);
-      $('#device-parameters').modal('hide'); // Close the modal after saving
+    if (event.key === "Enter") {
+        // Check if the modal is open before triggering save
+        if ($('#device-parameters').hasClass('show')) {
+            var activeTabId = $('.nav-tabs .nav-link.active').attr('id');
+            saveConfigurationBasedOnTab(activeTabId);
+            $('#device-parameters').modal('hide'); // Close the modal after saving
+        }
     }
-  }
+});
+// Define an array of tab IDs and corresponding configuration types
+const tabsConfig = [
+    { tabId: 'session-tab', configType: 'session' },
+    { tabId: 'device-tab', configType: 'device' },
+    { tabId: 'administration-tab', configType: 'administration' },
+    { tabId: 'email-tab', configType: 'email' },
+    { tabId: 'compair-tab', configType: 'compair' }
+];
+
+// Iterate over the array and create event listeners for each tab
+tabsConfig.forEach(tab => {
+    document.getElementById(`save${tab.configType.charAt(0).toUpperCase() + tab.configType.slice(1)}Settings`).addEventListener("click", function(event) {
+        event.preventDefault();
+        saveConfigurationBasedOnTab(tab.tabId);
+        $('#device-parameters').modal('hide'); // Close the modal after saving
+    });
 });
 
-// Event listeners for saving on button click
-document.getElementById("saveSessionSettings").addEventListener("click", function(event) {
-  event.preventDefault();
-  saveConfigurationBasedOnTab('session-tab');
-  $('#device-parameters').modal('hide'); // Close the modal after saving
-});
+$('#bcMeter_reboot').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
 
-document.getElementById("saveDeviceSettings").addEventListener("click", function(event) {
-  event.preventDefault();
-  saveConfigurationBasedOnTab('device-tab');
-  $('#device-parameters').modal('hide'); // Close the modal after saving
-});
+    bootbox.dialog({
+        title: 'Reboot bcMeter?',
+        message: "<p>Do you want to reboot the device?</p>",
+        size: 'small',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-success',
+                callback: function() {
 
-document.getElementById("saveAdministrationSettings").addEventListener("click", function(event) {
-  event.preventDefault();
-  saveConfigurationBasedOnTab('administration-tab');
-  $('#device-parameters').modal('hide'); // Close the modal after saving
-});
+                }
+            },
+            ok: {
+                label: "Yes",
+                className: 'btn-danger',
+                callback: function() {
+                    window.location.href = 'includes/status.php?status=reboot';
 
-
-  $('#bcMeter_reboot').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-              bootbox.dialog({
-                  title: 'Reboot bcMeter?',
-                  message: "<p>Do you want to reboot the device?</p>",
-                  size: 'small',
-                  buttons: {
-                      cancel: {
-                          label: "No",
-                          className: 'btn-success',
-                          callback: function(){
-
-                          }
-                      },
-                      ok: {
-                          label: "Yes",
-                          className: 'btn-danger',
-                          callback: function(){
-                              window.location.href='includes/status.php?status=reboot';
-
-                          }
-                      }
-                  }
-              });
-           
-        });
-
-
-        $('#bcMeter_stop').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-              bootbox.dialog({
-                  title: 'Stop logging',
-                  message: "<p>This will stop the current measurement. Sure?</p>",
-                  size: 'small',
-                  buttons: {
-                      cancel: {
-                          label: "No",
-                          className: 'btn-success',
-                          callback: function(){
-
-                          }
-                      },
-                      ok: {
-                          label: "Yes",
-                          className: 'btn-danger',
-                          callback: function(){
-
-
-                          $.ajax({
-                              type: 'post',
-                              data: 'exec_stop',
-                              success: function(response){
-                              
-                              }
-                           });
-                  
-                            
-
-
-
-
-                          }
-                      }
-                  }
-              });
-           
-        });
-
-
-
-
-
-        $('#bcMeter_debug').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-              bootbox.dialog({
-                  title: 'Enter debug mode?',
-                  message: "<p>Do you want to switch to debug mode? Device will be unresponsive for 10-20 seconds</p>",
-                  size: 'small',
-                  buttons: {
-                      cancel: {
-                          label: "No",
-                          className: 'btn-success',
-                          callback: function(){
-
-                          }
-                      },
-                      ok: {
-                          label: "Yes",
-                          className: 'btn-danger',
-                          callback: function(){
-
-                            $.ajax({
-                              type: 'post',
-                              data: 'exec_debug',
-                              success: function(response){
-                                 window.location.href='includes/status.php?status=debug';
-                              }
-                           });
-
-                              
-
-                          }
-                      }
-                  }
-              });
-           
-        });
-
-
-
-
-                $('#force_wifi').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-              bootbox.dialog({
-                  title: 'Reset Wifi?',
-                  message: "<p>This will trigger a manual reload of the WiFi credentials and cut your current connection. </p>",
-                  size: 'small',
-                  buttons: {
-                      cancel: {
-                          label: "No",
-                          className: 'btn-success',
-                          callback: function(){
-
-                          }
-                      },
-                      ok: {
-                          label: "Yes",
-                          className: 'btn-danger',
-                        callback: function() {
-                            // Make AJAX call to initiate the backend process
-                            $.ajax({
-                                type: 'post',
-                                data: {force_wifi: true}, // Adjusted to pass data as an object
-                                success: function(response) {
-                                    // Handle success
-                                },
-                                error: function() {
-                                    // Handle error
-                                }
-                            });
-                        }
-                      }
-                  }
-              });
-           
-        });
-
-
-
-
-
-
-
-
-        $('#bcMeter_calibration').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-          bootbox.dialog({
-              title: 'Calibrate bcMeter?',
-              message: "<p>Calibrate only with new filterpaper. Avoid direct sunlight. Continue? </p>",
-              size: 'medium',
-              buttons: {
-                  cancel: {
-                      label: "No",
-                      className: 'btn-success',
-                      callback: function(){
-                      }
-                  },
-                  ok: {
-                      label: "Yes",
-                      className: 'btn-danger',
-                      callback: function(){
-                          window.location.href='includes/status.php?status=calibration';
-
-                      }
-                  }
-              }
-          });
-           
-        });
-
-
-
-
-
-        $('#bcMeter_update').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-          bootbox.dialog({
-              title: 'Update bcMeter?',
-              message: "<p>The most recent files will be downloaded. If possible, your parameters will be kept but please save them and check after the update if they are the same. </p>",
-              size: 'medium',
-              buttons: {
-                  cancel: {
-                      label: "No",
-                      className: 'btn-success',
-                      callback: function(){
-                      }
-                  },
-                  ok: {
-                      label: "Yes",
-                      className: 'btn-danger',
-                      callback: function(){
-                          window.location.href='includes/status.php?status=update';
-
-                      }
-                  }
-              }
-          });
-           
-        });
-
-
-
-
-
-
-        $('#saveGraph').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-           bootbox.dialog({
-            title: 'Save graph as',
-            message: "<p>Choose the type of file you want to save the current measurements as</p>",
-            size: 'large',
-            buttons: {
-                1: {
-                    label: "CSV (MS Office/Google Docs)",
-                    className: 'btn-info',
-                    callback: function(){
-                        saveCSV();
-
-                    }
-                },
-                2: {
-                    label: "PNG (Web/Mail)",
-                    className: 'btn-info',
-                    callback: function(){
-                        savePNG();
-
-                    }
-                },
-                3: {
-                    label: "SVG (DTP)",
-                    className: 'btn-info',
-                    callback: function(){
-                        saveSVG();
-                    }
                 }
             }
-          });
-
-        });
-
-
-
-
-
-
-
-
-
-
-
-
-        $('#startNewLog').click(function(e) {
-            e.preventDefault(); // Prevent the default submit behavior
-
-            bootbox.dialog({
-                title: 'Start new log?',
-                message: "<p>This will start a new log. It takes a few minutes for the new chart to appear.</p>",
-                size: 'small',
-                buttons: {
-                    cancel: {
-                        label: "No",
-                        className: 'btn-success',
-                        callback: function() {
-                            // Cancel callback
-                        }
-                    },
-                    ok: {
-                        label: "Yes",
-                        className: 'btn-danger',
-                        callback: function() {
-                            // Make AJAX call to initiate the backend process
-                            $.ajax({
-                                type: 'post',
-                                data: {exec_new_log: true}, // Adjusted to pass data as an object
-                                success: function(response) {
-                                    // Handle success
-                                },
-                                error: function() {
-                                    // Handle error
-                                }
-                            });
-                        }
-                    }
-                }
-            });
-        });
-
-
-
-        /*document.getElementById("fetchWifiButton").addEventListener("click", function() {
-          // Function to fetch Wi-Fi list
-          $.get("includes/wlan_list.php", function(data, status) {
-              var ssid_arr = JSON.parse(data);
-              var select = document.getElementById("js-wifi-dropdown");
-
-              for (var i = 0; i < ssid_arr.length; i++) {
-                  if (currentWifiSsid != ssid_arr[i]) { // current ssid is added in setup/index.php
-                      var el = document.createElement("option");
-                      el.textContent = ssid_arr[i];
-                      el.value = ssid_arr[i];
-                      select.appendChild(el);
-                  }
-              }
-
-              // Hide loading indicator after fetching
-              $('.loading-available-networks').hide();
-          });*/
-
-
-
-    var optionsButton = document.querySelector('[data-target="#pills-devicecontrol"]');
-    optionsButton.addEventListener('click', function() {
-        var target = document.querySelector(this.getAttribute('data-target'));
-        if (target.style.display === "none") {
-            target.style.display = "block";
-        } else {
-            target.style.display = "none";
         }
     });
 
+});
+
+
+$('#bcMeter_stop').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
+
+    bootbox.dialog({
+        title: 'Stop logging',
+        message: "<p>This will stop the current measurement. Sure?</p>",
+        size: 'small',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-success',
+                callback: function() {
+
+                }
+            },
+            ok: {
+                label: "Yes",
+                className: 'btn-danger',
+                callback: function() {
+
+
+                    $.ajax({
+                        type: 'post',
+                        data: 'exec_stop',
+                        success: function(response) {
+
+                        }
+                    });
 
 
 
-  // ----------- password
-  $( ".toggle-password" ).click(function() {
-      $(this).toggleClass("closed");
-      var input = $("#pass_log_id");
-      if (input.attr("type") === "password") {
-      input.attr("type", "text");
-      } else {
-      input.attr("type", "password");
+
+                }
+            }
+        }
+    });
+
+});
+
+
+
+
+$('#bcMeter_debug').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
+
+    bootbox.dialog({
+        title: 'Enter debug mode?',
+        message: "<p>Do you want to switch to debug mode? Device will be unresponsive for 10-20 seconds</p>",
+        size: 'small',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-success',
+                callback: function() {
+
+                }
+            },
+            ok: {
+                label: "Yes",
+                className: 'btn-danger',
+                callback: function() {
+
+                    $.ajax({
+                        type: 'post',
+                        data: 'exec_debug',
+                        success: function(response) {
+                            window.location.href = 'includes/status.php?status=debug';
+                        }
+                    });
+
+
+
+                }
+            }
+        }
+    });
+
+});
+
+
+
+
+$('#force_wifi').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
+
+    bootbox.dialog({
+        title: 'Reset Wifi?',
+        message: "<p>This will trigger a manual reload of the WiFi credentials and cut your current connection. </p>",
+        size: 'small',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-success',
+                callback: function() {
+
+                }
+            },
+            ok: {
+                label: "Yes",
+                className: 'btn-danger',
+                callback: function() {
+                    // Make AJAX call to initiate the backend process
+                    $.ajax({
+                        type: 'post',
+                        data: {
+                            force_wifi: true
+                        }, // Adjusted to pass data as an object
+                        success: function(response) {
+                            // Handle success
+                        },
+                        error: function() {
+                            // Handle error
+                        }
+                    });
+                }
+            }
+        }
+    });
+
+});
+
+
+
+
+$('#bcMeter_calibration').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
+
+    bootbox.dialog({
+        title: 'Calibrate bcMeter?',
+        message: "<p>Calibrate only with new filterpaper. Avoid direct sunlight. Continue? </p>",
+        size: 'medium',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-success',
+                callback: function() {}
+            },
+            ok: {
+                label: "Yes",
+                className: 'btn-danger',
+                callback: function() {
+                    window.location.href = 'includes/status.php?status=calibration';
+
+                }
+            }
+        }
+    });
+
+});
+
+
+
+
+$('#bcMeter_update').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
+
+    bootbox.dialog({
+        title: 'Update bcMeter?',
+        message: "<p>The most recent files will be downloaded. If possible, your parameters will be kept but please save them and check after the update if they are the same. </p>",
+        size: 'medium',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-success',
+                callback: function() {}
+            },
+            ok: {
+                label: "Yes",
+                className: 'btn-danger',
+                callback: function() {
+                    window.location.href = 'includes/status.php?status=update';
+
+                }
+            }
+        }
+    });
+
+});
+
+
+
+
+$('#saveGraph').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
+
+    bootbox.dialog({
+        title: 'Save graph as',
+        message: "<p>Choose the type of file you want to save the current measurements as</p>",
+        size: 'large',
+        buttons: {
+            1: {
+                label: "CSV (MS Office/Google Docs)",
+                className: 'btn-info',
+                callback: function() {
+                    saveCSV();
+
+                }
+            },
+            2: {
+                label: "PNG (Web/Mail)",
+                className: 'btn-info',
+                callback: function() {
+                    savePNG();
+
+                }
+            },
+            3: {
+                label: "SVG (DTP)",
+                className: 'btn-info',
+                callback: function() {
+                    saveSVG();
+                }
+            }
+        }
+    });
+
+});
+
+
+
+
+$('#startNewLog').click(function(e) {
+    e.preventDefault(); // Prevent the default submit behavior
+
+    bootbox.dialog({
+        title: 'Start new log?',
+        message: "<p>This will start a new log. It takes a few minutes for the new chart to appear.</p>",
+        size: 'small',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-success',
+                callback: function() {
+                    // Cancel callback
+                }
+            },
+            ok: {
+                label: "Yes",
+                className: 'btn-danger',
+                callback: function() {
+                    // Make AJAX call to initiate the backend process
+                    $.ajax({
+                        type: 'post',
+                        data: {
+                            exec_new_log: true
+                        }, // Adjusted to pass data as an object
+                        success: function(response) {
+                            // Handle success
+                        },
+                        error: function() {
+                            // Handle error
+                        }
+                    });
+                }
+            }
+        }
+    });
+});
+
+
+
+/*document.getElementById("fetchWifiButton").addEventListener("click", function() {
+  // Function to fetch Wi-Fi list
+  $.get("includes/wlan_list.php", function(data, status) {
+      var ssid_arr = JSON.parse(data);
+      var select = document.getElementById("js-wifi-dropdown");
+
+      for (var i = 0; i < ssid_arr.length; i++) {
+          if (currentWifiSsid != ssid_arr[i]) { // current ssid is added in setup/index.php
+              var el = document.createElement("option");
+              el.textContent = ssid_arr[i];
+              el.value = ssid_arr[i];
+              select.appendChild(el);
+          }
       }
-  });
-  // ----------- edit existing password
-  $( ".js-edit-password" ).click(function() {
+
+      // Hide loading indicator after fetching
+      $('.loading-available-networks').hide();
+  });*/
+
+
+
+var optionsButton = document.querySelector('[data-target="#pills-devicecontrol"]');
+optionsButton.addEventListener('click', function() {
+    var target = document.querySelector(this.getAttribute('data-target'));
+    if (target.style.display === "none") {
+        target.style.display = "block";
+    } else {
+        target.style.display = "none";
+    }
+});
+
+
+
+
+// ----------- password
+$(".toggle-password").click(function() {
+    $(this).toggleClass("closed");
+    var input = $("#pass_log_id");
+    if (input.attr("type") === "password") {
+        input.attr("type", "text");
+    } else {
+        input.attr("type", "password");
+    }
+});
+// ----------- edit existing password
+$(".js-edit-password").click(function() {
     $('.wifi-pwd-field-exist').hide();
     $('.wifi-pwd-field').show();
-  });
-  
+});
 
-  // ---------- wifi  
-  var dropdown = document.getElementById('js-wifi-dropdown');
-    dropdown.onchange = function () {
-    if(this[this.selectedIndex].value == "custom-network-selection"){
-      document.getElementById('custom-network').style.display='block';
-    }else {
-      document.getElementById('custom-network').style.display='none';
+
+// ---------- wifi  
+var dropdown = document.getElementById('js-wifi-dropdown');
+dropdown.onchange = function() {
+    if (this[this.selectedIndex].value == "custom-network-selection") {
+        document.getElementById('custom-network').style.display = 'block';
+    } else {
+        document.getElementById('custom-network').style.display = 'none';
     }
-  };
-  
-  
-  
-  
-  //get wlan list from jquery get  --> 
-  $.get("includes/wlan_list.php", function(data, status){
-    
+};
+
+
+
+
+//get wlan list from jquery get  --> 
+$.get("includes/wlan_list.php", function(data, status) {
+
     var ssid_arr = JSON.parse(data);
     var select = document.getElementById("js-wifi-dropdown");
-  
-    for(var i = 0; i < ssid_arr.length; i++) {
-      if(currentWifiSsid!=ssid_arr[i]){         // current ssid is added in setup/index.php
-        var el = document.createElement("option");
-        el.textContent = ssid_arr[i];
-        el.value = ssid_arr[i];
-        select.appendChild(el);
-      }
+
+    for (var i = 0; i < ssid_arr.length; i++) {
+        if (currentWifiSsid != ssid_arr[i]) { // current ssid is added in setup/index.php
+            var el = document.createElement("option");
+            el.textContent = ssid_arr[i];
+            el.value = ssid_arr[i];
+            select.appendChild(el);
+        }
     }
-    
+
     $('.loading-available-networks').hide();
-    
-  });
+
+});
 
 
 
 
-
-    setInterval(function() {
-      var date = new Date();
-      var timestamp = (date.getTime() / 1000).toFixed(0);
-      var currentDateTime = date.toLocaleString('default', {
+setInterval(function() {
+    var date = new Date();
+    var timestamp = (date.getTime() / 1000).toFixed(0);
+    var currentDateTime = date.toLocaleString('default', {
         month: 'short'
-      }) + " " + date.getDate() + " " + date.getFullYear() + " " + date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
-      document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + currentDateTime;
-      document.getElementById("set_time").value = timestamp;
+    }) + " " + date.getDate() + " " + date.getFullYear() + " " + date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
+    document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + currentDateTime;
+    document.getElementById("set_time").value = timestamp;
 
-      $.ajax({
+    $.ajax({
         url: "includes/gettime.php", // The page containing php script
         type: "post", // Request type
-        data: { datetime: "now" },
+        data: {
+            datetime: "now"
+        },
         cache: false, // Prevent the browser from caching the result
         timeout: 1000, // Set timeout for the request (e.g., 5000 milliseconds)
         success: function(result) {
-          document.getElementById("datetime_note").innerHTML = "Synchronize the time of bcMeter to get correct timestamps";
-          document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + result;
-          if (document.getElementById("devicetime")) {
-            document.getElementById("devicetime").innerHTML = "Time on bcMeter: " + result;
-          }
-          document.getElementById('hotspotwarning').classList.remove('alert-danger');
-          document.getElementById('hotspotwarning').classList.add('alert');
+            document.getElementById("datetime_note").innerHTML = "Synchronize the time of bcMeter to get correct timestamps";
+            document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + result;
+            if (document.getElementById("devicetime")) {
+                document.getElementById("devicetime").innerHTML = "Time on bcMeter: " + result;
+            }
+            document.getElementById('hotspotwarning').classList.remove('alert-danger');
+            document.getElementById('hotspotwarning').classList.add('alert');
         },
         error: function(xhr, status, error) {
-          var errorMessage = xhr.status + ': ' + xhr.statusText;
-          document.getElementById("datetime_device").innerHTML = "No connection to bcMeter";
-          document.getElementById("datetime_local").innerHTML = "";
-          document.getElementById("set_time").value = "";
-          document.getElementById("datetime_note").innerHTML = "";
-          if (document.getElementById("devicetime")) {
-            document.getElementById("devicetime").innerHTML = "";
-          }
-          document.getElementById('hotspotwarning').classList.remove('alert');
-          document.getElementById('hotspotwarning').classList.add('alert-danger');
+            var errorMessage = xhr.status + ': ' + xhr.statusText;
+            document.getElementById("datetime_device").innerHTML = "No connection to bcMeter";
+            document.getElementById("datetime_local").innerHTML = "";
+            document.getElementById("set_time").value = "";
+            document.getElementById("datetime_note").innerHTML = "";
+            if (document.getElementById("devicetime")) {
+                document.getElementById("devicetime").innerHTML = "";
+            }
+            document.getElementById('hotspotwarning').classList.remove('alert');
+            document.getElementById('hotspotwarning').classList.add('alert-danger');
         }
-      });
-    }, 1000);
-  
-
-
-    $('#force_wifi').click(function() {
-        $('#wifisetup').modal('hide'); // This line uses Bootstrap's jQuery plugin to hide the modal
     });
+}, 1000);
 
 
 
+$('#force_wifi').click(function() {
+$('#wifisetup').modal('hide'); 
+});
+
+
+$('#filterStatusModal').on('show.bs.modal', function (event) {
+    var modal = $(this);
+    // Calculate the percentage and round it to the nearest integer
+    var percentage = Math.round((1 - filterStatus) * 100);
+    // Update the content of the span element with the percentage value
+    modal.find('#filterStatusValue').text(percentage);
+});
 
 
 });
-
 
 
 
@@ -1637,7 +1706,9 @@ document.getElementById("saveAdministrationSettings").addEventListener("click", 
                 </button>
             </div>
             <div class="modal-body">
+                <p>Filter loading: <span id="filterStatusValue"></span>%</p>
                 <p>5 colors are possible: Green, red, orange, grey and black. Red means: be prepared to change. <br /> When grey, it should be changed. <br />Data will still be gathered. When black, the paper cannot load any more black carbon.</p>
+                You may calibrate the device with fresh filter paper to get the most reliable results. 
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
@@ -1903,6 +1974,17 @@ document.addEventListener('DOMContentLoaded', startLogFetching);
   </div>
 </div>
 <!-- End Log Parameters -->
+<?php
+// Define tab titles and parameter types
+$tabs = [
+    "session" => "Session Parameters",
+    "device" => "Device Parameters",
+    "administration" => "Administration Parameters",
+    "email" => "Email Parameters",
+    "compair" => "COMPAIR Parameters"
+];
+?>
+
 <!-- Start Edit device Parameters -->
 <script src="js/bootstrap4-toggle.min.js"></script>
 <!-- begin edit device parameters modal -->
@@ -1919,69 +2001,33 @@ document.addEventListener('DOMContentLoaded', startLogFetching);
         <div class="container mt-3">
           <!-- Nav tabs -->
           <ul class="nav nav-tabs" id="configTabs" role="tablist">
-            <li class="nav-item">
-              <a class="nav-link active" id="session-tab" data-toggle="tab" href="#session" role="tab" aria-controls="session" aria-selected="true">Session Parameters</a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" id="device-tab" data-toggle="tab" href="#device" role="tab" aria-controls="device" aria-selected="false">Device Parameters</a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" id="administration-tab" data-toggle="tab" href="#administration" role="tab" aria-controls="administration" aria-selected="false">Administration Parameters</a>
-            </li>
+            <?php foreach ($tabs as $type => $title): ?>
+              <li class="nav-item">
+                <a class="nav-link <?php if ($type === 'session') echo 'active'; ?>" id="<?= $type ?>-tab" data-toggle="tab" href="#<?= $type ?>" role="tab" aria-controls="<?= $type ?>" aria-selected="<?= $type === 'session' ? 'true' : 'false' ?>"><?= $title ?></a>
+              </li>
+            <?php endforeach; ?>
           </ul>
           <!-- Tab panes -->
           <div class="tab-content">
-            <div class="tab-pane active" id="session" role="tabpanel" aria-labelledby="session-tab">
-              <!-- Session parameters form -->
-              <form id="session-parameters-form">
-                <table class="table table-bordered">
-                  <thead>
-                    <tr>
-                      <th scope="col" style="width: 80%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
-                      <th scope="col" style="width: 20%;">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                      <!-- Dynamic Session Configuration Rows Will Be Inserted Here by JavaScript -->
-                  </tbody>
-                </table>
-                <button type="button" class="btn btn-primary" id="saveSessionSettings">Save Session Settings</button>
-              </form>
-            </div>
-            <div class="tab-pane" id="device" role="tabpanel" aria-labelledby="device-tab">
-              <!-- Device parameters form -->
-              <form id="device-parameters-form">
-                <table class="table table-bordered">
-                  <thead>
-                    <tr>
-                      <th scope="col" style="width: 90%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
-                      <th scope="col" style="width: 10%;">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                      <!-- Dynamic Device Configuration Rows Will Be Inserted Here by JavaScript -->
-                  </tbody>
-                </table>
-                <button type="button" class="btn btn-primary" id="saveDeviceSettings">Save Device Settings</button>
-              </form>
-            </div>
-            <div class="tab-pane" id="administration" role="tabpanel" aria-labelledby="administration-tab">
-              <!-- Administration parameters form -->
-              <form id="administration-parameters-form">
-                <table class="table table-bordered">
-                  <thead>
-                    <tr>
-                      <th scope="col" style="width: 90%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
-                      <th scope="col" style="width: 10%;">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                      <!-- Dynamic Administration Configuration Rows Will Be Inserted Here by JavaScript -->
-                  </tbody>
-                </table>
-                <button type="button" class="btn btn-primary" id="saveAdministrationSettings">Save Administration Settings</button>
-              </form>
-            </div>
+            <?php foreach ($tabs as $type => $title): ?>
+              <div class="tab-pane <?php if ($type === 'session') echo 'active'; ?>" id="<?= $type ?>" role="tabpanel" aria-labelledby="<?= $type ?>-tab">
+                <!-- <?= $title ?> parameters form -->
+                <form id="<?= $type ?>-parameters-form">
+                  <table class="table table-bordered">
+                    <thead>
+                      <tr>
+                        <th scope="col" style="width: 90%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
+                        <th scope="col" style="width: 10%;">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Dynamic <?= $title ?> Configuration Rows Will Be Inserted Here by JavaScript -->
+                    </tbody>
+                  </table>
+                  <button type="button" class="btn btn-primary" id="save<?= ucfirst($type) ?>Settings">Save <?= $title ?> Settings</button>
+                </form>
+              </div>
+            <?php endforeach; ?>
           </div>
         </div>
 
@@ -1990,6 +2036,7 @@ document.addEventListener('DOMContentLoaded', startLogFetching);
   </div>
 </div>
 <!-- End Edit device Parameters -->
+
 
 
 

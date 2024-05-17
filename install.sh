@@ -45,6 +45,7 @@ if [ -f "$BCMINSTALLLOG" ]; then
     exit
 fi
 
+touch $BCMINSTALLLOG
 
 exec > >(tee -a $BCMINSTALLLOG) 2>&1
 
@@ -350,7 +351,7 @@ systemctl enable bcMeter_ap_control_loop
 systemctl enable bcMeter_flask
 systemctl daemon-reload 
 systemctl start bcMeter_flask
-
+systemctl unmask hostapd
 
 
 touch /home/pi/maintenance_logs/compair_frost_upload.log

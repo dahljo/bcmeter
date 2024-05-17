@@ -58,7 +58,38 @@ def convert_config_to_json():
 	return config_variables
 
 
+def modify_parameter_type(json_file, modifications):
+    with open(json_file, 'r') as file:
+        data = json.load(file)
+    
+    for variable, new_parameter in modifications:
+        if variable in data:
+            data[variable]['parameter'] = new_parameter
+        else:
+            pass
+
+    with open(json_file, 'w') as file:
+        json.dump(data, file, indent=4)
+
+
+
+
 def load_config_from_json():
+	modifications = [
+	    ("compair_upload", "compair"),
+	    ("get_location", "compair"),
+	    ("location", "compair"),
+	    ("send_log_by_mail", "email"),
+	    ("mail_logs_to", "email"),
+	    ("filter_status_mail", "email"),
+	    ("mail_sending_interval", "email"),
+	    ("email_service_password", "email"),
+	    ("run_hotspot", "session"),
+	    ("heating", "session"),
+
+	]
+	modify_parameter_type("/home/pi/bcMeter_config.json", modifications)
+
 	with open('/home/pi/bcMeter_config.json', 'r') as json_file:
 
 		full_config = json.load(json_file)

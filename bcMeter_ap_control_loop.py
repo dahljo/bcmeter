@@ -24,24 +24,10 @@ from threading import Thread
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.9.4"
+ctrl_lp_ver="0.9.45"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 bcMeter_button_gpio = 16
 
-if os.path.exists('/home/pi/bcMeter_config.json'):
-	config = load_config_from_json()
-else:
-	config = convert_config_to_json()
-	config = {key: value['value'] for key, value in config.items()}
-	print("json conversion of config complete")
-
-debug = True if (len(argv) > 1) and (argv[1] == "debug") else False
-
-enable_wifi = config.get('enable_wifi', True)
-is_ebcMeter = config.get('is_ebcMeter', False)
-use_display = config.get('use_display', False)
-bcMeter_started = str(datetime.now().strftime("%y%m%d_%H%M%S"))
-devicename = socket.gethostname()
 
 # Create the log folder if it doesn't exist
 log_folder = '/home/pi/maintenance_logs/'
@@ -89,6 +75,27 @@ if len(log_files) > 11:
 
 
 logger.debug(f"bcMeter Network Handler started (v{ctrl_lp_ver})")
+
+try:
+	if os.path.exists('/home/pi/bcMeter_config.json'):
+		config = load_config_from_json()
+	else:
+		config = convert_config_to_json()
+		config = {key: value['value'] for key, value in config.items()}
+		print("json conversion of config complete")
+except Exception as e:
+	logger.error(f"Config load error {e}")
+
+
+debug = True if (len(argv) > 1) and (argv[1] == "debug") else False
+
+enable_wifi = config.get('enable_wifi', True)
+is_ebcMeter = config.get('is_ebcMeter', False)
+use_display = config.get('use_display', False)
+bcMeter_started = str(datetime.now().strftime("%y%m%d_%H%M%S"))
+devicename = socket.gethostname()
+
+
 
 if (enable_wifi is False):
 	p = subprocess.Popen(["sudo", "ip", "link", "set", "wlan0", "down"])

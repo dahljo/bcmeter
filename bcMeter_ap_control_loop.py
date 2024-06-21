@@ -11,9 +11,8 @@ import signal
 import requests
 import uuid
 import json
-from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config
+from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging
 import importlib
-import logging
 from datetime import datetime
 import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
 from board import SCL, SDA, I2C
@@ -28,50 +27,9 @@ ctrl_lp_ver="0.9.45"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 bcMeter_button_gpio = 16
 
-
-# Create the log folder if it doesn't exist
-log_folder = '/home/pi/maintenance_logs/'
-log_entity = 'ap_control_loop'
-os.makedirs(log_folder, exist_ok=True)
-
-# Create a logger
-logger = logging.getLogger(f'{log_entity}_log')
-logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG
-
-
-# Clear the handlers to avoid duplicate log messages
-logger.handlers.clear()
-
-# Configure the log file with a generic name
-log_file_generic = f'{log_folder}{log_entity}.log'
-if os.path.exists(log_file_generic):
-	os.remove(log_file_generic)
-handler_generic = logging.FileHandler(log_file_generic)
-handler_generic.setLevel(logging.DEBUG)
-formatter_generic = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
-handler_generic.setFormatter(formatter_generic)
-
 current_datetime_timestamp = time.time() #script started
 
-# Configure the log file with a timestamp in its filename
-current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-log_file_timestamped = f'{log_folder}{log_entity}_{current_datetime}.log'
-handler_timestamped = logging.FileHandler(log_file_timestamped)
-handler_timestamped.setLevel(logging.DEBUG)
-formatter_timestamped = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
-handler_timestamped.setFormatter(formatter_timestamped)
-
-# Add both handlers to the logger
-logger.addHandler(handler_generic)
-logger.addHandler(handler_timestamped)
-
-log_file_prefix = f'{log_entity}_'
-log_files = [f for f in os.listdir(log_folder) if f.startswith(log_file_prefix) and f.endswith('.log')]
-log_files.sort()
-if len(log_files) > 11:
-	files_to_remove = log_files[:len(log_files) - 11]
-	for file_to_remove in files_to_remove:
-		os.remove(os.path.join(log_folder, file_to_remove))
+logger = setup_logging('ap_control_loop')
 
 
 logger.debug(f"bcMeter Network Handler started (v{ctrl_lp_ver})")
@@ -550,10 +508,10 @@ def button_callback(channel):
 	if (current_time - last_press_time < 3):
 		if button_press_count >= 2:
 			if not check_service_running('bcMeter'):
-				print("Starting bcMeter")
+				print("Starting bcMeter by button")
 				run_bcMeter_service()
 			else:
-				print("Stopping bcMeter")
+				print("Stopping bcMeter by button")
 				stop_bcMeter_service()		# Add your action here
 
 		elif button_press_count == 5:
@@ -573,9 +531,9 @@ def button_thread():
 		time.sleep(1)  # Polling interval
 
 # Start the button detection thread
-button_thread = Thread(target=button_thread)
-button_thread.daemon = True
-button_thread.start()
+#button_thread = Thread(target=button_thread)
+#button_thread.daemon = True
+#button_thread.start()
 if not debug:
 	ap_control_loop()
 else:

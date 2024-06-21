@@ -3,59 +3,17 @@
 import subprocess, sys
 import RPi.GPIO as GPIO
 import smbus
-import logging
 import os
 import json
 from datetime import datetime
 import re
-from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c
+from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c, setup_logging
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
-bcMeter_version = "0.9.917 2024-05-17"
-
-# Create the log folder if it doesn't exist
-log_folder = '/home/pi/maintenance_logs/'
-log_entity = 'bcMeter'
-os.makedirs(log_folder, exist_ok=True)
-
-# Create a logger
-logger = logging.getLogger(f'{log_entity}_log')
-logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG
+bcMeter_version = "0.9.920 2024-05-30"
 
 
-# Clear the handlers to avoid duplicate log messages
-logger.handlers.clear()
-
-# Configure the log file with a generic name
-log_file_generic = f'{log_folder}{log_entity}.log'
-if os.path.exists(log_file_generic):
-	os.remove(log_file_generic)
-handler_generic = logging.FileHandler(log_file_generic)
-handler_generic.setLevel(logging.DEBUG)
-formatter_generic = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
-handler_generic.setFormatter(formatter_generic)
-
-# Configure the log file with a timestamp in its filename
-current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-log_file_timestamped = f'{log_folder}{log_entity}_{current_datetime}.log'
-handler_timestamped = logging.FileHandler(log_file_timestamped)
-handler_timestamped.setLevel(logging.DEBUG)
-formatter_timestamped = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
-handler_timestamped.setFormatter(formatter_timestamped)
-
-# Add both handlers to the logger
-logger.addHandler(handler_generic)
-logger.addHandler(handler_timestamped)
-
-log_file_prefix = f'{log_entity}_'
-log_files = [f for f in os.listdir(log_folder) if f.startswith(log_file_prefix) and f.endswith('.log')]
-log_files.sort()
-if len(log_files) > 11:
-	files_to_remove = log_files[:len(log_files) - 11]
-	for file_to_remove in files_to_remove:
-		os.remove(os.path.join(log_folder, file_to_remove))
-
-logger.debug("New bcMeter %s Session started", bcMeter_version)
-
+logger = setup_logging('bcMeter')
+logger.debug(config)
 
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
@@ -1096,7 +1054,10 @@ def bcmeter_main(stop_event):
 			average = sum(sum_for_avg[-12:]) / min(12, len(sum_for_avg))
 
 			if samples_taken > 15:
-				show_display(f"{int(average)} ngm3/hr", False, 0)
+				if average > 0:
+					show_display(f"{int(average)} ngm3/hr", False, 0)
+				else:
+					show_display(f"Sampling...", False, 0)
 			else:
 				show_display(f"No AVG yet", False, 0)
 
@@ -1162,7 +1123,8 @@ def check_service_running(service_name):
 
 def housekeeping(stop_event):
 	global temperature_to_keep, session_running_since, ds18b20, airflow_debug, config
-	temperature_to_keep = 35
+	cooling = True
+	temperature_to_keep = 35 if cooling is False else 0
 
 	while (True):
 		config = load_config_from_json()
@@ -1211,7 +1173,11 @@ def housekeeping(stop_event):
 
 		heating = config.get('heating', False)
 		#logger.debug("skip heating: " + str(skipheat) + " / heating: " + str(heating) + " / current temp: " + str(temperature_current) + " / temp to keep: " + str(temperature_to_keep))
-		if (heating is True) and (skipheat is False):
+		if (cooling is True):
+			GPIO.output(23,True)
+
+
+		if (heating is True) and (skipheat is False) and (cooling is False):
 			if ((temperature_to_keep - temperature_current) > 10):
 				if (temperature_to_keep > 10):
 					temperature_to_keep = temperature_current - 5

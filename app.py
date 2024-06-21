@@ -1,4 +1,7 @@
-from flask import Flask, jsonify, request
+try:
+    from flask import Flask, jsonify, request
+except ImportError:
+    print("flask not installed")
 from flask_cors import CORS
 import os
 import json

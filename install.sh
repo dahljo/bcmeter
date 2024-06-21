@@ -1,6 +1,6 @@
 #!/bin/bash
 if (( $EUID != 0 )); then
-    echo "Run with sudo"
+    echo "Exiting: Re-Run with sudo!"
     exit
 fi
 
@@ -34,18 +34,14 @@ PYTHON_PACKAGES="\
     adafruit-blinka \
     adafruit-circuitpython-sht4x \
     oled-text \
-    Flask \
+    requests \
     flask-cors"
 
-INSTALLER_VERSION=0.5
+INSTALLER_VERSION=0.6
 
-$BCMINSTALLLOG="/home/pi/bcMeter_install.log"
-if [ -f "$BCMINSTALLLOG" ]; then
-    rm $BCMINSTALLLOG
-    exit
-fi
-
-touch $BCMINSTALLLOG
+BCMINSTALLLOG="/home/pi/maintenance_logs/bcMeter_install.log"
+touch "$BCMINSTALLLOG"
+echo "$(date) installation/update log" >> $BCMINSTALLLOG
 
 exec > >(tee -a $BCMINSTALLLOG) 2>&1
 

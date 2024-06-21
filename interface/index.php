@@ -2135,7 +2135,7 @@ $tabs = [
                           $pid=$output[0];
                           
                           if($pid==0){
-                            echo("<div class='error'>". $language["service_not_running"]."</div>");
+                            echo("<div class='error'>". $language["service_not_running"]." Check logs and reconnect manually by button below.</div>");
                           }
                           else{
                             // send SIGUSR1 signal to the bcMeter_ap_control_loop service

@@ -1,5 +1,5 @@
 
-import json, socket, os, busio
+import json, socket, os, busio, logging
 from board import I2C, SCL, SDA
 from datetime import datetime
 
@@ -13,6 +13,53 @@ bcMeter_started = str(datetime.now().strftime("%y%m%d_%H%M%S"))
 devicename = socket.gethostname()
 
 i2c = busio.I2C(SCL, SDA)
+
+def setup_logging(log_entity):
+	# Create the log folder if it doesn't exist
+	log_folder = '/home/pi/maintenance_logs/'
+	os.makedirs(log_folder, exist_ok=True)
+
+	# Create a logger
+	logger = logging.getLogger(f'{log_entity}_log')
+	logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG
+
+	# Clear the handlers to avoid duplicate log messages
+	logger.handlers.clear()
+
+	# Configure the log file with a generic name
+	log_file_generic = os.path.join(log_folder, f'{log_entity}.log')
+	if os.path.exists(log_file_generic):
+		os.remove(log_file_generic)
+	handler_generic = logging.FileHandler(log_file_generic)
+	handler_generic.setLevel(logging.DEBUG)
+	formatter_generic = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+	handler_generic.setFormatter(formatter_generic)
+
+	# Configure the log file with a timestamp in its filename
+	current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+	log_file_timestamped = os.path.join(log_folder, f'{log_entity}_{current_datetime}.log')
+	handler_timestamped = logging.FileHandler(log_file_timestamped)
+	handler_timestamped.setLevel(logging.DEBUG)
+	formatter_timestamped = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+	handler_timestamped.setFormatter(formatter_timestamped)
+
+	# Add both handlers to the logger
+	logger.addHandler(handler_generic)
+	logger.addHandler(handler_timestamped)
+
+	# Maintain only a fixed number of log files (e.g., last 10)
+	log_file_prefix = f'{log_entity}_'
+	log_files = [f for f in os.listdir(log_folder) if f.startswith(log_file_prefix) and f.endswith('.log')]
+	log_files.sort()
+	if len(log_files) > 10:
+		files_to_remove = log_files[:len(log_files) - 10]
+		for file_to_remove in files_to_remove:
+			os.remove(os.path.join(log_folder, file_to_remove))
+
+	logger.debug(f"Logging setup complete for {log_entity}")
+
+	return logger
+
 
 def convert_config_to_json():
 	config_variables = {}
@@ -59,36 +106,39 @@ def convert_config_to_json():
 
 
 def modify_parameter_type(json_file, modifications):
-    with open(json_file, 'r') as file:
-        data = json.load(file)
-    
-    for variable, new_parameter in modifications:
-        if variable in data:
-            data[variable]['parameter'] = new_parameter
-        else:
-            pass
-
-    with open(json_file, 'w') as file:
-        json.dump(data, file, indent=4)
+	with open(json_file, 'r') as file:
+		data = json.load(file)	
+	for variable, new_parameter in modifications:
+		if variable in data:
+			if (data[variable]['parameter'] != new_parameter):
+				data[variable]['parameter'] = new_parameter
+		else:
+			pass
+	with open(json_file, 'w') as file:
+		json.dump(data, file, indent=4)
 
 
 
 
 def load_config_from_json():
 	modifications = [
-	    ("compair_upload", "compair"),
-	    ("get_location", "compair"),
-	    ("location", "compair"),
-	    ("send_log_by_mail", "email"),
-	    ("mail_logs_to", "email"),
-	    ("filter_status_mail", "email"),
-	    ("mail_sending_interval", "email"),
-	    ("email_service_password", "email"),
-	    ("run_hotspot", "session"),
-	    ("heating", "session"),
+		("compair_upload", "compair"),
+		("get_location", "compair"),
+		("location", "compair"),
+		("send_log_by_mail", "email"),
+		("mail_logs_to", "email"),
+		("filter_status_mail", "email"),
+		("mail_sending_interval", "email"),
+		("email_service_password", "email"),
+		("run_hotspot", "session"),
+		("heating", "session"),
 
 	]
-	modify_parameter_type("/home/pi/bcMeter_config.json", modifications)
+
+	#try:
+	#	modify_parameter_type("/home/pi/bcMeter_config.json", modifications)
+	#except Exception as e:
+	#	print(f"Cannot modify bcMeter_config.json: {e}")
 
 	with open('/home/pi/bcMeter_config.json', 'r') as json_file:
 
@@ -103,7 +153,39 @@ try:
 except FileNotFoundError:
 	config = convert_config_to_json()
 	config = load_config_from_json()
+except Exception as e:
+	print(f"Error while loading config: {e}")
 
+
+def save_config_to_json(key, value=None, description=None, parameter_type=None, parameter_category=None):
+	"""Saves or updates a configuration parameter in the JSON file."""
+	# Load the existing configuration
+	full_config = load_config_from_json()
+	
+	# If the key exists, update the entry based on provided parameters
+	if key in full_config:
+		if value is not None:
+			full_config[key]['value'] = value
+		if description is not None:
+			full_config[key]['description'] = description
+		if parameter_type is not None:
+			full_config[key]['type'] = parameter_type
+		if parameter_category is not None:
+			full_config[key]['parameter'] = parameter_category
+	else:
+		# If the key does not exist, create a new entry with default placeholders if parameters are not provided
+		full_config[key] = {
+			'value': value,
+			'description': description or "No description provided",
+			'type': parameter_type or "undefined",
+			'parameter': parameter_category or "general"
+		}
+	
+	# Write the updated configuration back to the JSON file
+	with open('/home/pi/bcMeter_config.json', 'w') as json_file:
+		json.dump(full_config, json_file, indent=4)
+
+		
 
 
 def check_connection():

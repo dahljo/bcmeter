@@ -12,7 +12,7 @@
         "parameter": "session"
     },
     "sample_spot_diameter": {
-        "value": 0.5,
+        "value": 0.4,
         "description": "Set the Diameter of the sample spot size in cm",
         "type": "number",
         "parameter": "administration"
@@ -22,6 +22,12 @@
         "description": "Time in seconds between two samples.",
         "type": "number",
         "parameter": "session"
+    },
+        "disable_led": {
+        "value": false,
+        "description": "Disable the LED",
+        "type": "boolean",
+        "parameter": "administration"
     },
     "filter_scattering_factor": {
         "value": 1.39,

@@ -1,21 +1,21 @@
 #!/bin/bash
 if (( $EUID != 0 )); then
     echo "Exiting: Re-Run with sudo!"
-    exit
+    exit 1
 fi
 
 APT_PACKAGES="\
     i2c-tools \
     zram-tools \
     python3-pip \
-    python3-smbus \
     python3-dev \
     python3-pigpio \
     python3-scipy \
+    python3-smbus \
     python3-rpi.gpio \
     python3-numpy \
+    iptables \
     nginx \
-    php \
     php-fpm \
     php-pear \
     php-common \
@@ -25,7 +25,9 @@ APT_PACKAGES="\
     git \
     openssl \
     dnsmasq \
-    hostapd"
+    hostapd \
+    rsyslog \
+    dhcpcd5"
 
 PYTHON_PACKAGES="\
     wifi \
@@ -37,22 +39,29 @@ PYTHON_PACKAGES="\
     requests \
     flask-cors"
 
-INSTALLER_VERSION=0.6
+INSTALLER_VERSION=0.75
 
 BCMINSTALLLOG="/home/pi/maintenance_logs/bcMeter_install.log"
+mkdir -p "$(dirname "$BCMINSTALLLOG")"
 touch "$BCMINSTALLLOG"
 echo "$(date) installation/update log" >> $BCMINSTALLLOG
 
 exec > >(tee -a $BCMINSTALLLOG) 2>&1
-
 echo "checking if the base system is up to date"
 
-apt update && apt upgrade -y && apt autoremove -y;
+apt update && apt upgrade -y 
 apt install -y $APT_PACKAGES
 
+echo "enabling syslog [deprecated]"
+systemctl enable rsyslog
+systemctl start rsyslog
+
+
+
 echo "installing/updating python3 packages"
-# Install Python packages
-pip3 install $PYTHON_PACKAGES
+# Install Python packages globally
+pip3 install --upgrade pip --break-system-packages
+pip3 install $PYTHON_PACKAGES --break-system-packages
 
 if ! grep -q "PIGPIO_ADDR=soft" /etc/environment; then
  sh -c "echo 'PIGPIO_ADDR=soft' >> /etc/environment"
@@ -64,23 +73,20 @@ fi
 
 # Enable zramswap.service
 systemctl enable zramswap.service
+systemctl start zramswap.service
+
 BCMINSTALLED=/tmp/bcmeter_installed
 UPDATING=/tmp/bcmeter_updating
-
 
 if [ -f "$UPDATING" ]; then
     echo "script is in update procedure. remove /tmp/bcmeter_updating if you really know that this is not true to run this script again. "
     exit
 fi
 
-
-
 if [ "$1" == "revert" ]; then
 echo "reverting"
 
 fi
-
-
 
 # resize the root partition when it is smaller than 3GB
 SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' |  head -1)
@@ -91,6 +97,31 @@ if [ $SIZE -lt $TOCOMPARE ]; then
     raspi-config nonint do_expand_rootfs
     echo "resizing partition to full size"
 fi
+
+alias_bcd="alias bcd='sudo python3 bcMeter.py debug'"
+alias_bcc="alias bcc='sudo python3 bcMeter.py cal'"
+
+bashrc_file="/home/pi/.bashrc"
+
+# Function to check if an alias exists in the .bashrc
+check_and_add_alias() {
+    local alias_line="$1"
+    local alias_name=$(echo "$alias_line" | awk '{print $2}')  # Extract the alias name
+
+    if grep -q "$alias_name" "$bashrc_file"; then
+        echo "Alias $alias_name already exists in $bashrc_file"
+    else
+        echo "$alias_line" >> "$bashrc_file"
+        echo "Alias $alias_name added to $bashrc_file"
+    fi
+}
+
+# Check and add the aliases
+check_and_add_alias "$alias_bcd"
+check_and_add_alias "$alias_bcc"
+
+# Source the .bashrc file to apply the changes
+source "$bashrc_file"
 
 if [ "$1" == "update" ]; then
 
@@ -162,7 +193,6 @@ touch $UPDATING
     fi
 fi
 
-
 if [ "$1" != "update" ]; then
 echo "Updating the system"
 
@@ -174,16 +204,18 @@ echo "Updating the system"
     echo "Installing software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates and the speed of your pi."
 
     GITCLONE=0
-    read -p "Clone from git? Not necessary if you copied the files yourself. (yes or no)" yn
-        case $yn in
-            [Yy]* ) GITCLONE=1;;
-            [Nn]* ) break;;
-            * ) echo "Please answer yes or no.";;
-        esac
+    read -p "Clone from git? Hit Enter to continue or type no to copy manually " yn
+    yn=${yn:-yes}  # If no input is provided, set 'yn' to 'yes'
 
-    if ($GITCLONE=1); then
-        git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter &&  mv /home/pi/bcmeter/* /home/pi/ && rm -rf /home/pi/gerbers/ /home/pi/stl/
-    fi
+    case $yn in
+        [Yy]*|yes|YES ) GITCLONE=1;;
+        [Nn]*|no|NO ) GITCLONE=0;;
+        * ) echo "Please answer yes or no."; exit 1;;
+    esac
+
+if [ $GITCLONE -eq 1 ]; then
+    git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter && mv /home/pi/bcmeter/* /home/pi/ && rm -rf /home/pi/gerbers/ /home/pi/stl/
+fi
 
     mkdir /home/pi/logs
     touch /home/pi/logs/log_current.csv
@@ -200,8 +232,9 @@ echo "Updating the system"
     raspi-config nonint do_i2c 0
     echo "enabled i2c"
     raspi-config nonint do_hostname "bcMeter"
+    raspi-config nonint do_net_names 0
 
-
+    cp /usr/share/dhcpcd/hooks/10-wpa_supplicant /lib/dhcpcd/dhcpcd-hooks/10-wpa_supplicant
     mv /home/pi/nginx-bcMeter.conf /etc/nginx/sites-enabled/default
 
     usermod -aG sudo www-data
@@ -224,11 +257,13 @@ fi
 rm -rf /home/pi/bcmeter
 chmod -R 777 /home/pi/*
 
-
 touch $BCMINSTALLED 
 rm $UPDATING
 
-
+tee /etc/network/interfaces.d/wlan0_wifi <<EOF
+auto wlan0
+iface wlan0 inet dhcp
+EOF
 
 tee -a /etc/dhcpcd.conf <<EOF
 #bcMeterConfig
@@ -242,7 +277,7 @@ cp /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
 tee -a /etc/dnsmasq.conf <<EOF
 #bcMeterConfig
 interface=wlan0
-    dhcp-range=192.168.18.8,192.168.18.254,255.255.255.0,24h
+    dhcp-range=192.168.18.9,192.168.18.254,255.255.255.0,24h
 EOF
 
 cp /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.orig
@@ -263,15 +298,11 @@ wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 EOF
 
-
 sed -i '/#DAEMON_CONF/c\DAEMON_CONF="/etc/hostapd/hostapd.conf"' /etc/default/hostapd
 
-
 sed -i '/#net.ipv4.ip_forward=1/c\net.ipv4.ip_forward=1' /etc/sysctl.conf
-
 iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && iptables -t nat -A POSTROUTING -o wlan0 -j MASQUERADE
 sh -c "iptables-save > /etc/iptables.ipv4.nat"
-
 
 sed -i '/^exit 0/c\#ifconfig eth0 down\niptables-restore < /etc/iptables.ipv4.nat\nexit 0' /etc/rc.local
 
@@ -281,16 +312,15 @@ sed -i '/^exit 0/c\#ifconfig eth0 down\niptables-restore < /etc/iptables.ipv4.na
     sed -i '1 s/$/ ipv6.disable=1/' /boot/cmdline.txt
     echo "net.ipv6.conf.all.disable_ipv6=1" | tee -a /etc/sysctl.conf
     fi
+echo "Finalizing installation, adding services"
 
-sysctl -p
 touch $APINSTALLED
 
 chmod 777 -R /home/pi
 
-
 systemctl stop bcMeter_ap_control_loop
 systemctl stop bcMeter
-
+# Remove existing service files if they exist and create new ones
 rm /lib/systemd/system/bcMeter_ap_control_loop.service
 touch /lib/systemd/system/bcMeter_ap_control_loop.service
 tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
@@ -302,12 +332,17 @@ After=multi-user.target
 Type=idle
 ExecStart=/usr/bin/python3 /home/pi/bcMeter_ap_control_loop.py
 KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
-echo "set up wifi service"
+echo "Set up bcMeter_ap_control_loop service"
+
 rm /lib/systemd/system/bcMeter.service
 touch /lib/systemd/system/bcMeter.service
 tee /lib/systemd/system/bcMeter.service <<EOF
@@ -319,12 +354,17 @@ After=multi-user.target
 Type=idle
 ExecStart=/usr/bin/python3 /home/pi/bcMeter.py
 KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 chmod 644 /lib/systemd/system/bcMeter.service
-echo "set up bcMeter service"
+echo "Set up bcMeter service"
+
 rm /lib/systemd/system/bcMeter_flask.service
 touch /lib/systemd/system/bcMeter_flask.service
 tee /lib/systemd/system/bcMeter_flask.service <<EOF
@@ -336,41 +376,37 @@ After=multi-user.target
 Type=idle
 ExecStart=/usr/bin/python3 /home/pi/app.py
 KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 chmod 644 /lib/systemd/system/bcMeter_flask.service
-echo "set up flask webserver service"
+echo "Set up bcMeter_flask service"
+
+rm /etc/wpa_supplicant/wpa_supplicant.conf
 
 systemctl enable bcMeter_ap_control_loop
 systemctl enable bcMeter_flask
 systemctl daemon-reload 
-systemctl start bcMeter_flask
 systemctl unmask hostapd
-
+systemctl enable hostapd
 
 touch /home/pi/maintenance_logs/compair_frost_upload.log
 
 if [ "$1" != "update" ]; then
 
-echo "bcMeter will now boot into configuration mode now (WiFi Name bcMeter, password bcMeterbcMeter) Reboot now? (yes/no): "
+echo "Installation will now finalize and cut the network connection."
+echo "bcMeter will within 2-5 minutes boot into configuration hotspot you'll need to connect to:"
+echo "WiFi Name: bcMeter - Password: bcMeterbcMeter"
 
-# Read user input
-read confirmation
+systemctl stop NetworkManager
 
-# Check user input
-    if [ "$confirmation" = "yes" ]; then
-        # Perform the reboot
-        echo "Rebooting..."
-        reboot now
-    else
-
-        echo "Reboot canceled. Starting hostapd (Hotspot) now. Connection closed. Please reboot manually once you're done to enter Hotspot"
-        systemctl unmask hostapd && systemctl start hostapd
-    fi
+apt purge -y network-manager
+apt autoremove -y
+reboot now
 
 fi
-
-echo "INSTALLED"
-

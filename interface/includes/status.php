@@ -127,11 +127,12 @@ function getPID()
 
     break;
 
-    case 'deleteOld':
+case 'deleteOld':
+
     $files = glob('../../logs/*.csv'); 
-    //sort files by date, newest first
+    // Sort files by date, newest first
     array_multisort(
-        array_map( 'filemtime', $files ),
+        array_map('filemtime', $files),
         SORT_NUMERIC,
         SORT_DESC,
         $files
@@ -139,14 +140,42 @@ function getPID()
 
     $files = array_slice($files, 0, 2);
 
-    //delete all other files
+    // Delete all other files
     foreach (array_diff(glob('../../logs/*.csv'), $files) as $file) {
         unlink($file);
     }
 
+    // New log deletion in '../maintenance_logs/' folder
+    $maint_files = glob('../../maintenance_logs/*.csv'); 
+
+    // Sort files by date, newest first
+    array_multisort(
+        array_map('filemtime', $maint_files),
+        SORT_NUMERIC,
+        SORT_DESC,
+        $maint_files
+    );
+
+    // Keep the three most recent files
+    $recent_maint_files = array_slice($maint_files, 0, 3);
+
+    // Find any file containing "install" in the filename
+    $install_files = array_filter($maint_files, function($file) {
+        return strpos($file, 'install') !== false;
+    });
+
+    // Merge recent files and install files, ensuring uniqueness
+    $files_to_keep = array_unique(array_merge($recent_maint_files, $install_files));
+
+    // Delete all other files
+    foreach (array_diff($maint_files, $files_to_keep) as $file) {
+        unlink($file);
+    }
+
     echo "<pre style='text-align:center'><h2>Successfully deleted old logs</h2>Returning to Interface in a few seconds or click <a href='/interface/index.php'>here</a></pre>";
-          echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
+    echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
     break;
+
 
 	 case 'reboot':
       $wifiFile='/home/pi/bcMeter_wifi.json';

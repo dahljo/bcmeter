@@ -1,5 +1,5 @@
 
-import json, socket, os, busio, logging
+import json, socket, os, busio, logging, subprocess, re
 from board import I2C, SCL, SDA
 from datetime import datetime
 
@@ -230,7 +230,6 @@ def update_interface_status(status):
 		json.dump(parameters, file)
 
 
-
 use_display = config.get('use_display', False)
 
 display_i2c_address = 0x3c
@@ -264,3 +263,55 @@ def show_display(message, line, clear):
 		if clear is True:
 			oled.clear()
 		oled.text(str(message),line+1)
+
+
+
+# Shorthanded revision table with grouped models, keys in lowercase
+revision_table = {
+	"0002": "Model B Rev 1",
+	"0003": "Model B Rev 1 ECN0001 (no fuses, D14 removed)",
+	"0004": "Model B Rev 2", "0005": "Model B Rev 2", "0006": "Model B Rev 2",
+	"0007": "Model A", "0008": "Model A", "0009": "Model A",
+	"000d": "Model B Rev 2 512MB", "000e": "Model B Rev 2 512MB", "000f": "Model B Rev 2 512MB",
+	"0010": "Model B+", "0013": "Model B+", "900032": "Model B+",
+	"0011": "Compute Module", "0014": "Compute Module (Embest, China)",
+	"0012": "Model A+ 256MB", "0015": "Model A+ 256MB/512MB (Embest, China)",
+	"a01041": "Pi 2 Model B v1.1 (Sony, UK)", "a21041": "Pi 2 Model B v1.1 (Embest, China)",
+	"a22042": "Pi 2 Model B v1.2",
+	"900092": "Pi Zero v1.2", "900093": "Pi Zero v1.3", "9000c1": "Pi Zero W",  # Lowercase "c"
+	"a02082": "Pi 3 Model B 1.2 (Sony, UK)", "a22082": "Pi 3 Model B 1.2 (Embest, China)",
+	"a020d3": "Pi 3 Model B+ 1.3 (Sony, UK)",
+	"a03111": "Pi 4 1GB 1.1 (Sony, UK)", "b03111": "Pi 4 2GB 1.1 (Sony, UK)",
+	"b03112": "Pi 4 2GB 1.2 (Sony, UK)", "b03114": "Pi 4 2GB 1.4 (Sony, UK)",
+	"c03111": "Pi 4 4GB 1.1 (Sony, UK)", "c03112": "Pi 4 4GB 1.2 (Sony, UK)",
+	"c03114": "Pi 4 4GB 1.4 (Sony, UK)", "d03114": "Pi 4 8GB 1.4 (Sony, UK)",
+	"c03130": "Pi 400 4GB 1.0 (Sony, UK)", "902120": "Pi Zero 2 W 1GB 1.0 (Sony, UK)"
+}
+
+# Function to execute the pinout command and capture the output
+def get_pinout_info():
+	try:
+		result = subprocess.run(['pinout'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+		if result.returncode != 0:
+			print(f"Error running pinout command: {result.stderr}")
+			return None
+		return result.stdout
+	except Exception as e:
+		print(f"An error occurred: {e}")
+		return None
+
+# Function to find and print the model number based on the revision code
+def find_model_number(pinout_output):
+	# Search for the Revision line in the output
+	match = re.search(r'Revision\s+:\s+(\w+)', pinout_output)
+	if match:
+		revision_code = match.group(1).lower()  # Convert to lowercase for consistency
+		model = revision_table.get(revision_code)
+		if model:
+			return f"Revision code: {revision_code} - Model: {model}"
+		else:
+			return f"Revision code: {revision_code} not found in the table."
+	else:
+		return "No revision code found in the pinout output."
+
+

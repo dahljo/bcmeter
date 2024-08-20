@@ -9,7 +9,7 @@ from datetime import datetime
 import re
 from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c, setup_logging
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
-bcMeter_version = "0.9.920 2024-05-30"
+bcMeter_version = "0.9.926 2024-08-20"
 
 
 logger = setup_logging('bcMeter')
@@ -37,6 +37,11 @@ mail_logs_to = config.get('mail_logs_to', "")
 send_log_by_mail = config.get('send_log_by_mail', False)
 filter_status_mail = config.get('filter_status_mail', False)
 sender_password = config.get('email_service_password', 'email_service_password')
+disable_led = config.get('disable_led', False)
+
+cooling = False
+temperature_to_keep = 35 if cooling is False else 0
+
 
 
 sigma_air_880nm = 0.0000000777
@@ -205,7 +210,7 @@ files = os.listdir("/home/pi")
 
 for file in files:
 	file_path = os.path.join("/home/pi", file)
-	os.chmod(file_path, 0o777) #dont try this at home
+	#os.chmod(file_path, 0o777) #dont try this at home
 
 online = check_connection()
 if (online):
@@ -590,7 +595,8 @@ def airflow_by_voltage(voltage,sensor_type):
 			0.5: 0.000,
 			2.5: 0.100
 		}
-
+	#if pump type == 1
+	'''
 	if (sensor_type == 1) :
 	# Define the table data (replace with your actual table) # valid for OMRON D6F P0010A2 with 1000ml; due to limitations of ADC only 473ml max
 		table = {
@@ -601,6 +607,21 @@ def airflow_by_voltage(voltage,sensor_type):
 			1.16:0.22,
 			1.77:0.5,
 			1.90:0.6
+		}
+	'''
+	if (sensor_type == 1) :
+	# Define the table data (replace with your actual table) # valid for OMRON D6F P0010A2 with 1000ml; due to limitations of ADC only 473ml max
+		table = {
+			0.50:0,
+			0.511:0.010,
+			0.8:0.055,
+			0.9:0.09,
+			1.34:0.19,
+			1.855:0.39,
+			1.96:0.46,
+			2.0:0.487,
+			2.024:0.504
+
 		}
 	# Check if the voltage is in the table
 	if voltage in table:
@@ -658,9 +679,10 @@ def set_pwm_dutycycle(pump_dutycycle, stop_event):
 
 
 def check_airflow(current_mlpm):
-	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config
+	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config, temperature_current, temperature_to_keep, disable_pump_control
 	desired_airflow_in_mlpm = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
-	disable_pump_control = True if airflow_only is True else False
+	if (airflow_only is True):
+		disable_pump_control = True
 	
 	if(disable_pump_control is False):
 		if (current_mlpm<0.002) and (desired_airflow_in_mlpm>0):
@@ -702,10 +724,17 @@ def check_airflow(current_mlpm):
 		set_PWM_dutycycle_thread.start()
 
 		show_display(str(round(current_mlpm*1000)) + "ml/min",2,False)
+	else:
+		set_PWM_dutycycle_thread = Thread(target=set_pwm_dutycycle, args=(pump_dutycycle,stop_event,))
+		set_PWM_dutycycle_thread.start()
 	if (debug is True):
 		print(str(round(current_mlpm*1000)) + "ml/min",2,False)
+
 		os.system('clear')
-		print("current_mlpm", round(current_mlpm*1000,2), "desired_airflow_in_mlpm", round(desired_airflow_in_mlpm*1000,2), "pump_dutycycle", pump_dutycycle)
+		try:
+			print("current_mlpm", round(current_mlpm*1000,2), "desired_airflow_in_mlpm", round(desired_airflow_in_mlpm*1000,2), "pump_dutycycle", pump_dutycycle, "temps:", temperature_current, temperature_to_keep)
+		except Exception as e:
+			print("current_mlpm", round(current_mlpm*1000,2), "desired_airflow_in_mlpm", round(desired_airflow_in_mlpm*1000,2), "pump_dutycycle", pump_dutycycle, e)
 		pass
 
 
@@ -868,7 +897,7 @@ def apply_temperature_correction(BCngm3_unfiltered, temperature_current):
 
 
 def bcmeter_main(stop_event):
-	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password, ds18b20, config
+	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password, ds18b20, config, temperature_current
 	compair_offline_logging = False
 	if (airflow_only is True):
 		get_sensor_values(MCP342X_DEFAULT_ADDRESS, 86400*31)
@@ -943,28 +972,7 @@ def bcmeter_main(stop_event):
 			volume_air_per_sample=(sample_time/60)*airflow_per_minute #liters of air between samples
 		main_sensor_value_current=main_sensor_value#-main_sensor_bias
 		reference_sensor_value_current=reference_sensor_value#-reference_sensor_bias
-		if (ds18b20 is True):
-			try:
-				temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
-			except:
-				pass
-		elif (sht40_i2c is True):
-			try:
-				sensor = adafruit_sht4x.SHT4x(i2c)
-				temperature_samples = []
-				humidity_samples = []
-				for i in range(20):
-					temperature_samples.append(sensor.temperature)
-					humidity_samples.append(sensor.relative_humidity)
-
-				temperature_current = sum(temperature_samples) / 20
-				sht_humidity = sum(humidity_samples) / 20		
-			except:
-				pass
-		
-		else:
-			logger.debug("no temperature sensor detected")
-			temperature_current = 1
+		temperature_current = get_temperature()
 		if (reference_sensor_value_current == 0): reference_sensor_value_current = 1 #avoid later divide by 0; just for debug
 		if (main_sensor_value_current == 0): main_sensor_value_current = 1#avoid later divide by 0; just for debug#
 		filter_status_quotient = main_sensor_value_current/reference_sensor_value_current
@@ -1011,10 +1019,13 @@ def bcmeter_main(stop_event):
 				if (online is True): 
 					send_email("Pump")
 			notice=notice+"NO_AF"
-			change_blinking_pattern.set()
+			print("disable_led", disable_led)
+			if (disable_led is False):
 
-			blinking_thread = Thread(target=blink_led, args=(555,change_blinking_pattern))
-			blinking_thread.start()
+				change_blinking_pattern.set()
+
+				blinking_thread = Thread(target=blink_led, args=(555,change_blinking_pattern))
+				blinking_thread.start()
 			sleep(5)
 			shutdown("PUMP MALFUNCTION")
 
@@ -1121,10 +1132,34 @@ def check_service_running(service_name):
 	except subprocess.CalledProcessError:
 		return False
 
+def get_temperature():
+	if (ds18b20 is True):
+		try:
+			temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
+		except:
+			pass
+	elif (sht40_i2c is True):
+		try:
+			sensor = adafruit_sht4x.SHT4x(i2c)
+			temperature_samples = []
+			humidity_samples = []
+			for i in range(20):
+				temperature_samples.append(sensor.temperature)
+				humidity_samples.append(sensor.relative_humidity)
+
+			temperature_current = sum(temperature_samples) / 20
+			sht_humidity = sum(humidity_samples) / 20		
+		except:
+			pass
+	
+	else:
+		logger.debug("no temperature sensor detected")
+		temperature_current = 1
+	return temperature_current
+
+
 def housekeeping(stop_event):
-	global temperature_to_keep, session_running_since, ds18b20, airflow_debug, config
-	cooling = True
-	temperature_to_keep = 35 if cooling is False else 0
+	global temperature_to_keep, session_running_since, ds18b20, airflow_debug, config, temperature_current
 
 	while (True):
 		config = load_config_from_json()
@@ -1155,23 +1190,14 @@ def housekeeping(stop_event):
 			except Exception as e:
 				print(e)
 		#go on with temperature stabilization
-		skipheat=False
-		if (sht40_i2c is True):
-			try:
-				sensor = adafruit_sht4x.SHT4x(i2c)
-				temperature_current = sensor.temperature
-				sht_humidity  = sensor.relative_humidity
-				#logger.debug(temperature_current, sht_humidity)
-			except:
-				temperature_current = 1
-				skipheat=True	
-		if (ds18b20 is True):
-			try:
-				temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
-			except:
-				pass
 
+		temperature_current = get_temperature()	
+		skipheat = False
+		skipheat = True if temperature == 1 else skipheat
 		heating = config.get('heating', False)
+		#if debug:
+		#	print("skip heating: " + str(skipheat) + " / heating: " + str(heating) + " / current temp: " + str(temperature_current) + " / temp to keep: " + str(temperature_to_keep))
+
 		#logger.debug("skip heating: " + str(skipheat) + " / heating: " + str(heating) + " / current temp: " + str(temperature_current) + " / temp to keep: " + str(temperature_to_keep))
 		if (cooling is True):
 			GPIO.output(23,True)

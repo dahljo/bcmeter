@@ -11,7 +11,7 @@ import signal
 import requests
 import uuid
 import json
-from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging
+from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging, get_pinout_info, find_model_number
 import importlib
 from datetime import datetime
 import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
@@ -19,6 +19,7 @@ from board import SCL, SDA, I2C
 import busio, smbus
 from sys import argv
 from threading import Thread
+# Main script execution
 
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
@@ -33,6 +34,9 @@ logger = setup_logging('ap_control_loop')
 
 
 logger.debug(f"bcMeter Network Handler started (v{ctrl_lp_ver})")
+pinout_output = get_pinout_info()
+if pinout_output:
+	logger.debug(find_model_number(pinout_output))
 
 try:
 	if os.path.exists('/home/pi/bcMeter_config.json'):
@@ -367,7 +371,7 @@ def connect_to_wifi(wifi_ssid, wifi_pwd, we_already_had_a_successful_connection)
 			time.sleep(3)
 	else:
 		logger.error(f"Unable to establish a connection after {retries} retries. Check credentials")
-
+		setup_access_point()
 
 
 
@@ -430,7 +434,6 @@ def ap_control_loop():
 	keep_running = False
 	try:
 		while True:
-
 			config = load_config_from_json()
 			is_online = check_connection()
 			uptime = get_uptime()

@@ -28,8 +28,8 @@ in /gerbers you'll find the gerbers for PCB manufactoring.
 
 ### STL files for 3D Printing
 
-in /stl you find the files for 3d printing. the large case is intended to be used for large internal pumps. the small case is recommended and more flexibile
+in /stl you find the files for 3d printing.
 
+<img width="1262" alt="bcMeter Case" src="https://github.com/user-attachments/assets/bf449e31-68db-4520-b9f1-a79e06f4dfc9">
 
-![bcMeter-smallCase](https://user-images.githubusercontent.com/87074315/152612250-c9c2e578-1b18-46d1-ad44-5a189bbf04da.png)
-![bcMeter-5V](https://user-images.githubusercontent.com/87074315/152612590-75ef60a8-828f-4d69-82bb-b6b03c55a555.png)
+<img width="727" alt="bcMeter PCB" src="https://github.com/user-attachments/assets/45c14f67-6e12-4911-a5a2-e74020c84deb">

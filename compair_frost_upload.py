@@ -55,7 +55,7 @@ if (config.get('get_location') is True) and online is True:
 	with open('bcMeter_config.json', 'r') as file:
 	    config = json.load(file)
 	location = get_location()  # This function needs to return an array [latitude, longitude]
-	print(f"location vor save: {location}")
+	#print(f"location vor save: {location}")
 	config['location']['value'] = location
 	with open('bcMeter_config.json', 'w') as file:
 		json.dump(config, file, indent=4)

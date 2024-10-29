@@ -8,8 +8,7 @@ import json
 from datetime import datetime
 import re
 from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c, setup_logging
-subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
-bcMeter_version = "0.9.926 2024-08-20"
+bcMeter_version = "0.9.930 2024-10-16"
 
 
 logger = setup_logging('bcMeter')
@@ -41,6 +40,7 @@ disable_led = config.get('disable_led', False)
 
 cooling = False
 temperature_to_keep = 35 if cooling is False else 0
+override_airflow = False
 
 
 
@@ -644,7 +644,7 @@ def airflow_by_voltage(voltage,sensor_type):
 		#if ((airflow_sensor == 1) and (interpolated_value > 0.47)) or ((airflow_sensor == 0 and interpolated_value>0.075)):
 		#	interpolated_value = 9999
 
-		return interpolated_value-airflow_sensor_bias
+		return interpolated_value#-airflow_sensor_bias
 
 
 
@@ -679,67 +679,75 @@ def set_pwm_dutycycle(pump_dutycycle, stop_event):
 
 
 def check_airflow(current_mlpm):
-	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config, temperature_current, temperature_to_keep, disable_pump_control
-	desired_airflow_in_mlpm = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
-	if (airflow_only is True):
+	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config, temperature_current, temperature_to_keep, disable_pump_control, override_airflow, desired_airflow_in_lpm
+	if override_airflow is False:
+		desired_airflow_in_lpm = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
+	
+	if airflow_only is True:
 		disable_pump_control = True
 	
-	if(disable_pump_control is False):
-		if (current_mlpm<0.002) and (desired_airflow_in_mlpm>0):
-			zero_airflow+=1
-			if (zero_airflow==50):
+	if disable_pump_control is False:
+		if current_mlpm < 0.002 and desired_airflow_in_lpm > 0:
+			zero_airflow += 1
+			if zero_airflow == 50:
 				logger.debug("resetting pump... no airflow measured")
 				pump_test()
 				sleep(1)
-				zero_airflow=0
+				zero_airflow = 0
 				return
 
-		if (current_mlpm<desired_airflow_in_mlpm) and airflow_debug is False:
-
-			if (reverse_dutycycle is True):
-				if (pump_dutycycle<=0):
-				
-					logger.error("cannot reach desired airflow. please lower it")
-					shutdown("NOMAXAIRFLOW")
-					pump_dutycycle = pump_PWM_range
+		if current_mlpm < desired_airflow_in_lpm and airflow_debug is False:
+			if reverse_dutycycle is True:
+				if pump_dutycycle <= 0:
+					#logger.error("cannot reach desired airflow. please lower it")
+					adjust_airflow(current_mlpm)
+					pump_dutycycle=pump_pwm_freq
 				else:
-					pump_dutycycle-=1
+					pump_dutycycle -= 1
 			else:
-				if (pump_dutycycle>=pump_PWM_range):
+				if pump_dutycycle >= pump_PWM_range:
+					#logger.error("cannot reach desired airflow. please lower it")
+					adjust_airflow(current_mlpm)
 					pump_dutycycle = 0
-					logger.error("cannot reach desired airflow. please lower it")
-					shutdown("NOMAXAIRFLOW")
-
 				else:
-					pump_dutycycle+=1
+					pump_dutycycle += 1
 
-		if (current_mlpm>desired_airflow_in_mlpm) and airflow_debug is False:
-			if (reverse_dutycycle is True):
-				pump_dutycycle+=1
+		if current_mlpm > desired_airflow_in_lpm and airflow_debug is False:
+			if reverse_dutycycle is True:
+				pump_dutycycle += 1
 			else:
-				pump_dutycycle-=1
-		if (pump_dutycycle<=0): pump_dutycycle=0
-		if (pump_dutycycle>=pump_PWM_range): pump_dutycycle=pump_PWM_range
-		set_PWM_dutycycle_thread = Thread(target=set_pwm_dutycycle, args=(pump_dutycycle,stop_event,))
+				pump_dutycycle -= 1
+
+		pump_dutycycle = max(0, min(pump_dutycycle, pump_PWM_range))
+		set_PWM_dutycycle_thread = Thread(target=set_pwm_dutycycle, args=(pump_dutycycle, stop_event,))
 		set_PWM_dutycycle_thread.start()
 
-		show_display(str(round(current_mlpm*1000)) + "ml/min",2,False)
+		show_display(f"{round(current_mlpm*1000)} ml/min", 2, False)
 	else:
-		set_PWM_dutycycle_thread = Thread(target=set_pwm_dutycycle, args=(pump_dutycycle,stop_event,))
+		set_PWM_dutycycle_thread = Thread(target=set_pwm_dutycycle, args=(pump_dutycycle, stop_event,))
 		set_PWM_dutycycle_thread.start()
-	if (debug is True):
-		print(str(round(current_mlpm*1000)) + "ml/min",2,False)
 
+	if debug is True:
 		os.system('clear')
-		try:
-			print("current_mlpm", round(current_mlpm*1000,2), "desired_airflow_in_mlpm", round(desired_airflow_in_mlpm*1000,2), "pump_dutycycle", pump_dutycycle, "temps:", temperature_current, temperature_to_keep)
-		except Exception as e:
-			print("current_mlpm", round(current_mlpm*1000,2), "desired_airflow_in_mlpm", round(desired_airflow_in_mlpm*1000,2), "pump_dutycycle", pump_dutycycle, e)
-		pass
+		print(f"{round(current_mlpm*1000, 2)} ml/min, desired: {round(desired_airflow_in_lpm*1000, 2)} ml/min, pump_dutycycle: {pump_dutycycle}")
 
+def adjust_airflow(current_mlpm):
+	global pump_dutycycle, override_airflow, desired_airflow_in_lpm
+	print(current_mlpm, desired_airflow_in_lpm)
+	if current_mlpm < desired_airflow_in_lpm:
+		override_airflow = True
+		desired_airflow_in_lpm -= 0.01 
+		logger.debug(f"Cannot reach airflow. Adjusting to {round(desired_airflow_in_lpm,3)}")
+		print(f"Adjusting airflow to {desired_airflow_in_lpm}")
+		sleep(1)
+		if desired_airflow_in_lpm <= 0.06:
+			logger.error("Minimum airflow of 60 ml not reached. Stopping the script.")
+			print("Minimum airflow of 60 ml not reached. Stopping the script.")
+			shutdown("NOMAXAIRFLOW")
+	return
 
 def pump_test():
-	#logger.debug("Reset Pump")
+	logger.debug("Init Pump")
 	if (reverse_dutycycle is True):
 		for cyclepart in range(1,11):
 			pi.set_PWM_dutycycle(12, pump_PWM_range/cyclepart)
@@ -904,7 +912,7 @@ def bcmeter_main(stop_event):
 		return
 	last_email_time = time()
 	first_value = True
-	filter_status = samples_taken = sht_humidity=delay=airflow_sensor_value=reference_sensor_value=reference_sensor_bias=main_sensor_bias=bcmRefFallback=bcmSenRef=reference_sensor_value_current=main_sensor_value_current=main_sensor_value_last_run=attenuation_last_run=BCngm3_unfiltered=BCngm3_unfilteredpos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=temperature_current=bcm_temperature_last_run=attenuation_coeff=absorption_coeff=0
+	reference_sensor_value_last_run=filter_status = samples_taken = sht_humidity=delay=airflow_sensor_value=reference_sensor_value=reference_sensor_bias=main_sensor_bias=bcmRefFallback=bcmSenRef=reference_sensor_value_current=main_sensor_value_current=main_sensor_value_last_run=attenuation_last_run=BCngm3_unfiltered=BCngm3_unfilteredpos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=temperature_current=bcm_temperature_last_run=attenuation_coeff=absorption_coeff=0
 	notice = devicename
 	volume_air_per_sample = absorb = main_sensor_value = attenuation = attenuation_current = 0.0000
 	today = str(datetime.now().strftime("%y-%m-%d"))
@@ -944,6 +952,8 @@ def bcmeter_main(stop_event):
 		email_service_password = config.get('email_service_password', 'email_service_password')
 		led_brightness = int(config.get('led_brightness', 100))
 		sample_time = int(config.get('sample_time', 300))
+		if (is_ebcMeter and sample_time>30):
+			sample_time=30
 		sens_correction = float(str(config.get('sens_correction', 1)).replace(',', '.'))
 		ref_correction = float(str(config.get('ref_correction', 1)).replace(',', '.'))
 		sample_spot_diameter = float(str(config.get('sample_spot_diameter', 0.5)).replace(',', '.'))
@@ -954,9 +964,16 @@ def bcmeter_main(stop_event):
 		if (samples_taken < 3) and (sample_time >60):
 			sample_time=60
 		samples_taken+=1
+		reference_sensor_value_last_run=reference_sensor_value
 		sensor_values=get_sensor_values(MCP342X_DEFAULT_ADDRESS, sample_time)
 		main_sensor_value = sensor_values[0]*sens_correction
 		reference_sensor_value = sensor_values[1]*ref_correction
+
+
+		#test small compansation:
+		#env_change = reference_sensor_value_last_run - reference_sensor_value
+		#if env_change !=0:
+	#		main_sensor_value = main_sensor_value * (1 - (numpy.log10(abs(env_change) + 1) * -1 * (1 + abs(env_change))))
 		if (airflow_sensor is True):
 			airflow_sensor_value = sensor_values[2]
 			airflow_per_minute = round(airflow_by_voltage(airflow_sensor_value,af_sensor_type),4)
@@ -972,20 +989,22 @@ def bcmeter_main(stop_event):
 			volume_air_per_sample=(sample_time/60)*airflow_per_minute #liters of air between samples
 		main_sensor_value_current=main_sensor_value#-main_sensor_bias
 		reference_sensor_value_current=reference_sensor_value#-reference_sensor_bias
-		temperature_current = get_temperature()
+		try:
+			temperature_current = get_temperature()
+		except:
+			temperature_current = 1
 		if (reference_sensor_value_current == 0): reference_sensor_value_current = 1 #avoid later divide by 0; just for debug
 		if (main_sensor_value_current == 0): main_sensor_value_current = 1#avoid later divide by 0; just for debug#
 		filter_status_quotient = main_sensor_value_current/reference_sensor_value_current
 		filter_status = (
-		    5 if filter_status_quotient > 0.8 else
-		    4 if 0.8 < filter_status_quotient <= 0.7 else
-		    3 if 0.7 < filter_status_quotient <= 0.66 else
-		    2 if 0.66 < filter_status_quotient <= 0.6 else
-		    1 if 0.6 < filter_status_quotient <= 0.55 else
-		    0 if filter_status_quotient <= 0.55 else
-		    -1
+			5 if filter_status_quotient > 0.8 else
+			4 if 0.8 < filter_status_quotient <= 0.7 else
+			3 if 0.7 < filter_status_quotient <= 0.55 else
+			2 if 0.55 < filter_status_quotient <= 0.45 else
+			1 if 0.45 < filter_status_quotient <= 0.3 else
+			0 if filter_status_quotient <= 0.3 else
+			-1
 		)
-
 
 		current_time = time()
 		mail_sending_interval_in_seconds = mail_sending_interval*60*60
@@ -1004,6 +1023,7 @@ def bcmeter_main(stop_event):
 				last_email_time = current_time
 		if (abs(bcm_temperature_last_run-temperature_current) > .5): notice = notice + "tempChange-"
 		attenuation_current=round((numpy.log(main_sensor_value_current/reference_sensor_value_current)*-100),5)
+
 		atn_peak = False
 		if (attenuation_last_run != 0) and (samples_taken>1):
 			peakdetection = 1 - abs((attenuation_last_run/attenuation_current))
@@ -1033,8 +1053,12 @@ def bcmeter_main(stop_event):
 		absorption_coeff = attenuation_coeff/filter_scattering_factor
 
 		device_specific_correction_factor = device_specific_correction_factor/1000 if is_ebcMeter else device_specific_correction_factor
-
-		BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
+		try:
+			BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
+		except Exception as e:
+			BCngm3_unfiltered = 0
+			debug.error("invalid value of BC: ",e)
+			print(e)
 		#if (temperature_current != 1.0000):
 		#	BCngm3_unfiltered = apply_temperature_correction(BCngm3_unfiltered, temperature_current)
 		#logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";" + str(round(temperature_current,1)) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(round(sht_humidity,1))
@@ -1093,11 +1117,10 @@ def bcmeter_main(stop_event):
 						timestamp = compair_frost_upload.get_timestamp()
 						logString = str(timestamp) + ";" + str(BCngm3_unfiltered) + ";" + str(attenuation_current) + ";" + str(main_sensor_value_current) + ";" + str(reference_sensor_value_current) + ";" + str(temperature_current) + ";" +  str(location) + ";" +  str(filter_status)
 						log.write(logString+"\n")
-						
-
 			os.popen("cp /home/pi/logs/" + logFileName + " /home/pi/logs/log_current.csv")
 		notice=""
 		main_sensor_value_last_run=main_sensor_value_current 
+		reference_sensor_value_last_run = reference_sensor_value
 		attenuation_last_run=attenuation_current
 		bcm_temperature_last_run = temperature_current
 		atn_peak = False
@@ -1190,10 +1213,12 @@ def housekeeping(stop_event):
 			except Exception as e:
 				print(e)
 		#go on with temperature stabilization
-
-		temperature_current = get_temperature()	
+		try:
+			temperature_current = get_temperature()	
+		except:
+			temperature_current = 1
 		skipheat = False
-		skipheat = True if temperature == 1 else skipheat
+		skipheat = True if temperature_current == 1 else skipheat
 		heating = config.get('heating', False)
 		#if debug:
 		#	print("skip heating: " + str(skipheat) + " / heating: " + str(heating) + " / current temp: " + str(temperature_current) + " / temp to keep: " + str(temperature_to_keep))

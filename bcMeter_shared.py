@@ -2,16 +2,15 @@
 import json, socket, os, busio, logging, subprocess, re
 from board import I2C, SCL, SDA
 from datetime import datetime
-
+import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
+bcMeter_shared_version = "0.1 2024-10-16"
 # alternative check -- http/www on port 80 instead of dns on port 53
 CONNECTION_TEST_HOST = "www.google.com" 
 CONNECTION_TEST_PORT = 80
 CONNECTION_TEST_TIMEOUT = 3     # socket timeout
 CONNECTION_TEST_TRIES = 3       # number of attemps
 CONNECTION_TEST_RETRY_SLEEP = 2 # in seconds
-bcMeter_started = str(datetime.now().strftime("%y%m%d_%H%M%S"))
 devicename = socket.gethostname()
-
 i2c = busio.I2C(SCL, SDA)
 
 def setup_logging(log_entity):
@@ -186,10 +185,38 @@ def save_config_to_json(key, value=None, description=None, parameter_type=None, 
 		json.dump(full_config, json_file, indent=4)
 
 		
+def update_ssid_in_hostapd_conf(revert=False):
+	with open('/etc/hostapd/hostapd.conf', 'r') as file:
+		lines = file.readlines()
 
+	updated_lines = []
+	ssid_changed = False
+	target_ssid = "ebcMeter" if not revert else "bcMeter"
+	original_ssid = "bcMeter" if not revert else "ebcMeter"
+
+	for line in lines:
+		if line.startswith("ssid=") and line.split('=')[1].strip() == original_ssid:
+			updated_lines.append(f"ssid={target_ssid}\n")
+			ssid_changed = True
+		else:
+			updated_lines.append(line)
+
+	if ssid_changed:
+		try:
+			with open('/etc/hostapd/hostapd.conf', 'w') as file:
+				file.writelines(updated_lines)
+		except Exception as e:
+			print("SSID not changed, permission error")
+
+
+is_ebcMeter = config.get('is_ebcMeter', False)
+
+if (is_ebcMeter):
+	update_ssid_in_hostapd_conf()
+else:
+	update_ssid_in_hostapd_conf(revert=True)
 
 def check_connection():
-
 	for _ in range(CONNECTION_TEST_TRIES):
 		try:
 			# Attempt to create a socket connection to the test host
@@ -199,37 +226,66 @@ def check_connection():
 		except Exception as e:
 			if Exception is OSError:
 				sleep(CONNECTION_TEST_RETRY_SLEEP)
-
-
 	return False
 
+def get_bcmeter_start_time():
+	try:
+		# Run the systemctl command to get the status of the bcMeter service
+		result = subprocess.run(['systemctl', 'show', 'bcMeter', '--property=ActiveEnterTimestamp'], 
+								stdout=subprocess.PIPE, text=True, check=True)
+		output = result.stdout.strip()
+		
+		# Parse the timestamp from the output
+		if "ActiveEnterTimestamp" in output:
+			timestamp_str = output.split('=')[1].strip()
+			# Convert to datetime object
+			bcmeter_start_time = datetime.strptime(timestamp_str, '%a %Y-%m-%d %H:%M:%S %Z')
+			return bcmeter_start_time.strftime("%y%m%d_%H%M%S")
+		else:
+			return None
+	except (subprocess.CalledProcessError, ValueError):
+		return None
+
+		
 def update_interface_status(status):
-	# Define parameters
 	'''
 	0=stopped
 	1=initializing 
 	2=running and online
 	3=running in hotspot
 	4=hotspot only
-
 	'''
-	if_status_folder="/home/pi/tmp/"
+	if_status_folder = "/home/pi/tmp/"
+	log_file_path = "/home/pi/logs/log_current.csv"
+	
 	os.makedirs(if_status_folder, exist_ok=True)
-	parameters = {
-		"bcMeter_status": status,
-		"log_creation_time": bcMeter_started,
-		"hostname": devicename
-
-
-	}
-	# File path
 	file_path = if_status_folder + 'BCMETER_WEB_STATUS'
+	try:
+		with open(file_path, 'r') as file:
+			parameters = json.load(file)
+	except (FileNotFoundError, json.JSONDecodeError):
+		parameters = {}
 
-	# Write parameters to JSON file
+	# Get the log creation time when bcMeter service was started, if running
+	log_creation_time = get_bcmeter_start_time()
+	
+	# If service is not running, fallback to file inode change time
+	if log_creation_time is None:
+		try:
+			file_stat = os.stat(log_file_path)
+			file_inode_change_time = datetime.fromtimestamp(file_stat.st_ctime)
+			log_creation_time = file_inode_change_time.strftime("%y%m%d_%H%M%S")
+			#print("Inode change time:", log_creation_time)
+		except FileNotFoundError:
+			log_creation_time = None
+
+	parameters["bcMeter_status"] = status
+	parameters["log_creation_time"] = log_creation_time
+	parameters["hostname"] = parameters.get("hostname", devicename)
+
 	with open(file_path, 'w') as file:
 		json.dump(parameters, file)
-
-
+		
 use_display = config.get('use_display', False)
 
 display_i2c_address = 0x3c
@@ -266,7 +322,6 @@ def show_display(message, line, clear):
 
 
 
-# Shorthanded revision table with grouped models, keys in lowercase
 revision_table = {
 	"0002": "Model B Rev 1",
 	"0003": "Model B Rev 1 ECN0001 (no fuses, D14 removed)",
@@ -313,5 +368,66 @@ def find_model_number(pinout_output):
 			return f"Revision code: {revision_code} not found in the table."
 	else:
 		return "No revision code found in the pinout output."
+
+
+
+
+
+GPIO.setwarnings(False) # Ignore warning for now
+try:
+	GPIO.setmode(GPIO.BCM) 
+except:
+	pass #was already set 
+
+bcMeter_button_gpio = 16
+
+GPIO.setup(bcMeter_button_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Set pin 10 to be an input pin and set initial value to be pulled low (off)
+
+button_press_count = 0
+last_press_time = 0
+
+def button_callback(channel):	
+	global button_press_count, last_press_time
+	current_time = time.time()
+	if (last_press_time == 0):
+		last_press_time = current_time
+	if current_time - last_press_time >5:
+		button_press_count=0
+		last_press_time = current_time
+	button_press_count += 1
+	print(button_press_count, current_time-last_press_time)
+	if button_press_count >5:
+		print("invalid presses")
+		button_press_count=0
+
+	if (current_time - last_press_time < 3):
+		if button_press_count >= 2:
+			if not check_service_running('bcMeter'):
+				print("Starting bcMeter by button")
+				run_bcMeter_service()
+			else:
+				print("Stopping bcMeter by button")
+				stop_bcMeter_service()		# Add your action here
+
+		elif button_press_count == 5:
+			# Action for triple press
+			print("5 press detected")
+			# Add your action here
+	if current_time - last_press_time > 3:
+		button_press_count = 0
+		last_press_time = current_time
+	time.sleep(0.5)
+
+
+
+def button_thread():
+	GPIO.add_event_detect(bcMeter_button_gpio, GPIO.FALLING, callback=button_callback)
+	while True:
+		time.sleep(1)  # Polling interval
+
+# Start the button detection thread
+#button_thread = Thread(target=button_thread)
+#button_thread.daemon = True
+#button_thread.start()
 
 

@@ -39,7 +39,7 @@ PYTHON_PACKAGES="\
     requests \
     flask-cors"
 
-INSTALLER_VERSION=0.75
+INSTALLER_VERSION="0.75 24-10-16"
 
 BCMINSTALLLOG="/home/pi/maintenance_logs/bcMeter_install.log"
 mkdir -p "$(dirname "$BCMINSTALLLOG")"
@@ -85,6 +85,10 @@ fi
 
 if [ "$1" == "revert" ]; then
 echo "reverting"
+rm /tmp/bcmeter_updating
+rm /home/pi/logs/*
+rm /home/pi/maintenance_logs*
+touch /home/pi/log_current.csv
 
 fi
 
@@ -97,6 +101,23 @@ if [ $SIZE -lt $TOCOMPARE ]; then
     raspi-config nonint do_expand_rootfs
     echo "resizing partition to full size"
 fi
+
+disable_dnsmasq_cache() {
+    DNSMASQ_CONF="/etc/dnsmasq.conf"
+
+    if grep -q "^cache-size=0" "$DNSMASQ_CONF"; then
+        echo "DNS caching is already disabled in dnsmasq."
+    else
+        echo "Disabling DNS caching in dnsmasq..."
+        if grep -q "^cache-size" "$DNSMASQ_CONF"; then
+            sudo sed -i 's/^cache-size=.*/cache-size=0/' "$DNSMASQ_CONF"
+        else
+            echo "cache-size=0" | sudo tee -a "$DNSMASQ_CONF"
+        fi
+    fi
+}
+
+disable_dnsmasq_cache
 
 alias_bcd="alias bcd='sudo python3 bcMeter.py debug'"
 alias_bcc="alias bcc='sudo python3 bcMeter.py cal'"
@@ -116,12 +137,21 @@ check_and_add_alias() {
     fi
 }
 
+
 # Check and add the aliases
 check_and_add_alias "$alias_bcd"
 check_and_add_alias "$alias_bcc"
 
 # Source the .bashrc file to apply the changes
 source "$bashrc_file"
+
+#disable bluetooth
+
+if ! grep -q "^dtoverlay=disable-bt" /boot/config.txt; then
+  echo "dtoverlay=disable-bt" >> /boot/config.txt
+fi
+
+systemctl disable hciuart
 
 if [ "$1" == "update" ]; then
 
@@ -193,6 +223,16 @@ touch $UPDATING
     fi
 fi
 
+if [ "$1" != "onewire" ]; then
+raspi-config nonint do_onewire 0
+if ! grep -q "dtoverlay=w1-gpio,gpiopin=5" /boot/config.txt; then
+sh -c "echo 'dtoverlay=w1-gpio,gpiopin=5' >> /boot/config.txt"
+
+
+fi
+
+fi
+
 if [ "$1" != "update" ]; then
 echo "Updating the system"
 
@@ -216,17 +256,10 @@ echo "Updating the system"
 if [ $GITCLONE -eq 1 ]; then
     git clone https://github.com/bcmeter/bcmeter.git /home/pi/bcmeter && mv /home/pi/bcmeter/* /home/pi/ && rm -rf /home/pi/gerbers/ /home/pi/stl/
 fi
-
     mkdir /home/pi/logs
     touch /home/pi/logs/log_current.csv
 
     echo "Configuring bcMeter"
-    raspi-config nonint do_onewire 0
-    if ! grep -q "dtoverlay=w1-gpio,gpiopin=5" /boot/config.txt; then
-    sh -c "echo 'dtoverlay=w1-gpio,gpiopin=5' >> /boot/config.txt"
-    
-
-    fi
     raspi-config nonint do_boot_behaviour B2
     echo "enabled autologin - you can disable this with sudo raspi-config anytime"
     raspi-config nonint do_i2c 0
@@ -246,7 +279,7 @@ fi
     systemctl start nginx
 
     echo "enabled webserver."
-    echo "\e[104m!if you get a 502 bad gateway error in browser when accessing the interface, check PHP-FPM version in /etc/nginx/sites-enabled/default is corresponding to installed php version!"
+    echo "if you get a 502 bad gateway error in browser when accessing the interface, check PHP-FPM version in /etc/nginx/sites-enabled/default is corresponding to installed php version!"
 
     echo "configuration complete."
 

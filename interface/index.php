@@ -1,4 +1,5 @@
 <?php
+//interface version 0.9 24-10-16
 // Start the PHP session
 session_start();
 $_SESSION['valid_session'] = 1;
@@ -13,13 +14,13 @@ $macAddr = str_replace(':', '', $macAddr);
 
 
 
-function getEbcMeterValue() {
+function getBcMeterConfigValue($bcMeter_variable) {
     $jsonFilePath = '/home/pi/bcMeter_config.json';
     if (file_exists($jsonFilePath)) {
         $jsonData = file_get_contents($jsonFilePath);
         $configData = json_decode($jsonData, true);
-        if (isset($configData['is_ebcMeter']['value'])) {
-            return $configData['is_ebcMeter']['value'];
+        if (isset($configData[$bcMeter_variable]['value'])) {
+            return $configData[$bcMeter_variable]['value'];
         } else {
             return null;
         }
@@ -29,9 +30,9 @@ function getEbcMeterValue() {
     }
 }
 
-$is_ebcMeter = getEbcMeterValue();
-
-
+$is_ebcMeter = getBcMeterConfigValue('is_ebcMeter');
+$is_hotspot = getBcMeterConfigValue('run_hotspot');
+$compair_upload = getBcMeterConfigValue('compair_upload');
 
 
 ?>
@@ -98,6 +99,7 @@ if ($is_ebcMeter === true) {
   </div>
 
   <div id="report-value" style="text-align: center; display: block;margin: 20px 0;"></div>
+<div id="undervoltage-status" class="status"></div>
 
        <?php
 
@@ -219,12 +221,12 @@ let tooltip,
 <?php
 
 if ($is_ebcMeter === true) {
-    echo "let is_ebcmeter = true;";
+    echo "let is_ebcMeter = true;";
     echo "let yColumn = 'BCngm3_unfiltered';";
     echo "let yColumn2 = 'bcmSen';";
 }
 else {
-  echo "let is_ebcmeter = false;";
+  echo "let is_ebcMeter = false;";
   echo "let yColumn = 'BCngm3';";
   echo "let yColumn2 = 'BC_rolling_avg_of_6';";
 }
@@ -248,8 +250,8 @@ if (current_file == 'log_current.csv') {
 }
 
 
-if (typeof is_ebcmeter === 'undefined') {
-    is_ebcmeter = false;
+if (typeof is_hotspot === 'undefined') {
+    is_hotspot = false;
 }
 
 
@@ -642,12 +644,12 @@ selectLogs.addEventListener("change", function() {
         let avg12 = d3.mean([...data].splice(len - 12, 12), BCngm3_value);
         let avgAll = d3.mean(data, BCngm3_value);
 
-        // Prepare output based on is_ebcmeter flag
-        let unit = is_ebcmeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
+        // Prepare output based on is_ebcMeter flag
+        let unit = is_ebcMeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
 
         document.getElementById("report-value").innerHTML = `Averages: <h4 style='display:inline'>
-        ${(avg12 ).toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avg12</sub> » 
-        ${(avgAll ).toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avgALL</sub></h4>`;
+        ${(avg12 ).toFixed(is_ebcMeter ? 0 : 0)} ${unit}<sub>avg12</sub> » 
+        ${(avgAll ).toFixed(is_ebcMeter ? 0 : 0)} ${unit}<sub>avgALL</sub></h4>`;
     }
 
     if (current_file == 'log_current.csv') {
@@ -815,15 +817,15 @@ const dataFile = (file, isCombineLogsSelected = false) => {
             let len = data.length - 1;
 
             if (len > 0) {
-                let unit = is_ebcmeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
+                let unit = is_ebcMeter ? "µg/m<sup>3</sup>" : "ng/m<sup>3</sup>";
 
                 // Calculate averages once
                 let avg12 = d3.mean([...data].splice(len - 12, 12), BCngm3_value);
                 let avgAll = d3.mean(data, BCngm3_value);
 
                 document.getElementById("report-value").innerHTML = `Averages: <h4 style='display:inline'>
-                ${avg12.toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avg12</sub> » 
-                ${avgAll.toFixed(is_ebcmeter ? 0 : 0)} ${unit}<sub>avgALL</sub></h4>`;
+                ${avg12.toFixed(is_ebcMeter ? 0 : 0)} ${unit}<sub>avg12</sub> » 
+                ${avgAll.toFixed(is_ebcMeter ? 0 : 0)} ${unit}<sub>avgALL</sub></h4>`;
                 let bcmRef = data[len].bcmRef;
                 let bcmSen = data[len].bcmSen;
                 let btn = document.getElementById("report-button");
@@ -840,15 +842,15 @@ const dataFile = (file, isCombineLogsSelected = false) => {
 
                     filterStatus = bcmSen / bcmRef;
 
-                    if (filterStatus <= 0.6) {
+                    if (filterStatus <= 0.3) {
                         btn.className = "btn btn-dark"; 
-                    } else if (filterStatus > 0.6 && filterStatus <= 0.65) {
+                    } else if (filterStatus > 0.3 && filterStatus <= 0.45) {
                         btn.className = "btn btn-secondary";
-                    } else if (filterStatus > 0.66 && filterStatus <= 0.7) {
+                    } else if (filterStatus > 0.45 && filterStatus <= 0.55) {
                         btn.className = "btn btn-danger"; 
-                    } else if (filterStatus > 0.7 && filterStatus <= 0.8) {
+                    } else if (filterStatus > 0.55 && filterStatus <= 0.7) {
                         btn.className = "btn btn-warning"; 
-                    } else if (filterStatus > 0.8) {
+                    } else if (filterStatus > 0.7) {
                         btn.className = "btn btn-success"; 
                     }
             }
@@ -1011,30 +1013,87 @@ loadConfig('administration'); // Initially load administration configurations
 loadConfig('email'); // Initially load administration configurations
 loadConfig('compair'); // Initially load administration configurations
 
-function activateAndLoadConfig(tabElement) {
-    tabElement.tab('show');
-    const configType = tabElement.attr('aria-controls');
-    loadConfig(configType);
+let isDirty = false; // Flag to track if changes were made
+
+// Function to check for unsaved changes and ask for confirmation
+function handleTabSwitch(newTab) {
+    if (isDirty) {
+        const confirmSwitch = confirm('You have unsaved changes. Do you want to save them before switching?');
+        if (confirmSwitch) {
+            let activeTabId = null;
+            
+            tabsConfig.forEach(tab => {
+                if ($(`#${tab.tabId}`).hasClass('active')) {
+                    activeTabId = tab.tabId;
+                }
+            });
+
+            if (activeTabId) {
+                saveConfigurationBasedOnTab(activeTabId);
+            }  
+        }
+    }
+    isDirty = false; // Reset the dirty flag after handling the switch
+    activateAndLoadConfig(newTab);
+}
+
+function monitorChanges(formId) {
+    const form = document.getElementById(formId);
+    if (form) {
+        // Monitor input fields, select elements, and textareas
+        form.querySelectorAll('input, select, textarea').forEach(input => {
+            input.addEventListener('change', () => {
+                isDirty = true; // Mark the form as "dirty" when a change is detected
+            });
+        });
+    } 
 }
 
 
 
-// Listen to tab changes to refresh configurations if needed
-$('#configTabs a').on('click', function(e) {
+// Modify the activateAndLoadConfig to start monitoring changes for the new tab
+function activateAndLoadConfig(tabElement) {
+    const configType = tabElement.attr('aria-controls');
+    loadConfig(configType);
+    
+    // Monitor the form for changes after loading config
+    const formId = getFormIdFromConfigType(configType);
+    monitorChanges(formId);
+}
+
+// Helper function to get form ID based on config type
+function getFormIdFromConfigType(configType) {
+    switch (configType) {
+        case 'session':
+            return 'session-parameters-form';
+        case 'device':
+            return 'device-parameters-form';
+        case 'administration':
+            return 'administration-parameters-form';
+        case 'email':
+            return 'email-parameters-form';
+        case 'compair':
+            return 'compair-parameters-form';
+        default:
+            return '';
+    }
+}
+
+$('#configTabs a').on('click', function (e) {
     e.preventDefault();
-    activateAndLoadConfig($(this));
+    const newTab = $(this);
+    handleTabSwitch(newTab);
 });
 
 
 
+// Ensure the initial tab is loaded and monitored for changes
 const initialTab = $('#configTabs a.active');
 if (initialTab.length) {
     activateAndLoadConfig(initialTab);
 } else {
-    // If no active tab, load the first tab or a specific tab as needed
     activateAndLoadConfig($('#configTabs a').first());
 }
-
 
 function loadConfig(configType) {
     fetch(`${getBaseUrl()}/load-config`)
@@ -1058,10 +1117,13 @@ function loadConfig(configType) {
             })();
             const tbody = document.querySelector(`#${formId} tbody`);
             tbody.innerHTML = ''; // Clear existing rows
+            
+            // Generate rows and append to the table
             Object.entries(data).forEach(([key, config]) => {
                 if (config.parameter === configType) {
                     const description = config.description;
                     let valueField = '';
+                    
                     if (config.type === 'boolean') {
                         // For boolean, use a Bootstrap Switch
                         const checkedAttr = config.value ? 'checked' : ''; // Add checked attribute if value is true
@@ -1076,6 +1138,7 @@ function loadConfig(configType) {
                         // For array, use a text input with JSON representation
                         valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
                     }
+                    
                     const row = `<tr data-toggle="tooltip" data-placement="top" title="${description}">
                       <td>${description}</td>
                       <td>${valueField}</td>
@@ -1086,9 +1149,13 @@ function loadConfig(configType) {
 
             // Initialize Bootstrap Switches after all elements are generated
             $('[data-toggle="toggle"]').bootstrapToggle();
+            
+            // Now that the form elements are loaded, start monitoring for changes
+            monitorChanges(formId);
         })
         .catch(error => console.error('Failed to load configuration:', error));
 }
+
 
 function saveConfiguration(configType) {
 
@@ -1210,17 +1277,29 @@ function saveConfigurationBasedOnTab(tabId) {
 }
 
 
-// Event listener for saving on "Enter" key press
 document.addEventListener("keydown", function(event) {
-    if (event.key === "Enter") {
-        // Check if the modal is open before triggering save
-        if ($('#device-parameters').hasClass('show')) {
-            var activeTabId = $('.nav-tabs .nav-link.active').attr('id');
-            saveConfigurationBasedOnTab(activeTabId);
-            $('#device-parameters').modal('hide'); // Close the modal after saving
-        }
+
+    var isEnterPressed = (event.key === "Enter" || event.keyCode === 13 || event.which === 13);
+
+    if (isEnterPressed) {
+        let activeTabId = null;
+        
+        tabsConfig.forEach(tab => {
+            if ($(`#${tab.tabId}`).hasClass('active')) {
+                activeTabId = tab.tabId;
+            }
+        });
+
+        if (activeTabId) {
+            saveConfigurationBasedOnTab(activeTabId); // Call the save based on the active tab
+        } 
+
+
+        $('#device-parameters').modal('hide'); // Close the modal if applicable
     }
 });
+
+
 // Define an array of tab IDs and corresponding configuration types
 const tabsConfig = [
     { tabId: 'session-tab', configType: 'session' },
@@ -1612,6 +1691,102 @@ $.get("includes/wlan_list.php", function(data, status) {
 
 });
 
+var deviceName="";
+
+
+function updateStatus(status, deviceName, creationTimeString) {
+    const statusDiv = document.getElementById('statusDiv');
+    statusDiv.className = 'status-div'; // Reset classes
+    let formattedCreationTime = ''; // Declare formattedCreationTime here
+
+    if (creationTimeString && creationTimeString.length >= 13) { // Ensure creationTimeString is valid
+        const year = parseInt("20" + creationTimeString.substring(0, 2));
+        const month = parseInt(creationTimeString.substring(2, 4)) - 1; // Adjust for 0-indexed month in JavaScript
+        const day = parseInt(creationTimeString.substring(4, 6));
+        const hours = parseInt(creationTimeString.substring(7, 9));
+        const minutes = parseInt(creationTimeString.substring(9, 11));
+        const seconds = parseInt(creationTimeString.substring(11, 13));
+
+        if (!isNaN(year) && !isNaN(month) && !isNaN(day) && !isNaN(hours) && !isNaN(minutes) && !isNaN(seconds)) {
+            const creationDate = new Date(year, month, day, hours, minutes, seconds);
+            formattedCreationTime = creationDate.toLocaleString(); // Assign value to formattedCreationTime
+        } else {
+            console.error("Invalid creationTimeString format.");
+        }
+    } else {
+        console.error("creationTimeString is null or malformed.");
+    }
+
+    statusDiv.textContent = 
+        (status === -1) ? deviceName + " status unknown" :
+        (status === 0) ? deviceName + " stopped" :
+        (status === 1) ? deviceName + " initializing" :
+        (status === 2) ? deviceName + " running since " + formattedCreationTime :
+        (status === 3) ? deviceName + " running in Hotspot Mode since " + formattedCreationTime :
+        (status === 4) ? "Hotspot mode active, " + deviceName + " not measuring" : ""; // Added for status 4
+
+    // Adjust class addition for -1 status case if desired
+    statusDiv.classList.add(
+        status === -1 ? 'bg-secondary' :
+        status === 0 ? 'bg-danger' :
+        status === 1 ? 'bg-warning' :
+        status === 2 ? 'bg-success' :
+        status === 3 ? 'bg-info' :
+        status === 4 ? 'bg-info' : '' // Added for status 4
+    );
+
+    statusDiv.classList.add('text-white');
+
+    var hotspotWarningDiv = document.getElementById('hotspotwarning');
+
+    if (status === 4) {
+        hotspotWarningDiv.style.display = 'block';
+        hotspotWarningDiv.className = 'alert alert-warning';
+
+    } else {
+        hotspotWarningDiv.style.display = 'none';
+    }
+}
+
+
+function fetchStatus() {
+    fetch('/tmp/BCMETER_WEB_STATUS')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.text(); // Change to text() to log the raw response
+      })
+      .then(data => {
+        try {
+          const jsonData = JSON.parse(data);
+          const status = jsonData.bcMeter_status;
+          const creationTimeString = jsonData.log_creation_time;
+          deviceName = jsonData.hostname;
+
+          updateStatus(status, deviceName, creationTimeString);
+        } catch (error) {
+          console.error('Error parsing JSON:', error);
+          //throw new Error('Error parsing JSON');
+        }
+      })
+      .catch(error => {
+        console.error('There was a problem with the fetch operation:', error);
+        //const defaultDate = new Date().toLocaleString();
+        //updateStatus(-1, "Device", defaultDate);
+      });
+}
+
+
+  // Fetch status on page load
+  fetchStatus();
+  // Refresh status every 5 seconds
+  setInterval(fetchStatus, 5000);
+
+
+
+
+
 
 
 
@@ -1621,8 +1796,7 @@ setInterval(function() {
     var currentDateTime = date.toLocaleString('default', {
         month: 'short'
     }) + " " + date.getDate() + " " + date.getFullYear() + " " + date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
-    document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + currentDateTime;
-    document.getElementById("set_time").value = timestamp;
+
 
     $.ajax({
         url: "includes/gettime.php", // The page containing php script
@@ -1633,6 +1807,8 @@ setInterval(function() {
         cache: false, // Prevent the browser from caching the result
         timeout: 1000, // Set timeout for the request (e.g., 5000 milliseconds)
         success: function(result) {
+            document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + currentDateTime;
+            document.getElementById("set_time").value = timestamp;
             document.getElementById("datetime_note").innerHTML = "Synchronize the time of bcMeter to get correct timestamps";
             document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + result;
             if (document.getElementById("devicetime")) {
@@ -1643,7 +1819,9 @@ setInterval(function() {
         },
         error: function(xhr, status, error) {
             var errorMessage = xhr.status + ': ' + xhr.statusText;
-            document.getElementById("datetime_device").innerHTML = "No connection to bcMeter";
+                        var deviceURL = (deviceName !== "") ? "http://" + deviceName : "";
+
+            document.getElementById("datetime_device").innerHTML = "No connection to bcMeter<br /> click <a href=\"" + deviceURL + "\">here </a>to force reload after WiFi Setup ";
             document.getElementById("datetime_local").innerHTML = "";
             document.getElementById("set_time").value = "";
             document.getElementById("datetime_note").innerHTML = "";
@@ -1743,53 +1921,123 @@ $('#filterStatusModal').on('show.bs.modal', function (event) {
     </form>
 
     <!-- Modal for Downloading Old Logs -->
-    <div class="modal fade" id="downloadOld" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="exampleModalLongTitle">Old logs</h5>
-                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <table class='container'>
-                        <thead>
-                            <tr>
-                                <th>Download log from</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php
-                            $hostname = $_SERVER['HTTP_HOST'];
-                            // List all .csv files in current directory
-                            $dir = "../logs";
-                            $files = scandir($dir);
+   <div class="modal fade" id="downloadOld" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="exampleModalLongTitle">Old logs</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Tabs navigation -->
+                <ul class="nav nav-tabs" id="logTabs" role="tablist">
+                    <li class="nav-item">
+                        <a class="nav-link active" id="large-files-tab" data-toggle="tab" href="#large-files" role="tab" aria-controls="large-files" aria-selected="true">Logs over 2KB</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" id="small-files-tab" data-toggle="tab" href="#small-files" role="tab" aria-controls="small-files" aria-selected="false">Logs with very few samples</a>
+                    </li>
+                </ul>
 
-                            foreach ($files as $file) :
-                                if (pathinfo($file, PATHINFO_EXTENSION) === 'csv' && $file != 'log_current.csv') :
+                <!-- Tab content -->
+                <div class="tab-content">
+                    <!-- Tab for large files -->
+                    <div class="tab-pane fade show active" id="large-files" role="tabpanel" aria-labelledby="large-files-tab">
+                        <table class='container'>
+                            <thead>
+                                <tr>
+                                    <th>Download log from</th>
+                                    <th>File Size</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php
+                                $hostname = $_SERVER['HTTP_HOST'];
+                                // List all .csv files in current directory
+                                $dir = "../logs";
+                                $files = scandir($dir);
 
-                                    // Extract the date and time from the filename
-                                    $date_time = explode("_", substr($file, 0, -4))[1];
-                                    $date_time_day = explode("_", substr($file, 0, -4))[0];
+                                foreach ($files as $file) :
+                                    if (pathinfo($file, PATHINFO_EXTENSION) === 'csv' && $file != 'log_current.csv') :
+                                        // Get file size
+                                        $file_size = filesize($dir . '/' . $file);
+                                        $file_size_kb = $file_size / 1024;
 
-                                    $date_time = $date_time_day ." ". substr($date_time, 0, 2) . ":" . substr($date_time, 2, 2) . ":" . substr($date_time, 4, 2);
-                            ?>
-                                    <tr>
-                                        <td><?= $date_time ?></td>
-                                        <td><a href='<?= $dir ."/". $file ?>' download='<?=$hostname . '_' . $file;?>'><button type="button" value='Test' class='btn btn-primary'>Download</button></a></td>
-                                    </tr>
-                            <?php endif; ?>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                                        if ($file_size_kb >= 2) {
+                                            // Extract the date and time from the filename
+                                            $date_time = explode("_", substr($file, 0, -4))[1];
+                                            $date_time_day = explode("_", substr($file, 0, -4))[0];
+                                            $date_time = $date_time_day . " " . substr($date_time, 0, 2) . ":" . substr($date_time, 2, 2) . ":" . substr($date_time, 4, 2);
+                                ?>
+                                            <tr>
+                                                <td><?= $date_time ?></td>
+                                                <td><?= number_format($file_size_kb, 2) ?> KB</td>
+                                                <td>
+                                                    <a href='<?= $dir . "/" . $file ?>' download='<?= $hostname . '_' . $file; ?>'>
+                                                        <button type="button" class='btn btn-primary'>Download</button>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                <?php
+                                        }
+                                    endif;
+                                endforeach;
+                                ?>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Tab for small files -->
+                    <div class="tab-pane fade" id="small-files" role="tabpanel" aria-labelledby="small-files-tab">
+                        <table class='container'>
+                            <thead>
+                                <tr>
+                                    <th>Download log from</th>
+                                    <th>File Size</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php
+                                foreach ($files as $file) :
+                                    if (pathinfo($file, PATHINFO_EXTENSION) === 'csv' && $file != 'log_current.csv') :
+                                        // Get file size
+                                        $file_size = filesize($dir . '/' . $file);
+                                        $file_size_kb = $file_size / 1024;
+
+                                        if ($file_size_kb < 2) {
+                                            // Extract the date and time from the filename
+                                            $date_time = explode("_", substr($file, 0, -4))[1];
+                                            $date_time_day = explode("_", substr($file, 0, -4))[0];
+                                            $date_time = $date_time_day . " " . substr($date_time, 0, 2) . ":" . substr($date_time, 2, 2) . ":" . substr($date_time, 4, 2);
+                                ?>
+                                            <tr style="font-style: italic;" title="very few samples">
+                                                <td><?= $date_time ?></td>
+                                                <td><?= number_format($file_size_kb, 2) ?> KB</td>
+                                                <td>
+                                                    <a href='<?= $dir . "/" . $file ?>' download='<?= $hostname . '_' . $file; ?>'>
+                                                        <button type="button" class='btn btn-primary'>Download</button>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                <?php
+                                        }
+                                    endif;
+                                endforeach;
+                                ?>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
             </div>
         </div>
     </div>
+</div>
+
 </div>
 
 
@@ -1897,16 +2145,18 @@ $('#filterStatusModal').on('show.bs.modal', function (event) {
 function fetchAndProcessLogFile(logType, elementId) {
     fetch(`../maintenance_logs/${logType}.log`)
         .then(response => {
-
-            if (!response.ok) {
-                document.getElementById(elementId).innerHTML = 'Log file not found.';
+            if (response.status === 404) {
+                document.getElementById(elementId).innerHTML = 'Log file not found (404).';
+                throw new Error('404 Not Found'); // Stop further processing in this case
             }
-            else {
-               return response.text();
-          }
-
+            if (!response.ok) {
+                document.getElementById(elementId).innerHTML = 'Error fetching log file.';
+                throw new Error('Fetch error');
+            }
+            return response.text();
         })
         .then(data => {
+            // If no error occurred, process the log file data
             const lines = data.split('\n');
             let prevContent = '';
             let contentCount = 0;
@@ -1930,6 +2180,7 @@ function fetchAndProcessLogFile(logType, elementId) {
                 }
             });
 
+            // Handle final content repetition if needed
             if (contentCount > 1) {
                 output += `${prevContent} (Repeated ${contentCount} times)<br>`;
             } else if (prevContent !== '') {
@@ -1939,22 +2190,29 @@ function fetchAndProcessLogFile(logType, elementId) {
             document.getElementById(elementId).innerHTML = output;
         })
         .catch(error => {
-
+            /*console.error(`Error processing log ${logType}:`, error.message);
+            if (error.message !== '404 Not Found') {
+                // Handle non-404 errors, such as network issues
+                document.getElementById(elementId).innerHTML = 'An error occurred while fetching the log file.';
+            }
+           r*/
         });
 }
 
 
 function startLogFetching() {
     const logs = [
-        { type: 'bcMeter', elementId: 'logBcMeter' },
-        { type: 'ap_control_loop', elementId: 'logApControlLoop' },
-        { type: 'compair_frost_upload', elementId: 'logCompairFrostUpload' }
-    ];
+            { type: 'bcMeter', elementId: 'logBcMeter' },
+            { type: 'ap_control_loop', elementId: 'logApControlLoop' }
+            <?php if ($compair_upload === true): ?>
+            , { type: 'compair_frost_upload', elementId: 'logCompairFrostUpload' }
+            <?php endif; ?>
+        ];
 
     logs.forEach(log => {
-
         fetchAndProcessLogFile(log.type, log.elementId);
       
+        // Set interval for periodic fetching (e.g., every 15 seconds)
         setInterval(() => fetchAndProcessLogFile(log.type, log.elementId), 15000);
     });
 }
@@ -2194,13 +2452,15 @@ $tabs = [
                         <input type="text" value="<?php echo $currentWifiPwdHidden ?>" readonly>
                       </div>
                     </div> <?php } ?>
-                  </div>
+                  </div><br />
+                                     <?php echo $is_hotspot ? 'Make sure to disable Hotspot Mode in Administration => Settings!' : '' ?><br />
+
                   <div class="submit-container">
                     <input type="Submit" name="conn_submit" value="<?php echo $language["save_and_connect"]; ?>" class="btn btn-primary">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
                     <input type="Submit" name="reset_wifi_json" value="Delete Wifi" class="btn btn-warning">
                   </div><br />
-                  <sub>If you like to run the bcMeter independently without being connected to a WiFi, you can adjust it in the Settings.
+                  <sub>If you like to run the bcMeter independently without being connected to a WiFi, you can adjust it in the Settings.</sub>
                 </form>
                 <br /><!--button id="fetchWifiButton">Scan for Wi-Fi</button-->
                 <input type="submit" name="force_wifi" id="force_wifi" value="Reconnect" class="btn btn-info" />
@@ -2227,97 +2487,6 @@ $tabs = [
 
 
 
-
-<script>
-function updateStatus(status, deviceName, creationTimeString) {
-    const statusDiv = document.getElementById('statusDiv');
-    statusDiv.className = 'status-div'; // Reset classes
-    let formattedCreationTime = ''; // Declare formattedCreationTime here
-
-    const year = parseInt("20" + creationTimeString.substring(0, 2));
-    const month = parseInt(creationTimeString.substring(2, 4)) - 1; // Adjust for 0-indexed month in JavaScript
-    const day = parseInt(creationTimeString.substring(4, 6));
-    const hours = parseInt(creationTimeString.substring(7, 9));
-    const minutes = parseInt(creationTimeString.substring(9, 11));
-    const seconds = parseInt(creationTimeString.substring(11, 13));
-
-    if (!isNaN(year) && !isNaN(month) && !isNaN(day) && !isNaN(hours) && !isNaN(minutes) && !isNaN(seconds)) {
-        const creationDate = new Date(year, month, day, hours, minutes, seconds);
-        formattedCreationTime = creationDate.toLocaleString(); // Assign value to formattedCreationTime
-    } else {
-        console.error("Invalid creationTimeString format.");
-    }
-
-    statusDiv.textContent = 
-        (status === -1) ? deviceName + " status unknown" :
-        (status === 0) ? deviceName + " stopped" :
-        (status === 1) ? deviceName + " initializing" :
-        (status === 2) ? deviceName + " running since " + formattedCreationTime :
-        (status === 3) ? deviceName + " running in Hotspot Mode since " + formattedCreationTime :
-        (status === 4) ? "Hotspot mode active, " + deviceName + " not measuring" : ""; // Added for status 4
-
-    // Adjust class addition for -1 status case if desired
-    statusDiv.classList.add(
-        status === -1 ? 'bg-secondary' :
-        status === 0 ? 'bg-danger' :
-        status === 1 ? 'bg-warning' :
-        status === 2 ? 'bg-success' :
-        status === 3 ? 'bg-info' :
-        status === 4 ? 'bg-info' : '' // Added for status 4
-    );
-
-    statusDiv.classList.add('text-white');
-
-    var hotspotWarningDiv = document.getElementById('hotspotwarning');
-
-    if (status === 4) {
-        hotspotWarningDiv.style.display = 'block';
-        hotspotWarningDiv.className = 'alert alert-warning';
-
-    } else {
-        hotspotWarningDiv.style.display = 'none';
-    }
-}
-
-
-function fetchStatus() {
-    fetch('/tmp/BCMETER_WEB_STATUS')
-      .then(response => {
-        if (!response.ok) {
-          throw new Error('Network response was not ok');
-        }
-        return response.text(); // Change to text() to log the raw response
-      })
-      .then(data => {
-        try {
-          const jsonData = JSON.parse(data);
-          const status = jsonData.bcMeter_status;
-          const creationTimeString = jsonData.log_creation_time;
-          const deviceName = jsonData.hostname;
-
-          updateStatus(status, deviceName, creationTimeString);
-        } catch (error) {
-          console.error('Error parsing JSON:', error);
-          //throw new Error('Error parsing JSON');
-        }
-      })
-      .catch(error => {
-        console.error('There was a problem with the fetch operation:', error);
-        //const defaultDate = new Date().toLocaleString();
-        //updateStatus(-1, "Device", defaultDate);
-      });
-}
-
-
-  // Fetch status on page load
-  fetchStatus();
-  // Refresh status every 5 seconds
-  setInterval(fetchStatus, 5000);
-
-
-
-
-</script>
 
 
 <?php
@@ -2487,6 +2656,42 @@ if (isset($_POST["exec_new_log"])){
 
 
 ?>
+
+<!-- Div to display the result -->
+
+<script>
+
+function checkUndervoltage() {
+    $.ajax({
+        url: 'includes/status.php', 
+        type: 'POST', 
+        data: { status: 'undervolt' }, 
+        success: function(response) {
+            $('#undervoltage-status').html(response);
+        },
+        error: function() {
+            $('#undervoltage-status').html('');
+        }
+    });
+}
+
+
+        // JavaScript function to hide the undervoltage warning
+        function ignoreWarning() {
+            var warningDiv = document.getElementById('undervoltage-status');
+            if (warningDiv) {
+                warningDiv.style.display = 'none'; // Hide the div
+            }
+        }
+
+// Run the check when the page loads
+$(document).ready(function() {
+    checkUndervoltage(); // Initial check
+
+    // Set interval to check every 120 seconds (120000 ms)
+    setInterval(checkUndervoltage, 120000);
+});
+</script>
 
 </body>
 </html>

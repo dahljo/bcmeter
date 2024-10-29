@@ -1,8 +1,50 @@
 
 <?php
 // Start the PHP session
+//$version = "24-10-16"
 session_start();
 header('X-Accel-Buffering: no');
+
+function checkUndervoltage() {
+    $styles = [
+        'red' => "<span class='text-danger font-weight-bold'>",
+        'black' => "<span class='text-dark'>",
+        'reset' => "</span>"
+    ];
+    $today = date('M d');
+    
+    // Get the syslog entries after the newest "Linux version" occurrence
+    $output = shell_exec("sudo tac /var/log/syslog | awk '/Linux version/ {exit} {print}' | grep -a 'Undervoltage'");
+    $lines = array_filter(explode("\n", trim($output)));
+    
+    if (empty($lines)) return "";
+
+    $response = "
+        <div class='text-center'>
+            {$styles['red']}<strong>WARNING</strong>: Undervoltage detected - use a proper power supply and cable.{$styles['reset']}<br><br>
+    ";
+    
+    foreach (array_slice($lines, -4) as $line) {
+        $style = (strpos($line, $today) !== false) ? 'red' : 'black';
+        $response .= "{$styles[$style]}{$line}{$styles['reset']}<br>";
+    }
+
+    // Add Bootstrap-styled button centered
+    $response .= "<br /><button class='btn btn-danger mt-3' onclick='ignoreWarning()'>Ignore undervoltage warning</button></div><br />";
+
+    return $response;
+}
+
+
+
+// Check if the request is a POST request
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['status']) && $_POST['status'] === 'undervolt') {
+    // Return only the undervoltage status if this is an AJAX request
+    echo checkUndervoltage();
+    exit();
+}
+
+
 ?>
 <!DOCTYPE html>
 <meta charset="utf-8">
@@ -87,11 +129,15 @@ function getPID()
 
 
 
+
 	if (isset($_GET['status'])) {
 		$status = $_GET['status'];
 
 	}
 	switch($status) {
+
+
+
 
   case 'change_hostname':
     if (isset($_GET['new_hostname'])) {

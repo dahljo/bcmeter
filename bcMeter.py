@@ -8,8 +8,11 @@ import json
 from datetime import datetime
 import re
 from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c, setup_logging
-bcMeter_version = "0.9.930 2024-10-16"
+import pigpio
+#os.system('clear')
+bcMeter_version = "0.9.931 2024-11-22"
 
+base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 logger = setup_logging('bcMeter')
 logger.debug(config)
@@ -76,19 +79,25 @@ GPIO.setmode(GPIO.BCM)
 
 devicename = socket.gethostname()
 
-sample_spot_areasize=numpy.pi*(float(sample_spot_diameter)/2)**2 #area of spot in cm2 from bcmeter, diameter 0.50cm
+sample_spot_areasize=numpy.pi*(float(sample_spot_diameter)/2)**2 
 
-os.chdir('/home/pi')
+os.chdir(base_dir)
 
 debug = True if (len(sys.argv) > 1) and (sys.argv[1] == "debug") else False
 calibration = True if (len(sys.argv) > 1) and (sys.argv[1] == "cal") else False
 airflow_debug = True if (len(sys.argv) > 1) and (sys.argv[1] == "airflow") else False
 
+bcMeter_revision = 2024
+
+
 
 
 GPIO.setmode(GPIO.BCM)
 MONOLED_PIN=1
+PUMP_PIN = 12
 GPIO.setup(MONOLED_PIN, GPIO.OUT)
+#GPIO.setup(PUMP_PIN, GPIO.OUT)
+#GPIO.setup(INFRARED_LED_PIN, GPIO.OUT)
 
 if (use_rgb_led == 1):
 # Set up GPIO pins
@@ -103,7 +112,10 @@ if (use_rgb_led == 1):
 	GPIO.output(G_PIN, 1)
 	GPIO.output(B_PIN, 1)
 
-infrared_led_control = 26
+
+
+
+
 
 # /RDY bit definition
 MCP342X_CONF_RDY = 0x80
@@ -140,8 +152,10 @@ rate_12bit = MCP342X_CONF_SIZE_12BIT
 rate_14bit = MCP342X_CONF_SIZE_14BIT
 rate_16bit = MCP342X_CONF_SIZE_16BIT 
 gain = MCP342X_CONF_GAIN_1X
-rate = rate_14bit
+rate = rate_16bit
 VRef = 2.048
+
+
 
 airflow_only = True if (len(sys.argv) > 1) and (sys.argv[1] == "airflow") else False
 airflow_channel = channel1 if airflow_only is True and sys.argv[1] == "1" else channel3
@@ -150,7 +164,25 @@ sampling_thread = housekeeping_thread = set_PWM_dutycycle_thread = None
 stop_event = Event()
 change_blinking_pattern = Event()
 
+if (bcMeter_revision < 2025):
+	INFRARED_LED_PIN = 26
+else:
+	INFRARED_LED_PIN = 19
 
+
+
+
+# Pump and LED PWM configurations
+PUMP_PWM_RANGE = 100
+PUMP_PWM_FREQ = int(config.get('pwm_freq', 20))  # Configured pump PWM frequency
+
+LED_PWM_RANGE = 255
+LED_PWM_FREQ = 1000  
+
+# Initialize pigpio
+#pi = pigpio.pi()
+
+# Set up PWM for pump and infrared LED
 
 
 
@@ -169,14 +201,14 @@ def shutdown(reason):
 	logger.debug(reason)
 	try:
 		if (reverse_dutycycle is False):
-			pi.set_PWM_dutycycle(12, 0)
+			set_pwm_duty_cycle('pump', 0)
 			sleep(0.5)
 		else:
-			pi.set_PWM_dutycycle(12, pump_PWM_range)
+			set_pwm_duty_cycle('pump', PUMP_PWM_RANGE)
 			sleep(0.5)
 		if (airflow_only is False):
 			#subprocess.Popen(["sudo", "killall", "pigpiod"]).communicate
-			GPIO.output(infrared_led_control, False)
+			GPIO.output(INFRARED_LED_PIN, False)
 			GPIO.output(1,False)
 			GPIO.output(23,False)
 			#pump_duty.ChangeDutyCycle(0) 
@@ -205,13 +237,6 @@ if len(my_pid.splitlines()) > 1:
 
 update_interface_status(0)
 
-
-files = os.listdir("/home/pi")
-
-for file in files:
-	file_path = os.path.join("/home/pi", file)
-	#os.chmod(file_path, 0o777) #dont try this at home
-
 online = check_connection()
 if (online):
 	logger.debug("bcMeter is online!")
@@ -224,30 +249,39 @@ except ImportError:
 	logger.debug("need to be online to install sht library first!")
 	shutdown("Update needed for sht4x")
 
-if (airflow_only is False):
-	try:
-		import pigpio
-	except ImportError:
-		logger.error("need to be online to install pigpio first!")
-		shutdown("Update needed for pigpiod")
 
+
+if not airflow_only:
 	try:
-		subprocess.Popen(["sudo", "killall", "pigpiod"]).communicate
-		sleep(0.5)
-		subprocess.Popen(["sudo", "pigpiod","-l", "-s","2","-b","200","-f"]).communicate
-		sleep(5)
+		pigpiod_running = subprocess.run(["pgrep", "-x", "pigpiod"], stdout=subprocess.PIPE).returncode == 0
+		if pigpiod_running:
+			subprocess.run(["sudo", "killall", "pigpiod"], check=True)
+		os.system("sudo pigpiod")
+		delay = 1
+		retries = 20
+		for attempt in range(retries):
+			try:
+				result = subprocess.run(["pigs", "t"], check=True, capture_output=True, text=True)
+				break  # Exit the loop if the command succeeds
+			except subprocess.CalledProcessError as e:
+				sleep(1)  # Wait for 1 second before retrying
+		else:
+			logger.error("Failed to setup pigpio")
+			print("Failed to setup pigpiod .")
 		pi = pigpio.pi()
-		pump_PWM_range=255
-		pi.set_PWM_range(12, pump_PWM_range)
-		pi.set_PWM_frequency(12, pump_pwm_freq)
-
-		pi.set_PWM_range(infrared_led_control,255)
-		pi.set_PWM_frequency(infrared_led_control, 1000)
+		pi.set_mode(PUMP_PIN, pigpio.OUTPUT)
+		pi.set_mode(INFRARED_LED_PIN, pigpio.OUTPUT)
+		pi.set_PWM_range(PUMP_PIN, PUMP_PWM_RANGE)
+		pi.set_PWM_frequency(PUMP_PIN, PUMP_PWM_FREQ)
+		pi.set_PWM_range(INFRARED_LED_PIN, LED_PWM_RANGE)
+		pi.set_PWM_frequency(INFRARED_LED_PIN, LED_PWM_FREQ)
 
 		sleep(0.1)
-		logger.debug("pigpiod started")
+		if debug:
+			print("pigpiod initialized")
 	except Exception as e:
-		logger.error("pigpiod Error: %s ", e)
+		logger.error("Error: %s", e)
+
 
 try:
 	from scipy.ndimage import median_filter
@@ -264,7 +298,6 @@ try:
 	temperature, relative_humidity = sht.measurements
 	logger.debug("Temperature: %0.1f C" % temperature)
 	logger.debug("Humidity: %0.1f %%" % relative_humidity)
-
 	sht40_i2c = True
 	ds18b20 = False
 except Exception as e:
@@ -273,7 +306,24 @@ except Exception as e:
 
 
 
+def enable_onewire():
+	try:
+		with open('/boot/config.txt', 'r') as config_file:
+			if any("dtoverlay=w1-gpio" in line and not line.startswith("#") for line in config_file):
+				return True
+		
+		subprocess.run(['sudo', 'raspi-config', 'nonint', 'do_onewire', '0'], check=True)
+		subprocess.run(['sudo', 'modprobe', 'w1-gpio'], check=True)
+		subprocess.run(['sudo', 'modprobe', 'w1-therm'], check=True)
+		with open('/boot/config.txt', 'r') as config_file:
+			return any("dtoverlay=w1-gpio" in line and not line.startswith("#") for line in config_file)
+	
+	except Exception:
+		return False
+
 if sht40_i2c is False:
+	enable_onewire()
+
 	class TemperatureSensor:
 		RETRY_INTERVAL = 0.5
 		RETRY_COUNT = 10
@@ -281,11 +331,6 @@ if sht40_i2c is False:
 		def __init__(self, channel: int):
 			GPIO.setmode(GPIO.BCM)
 			GPIO.setup(channel, GPIO.IN)
-			GPIO.setup(1,GPIO.OUT)
-			GPIO.setup(23,GPIO.OUT)
-			
-		#def __del__(self):
-			#GPIO.cleanup()
 
 		@staticmethod
 		def read_device() -> typing.List[str]:
@@ -297,16 +342,7 @@ if sht40_i2c is False:
 			if device_file_name is not None:
 				with open(device_file_name, 'r') as fp:
 					return [line.strip() for line in fp.readlines()]
-
-
-	
-
 		def get_temperature_in_milli_celsius(self) -> int:
-			"""
-			$ cat /sys/bus/w1/devices/28-*/w1_slave
-			c1 01 55 05 7f 7e 81 66 c8 : crc=c8 YES
-			c1 01 55 05 7f 7e 81 66 c8 t=28062
-			"""
 			for i in range(self.RETRY_COUNT):
 				lines = self.read_device()
 				try:
@@ -325,7 +361,7 @@ if sht40_i2c is False:
 			ds18b20 = True
 			if debug:
 				print("using ds18b20")
-			logger.debug("Usind ds18b20 as temperature sensor")
+			logger.debug("Using ds18b20 as temperature sensor")
 		
 			logger.debug("Temperature: %0.1f C" % temperature_current)
 
@@ -337,24 +373,7 @@ if sht40_i2c is False:
 
 
 
-def startUp():
-	global MCP342X_DEFAULT_ADDRESS, debug, airflow_sensor_bias
-	airflow_sensor_bias = -1
-	read_airflow_sensor_bias = read_adc(MCP342X_DEFAULT_ADDRESS,1)
 
-	
-	if (debug):
-		print("now pump should start")
-	if (airflow_only is False):
-		try:
-			pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
-		except Exception as e:
-			logger.error(f"{e}")
-			print(e)
-			shutdown("pigpiod error on startup")
-		GPIO.setup(infrared_led_control, GPIO.OUT)
-		GPIO.setup(1,GPIO.OUT)
-		GPIO.setup(23,GPIO.OUT)
 
 
 def handle_signal(signum, frame):
@@ -519,8 +538,6 @@ def read_adc(mcp_i2c_address, sample_time):
 
 	while ((time()-start)<sample_time-0.25) and (skipsampling is False):
 		if (airflow_only is False):
-			x=time()
-			
 			initialise(channel1, rate)
 			voltage_channel1 = getconvert(channel1, rate)
 			sum_channel1 += voltage_channel1
@@ -534,7 +551,8 @@ def read_adc(mcp_i2c_address, sample_time):
 				atn_current=round((numpy.log(voltage_channel1/voltage_channel2)*-100),5)
 			except:
 				pass
-		if ((airflow_sensor is True) or (airflow_only is True)) and (i % 5 == 0) and (calibration is False):
+		sample_every_x_cycle = 5 if rate == rate_12bit else 2
+		if ((airflow_sensor is True) or (airflow_only is True)) and (i % sample_every_x_cycle == 0) and (calibration is False):
 			initialise(airflow_channel, rate_12bit)
 			airflow_sample_sum = 0
 			while airflow_sample_index<=airflow_samples_to_take:
@@ -567,7 +585,6 @@ def read_adc(mcp_i2c_address, sample_time):
 		i+=1
 		if (debug is True):
 			print(f"{i}, {round(sum_channel1/i,3)}, {round(sum_channel2/i,3)}, {round(average_channel3,3)}, current: {round(voltage_channel1,3)}, {round(voltage_channel2,3)}, {round(voltage_channel3,3)} ")
-			pass
 	if (skipsampling is False):
 		average_channel3 = (sum_channel3 / j) if (airflow_sensor is True) and (calibration is False) else 0
 		#'''	
@@ -595,20 +612,6 @@ def airflow_by_voltage(voltage,sensor_type):
 			0.5: 0.000,
 			2.5: 0.100
 		}
-	#if pump type == 1
-	'''
-	if (sensor_type == 1) :
-	# Define the table data (replace with your actual table) # valid for OMRON D6F P0010A2 with 1000ml; due to limitations of ADC only 473ml max
-		table = {
-			0.50:0,
-			0.72:0.05,
-			0.82:0.077,
-			1.08:0.155,
-			1.16:0.22,
-			1.77:0.5,
-			1.90:0.6
-		}
-	'''
 	if (sensor_type == 1) :
 	# Define the table data (replace with your actual table) # valid for OMRON D6F P0010A2 with 1000ml; due to limitations of ADC only 473ml max
 		table = {
@@ -656,30 +659,39 @@ def get_sensor_values(MCP342X_DEFAULT_ADDRESS,sample_time):
 	airflow_sensor_value = sensor_values[2]
 	return main_sensor_value, reference_sensor_value, airflow_sensor_value
 
-def set_pwm_dutycycle(pump_dutycycle, stop_event):
+def set_pwm_duty_cycle(component, duty_cycle, stop_event=None):
 	global config
 	reverse_dutycycle = config.get('reverse_dutycycle', False)
 	try:
-		pi.set_PWM_dutycycle(12, pump_dutycycle)
-	except:
-		if (debug):
-			print("exception in pwm thread")
-		if reverse_dutycycle is False:
-			pi.set_PWM_dutycycle(12, 0)
-		else:
-			pi.set_PWM_dutycycle(12, pump_PWM_range)
+		duty_cycle = int(duty_cycle)
+		if component == 'pump':
+			if 0 <= duty_cycle <= PUMP_PWM_RANGE:
+				adjusted_duty = PUMP_PWM_RANGE - duty_cycle if reverse_dutycycle else duty_cycle
+				pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
+		elif component == 'infrared_led':
+			if 0 <= duty_cycle <= LED_PWM_RANGE:
+				pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
+	except Exception as e:
+		if debug:
+			print(f"Exception in PWM thread for {component}: {e}")
+		# Safely shut down the pump on exception
+		if component == 'pump':
+			safe_duty = 0 if not reverse_dutycycle else PUMP_PWM_RANGE
+			pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
 
-	if (stop_event.is_set()):
-		if (debug):
-			print("exiting pwm thread")
-		if reverse_dutycycle is False:
-			pi.set_PWM_dutycycle(12, 0)
-		else:
-			pi.set_PWM_dutycycle(12, pump_PWM_range)
+	# Handle stop_event for graceful thread exit
+	if stop_event and stop_event.is_set():
+		if debug:
+			print(f"Exiting PWM thread for {component}")
+		if component == 'pump':
+			safe_duty = 0 if not reverse_dutycycle else PUMP_PWM_RANGE
+			pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
+
 
 
 def check_airflow(current_mlpm):
 	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config, temperature_current, temperature_to_keep, disable_pump_control, override_airflow, desired_airflow_in_lpm
+	threshold_airflow = 0.005#liter per minute minumum; else pump might be defective
 	if override_airflow is False:
 		desired_airflow_in_lpm = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
 	
@@ -687,14 +699,16 @@ def check_airflow(current_mlpm):
 		disable_pump_control = True
 	
 	if disable_pump_control is False:
-		if current_mlpm < 0.002 and desired_airflow_in_lpm > 0:
+		if current_mlpm < 0.005 and desired_airflow_in_lpm > 0:
 			zero_airflow += 1
-			if zero_airflow == 50:
+			if zero_airflow == 5:
+				print("resetting pump; no airflow?!")
 				logger.debug("resetting pump... no airflow measured")
 				pump_test()
 				sleep(1)
 				zero_airflow = 0
 				return
+		zero_airflow = 0 if current_mlpm > 0.005 and zero_airflow > 0 else zero_airflow
 
 		if current_mlpm < desired_airflow_in_lpm and airflow_debug is False:
 			if reverse_dutycycle is True:
@@ -705,7 +719,7 @@ def check_airflow(current_mlpm):
 				else:
 					pump_dutycycle -= 1
 			else:
-				if pump_dutycycle >= pump_PWM_range:
+				if pump_dutycycle >= PUMP_PWM_RANGE:
 					#logger.error("cannot reach desired airflow. please lower it")
 					adjust_airflow(current_mlpm)
 					pump_dutycycle = 0
@@ -718,17 +732,17 @@ def check_airflow(current_mlpm):
 			else:
 				pump_dutycycle -= 1
 
-		pump_dutycycle = max(0, min(pump_dutycycle, pump_PWM_range))
-		set_PWM_dutycycle_thread = Thread(target=set_pwm_dutycycle, args=(pump_dutycycle, stop_event,))
+		pump_dutycycle = max(0, min(pump_dutycycle, PUMP_PWM_RANGE))
+		set_PWM_dutycycle_thread = Thread(target=set_pwm_duty_cycle, args=('pump', pump_dutycycle, stop_event,))
 		set_PWM_dutycycle_thread.start()
 
 		show_display(f"{round(current_mlpm*1000)} ml/min", 2, False)
 	else:
-		set_PWM_dutycycle_thread = Thread(target=set_pwm_dutycycle, args=(pump_dutycycle, stop_event,))
+		set_PWM_dutycycle_thread = Thread(target=set_pwm_duty_cycle, args=('pump', pump_dutycycle, stop_event,))
 		set_PWM_dutycycle_thread.start()
 
 	if debug is True:
-		os.system('clear')
+		#os.system('clear')
 		print(f"{round(current_mlpm*1000, 2)} ml/min, desired: {round(desired_airflow_in_lpm*1000, 2)} ml/min, pump_dutycycle: {pump_dutycycle}")
 
 def adjust_airflow(current_mlpm):
@@ -750,23 +764,19 @@ def pump_test():
 	logger.debug("Init Pump")
 	if (reverse_dutycycle is True):
 		for cyclepart in range(1,11):
-			pi.set_PWM_dutycycle(12, pump_PWM_range/cyclepart)
-			sleep(0.12)
-		pi.set_PWM_dutycycle(12, pump_PWM_range)
+			set_pwm_duty_cycle('pump', PUMP_PWM_RANGE/cyclepart)
+			sleep(0.1)
+		set_pwm_duty_cycle('pump', PUMP_PWM_RANGE)
 
 	else:
 		for cyclepart in range(1,11):
 			try:
-				pi.set_PWM_dutycycle(12, cyclepart*10*(pump_PWM_range/100))
-				sleep(0.12)
+				set_pwm_duty_cycle('pump', cyclepart*10*(PUMP_PWM_RANGE/100))
+				sleep(0.1)
 			except Exception as e:
 				logger.error(e)
-		pi.set_PWM_dutycycle(12, 0)
-'''	pi.set_PWM_dutycycle(12, 0)
-	sleep(5)
-	pi.set_PWM_dutycycle(12, pump_PWM_range/2)
-	sleep(5)
-'''
+		set_pwm_duty_cycle('pump', 0)
+
 
 
 def button_pressed():
@@ -776,19 +786,19 @@ def button_pressed():
 		pass
 
 def createLog(log,header):
-	Path("/home/pi/logs").mkdir(parents=True, exist_ok=True)
-	if os.path.isfile("/home/pi/logs/log_current.csv"):
-		os.remove("/home/pi/logs/log_current.csv")
-	if os.path.isfile("/home/pi/logs/compair_offline_log.log"):
-		os.remove("/home/pi/logs/compair_offline_log.log")
-	with open("/home/pi/logs/" + log, "a") as logfileArchive: #save this logfile for archive
+	Path(base_dir +"/logs").mkdir(parents=True, exist_ok=True)
+	if os.path.isfile(base_dir+"/logs/log_current.csv"):
+		os.remove(base_dir+"/logs/log_current.csv")
+	if os.path.isfile(base_dir+"/logs/compair_offline_log.log"):
+		os.remove(base_dir+"/logs/compair_offline_log.log")
+	with open(base_dir+"/logs/" + log, "a") as logfileArchive: #save this logfile for archive
 		logfileArchive.write(header + "\n\n")
-		os.chmod("/home/pi/logs/" + log, 0o777)
-	with open("/home/pi/logs/log_current.csv", "a") as temporary_log: # temporary current logfile for web interface
+		os.chmod(base_dir+"/logs/" + log, 0o777)
+	with open(base_dir+"/logs/log_current.csv", "a") as temporary_log: # temporary current logfile for web interface
 		temporary_log.write(header + "\n\n")
-	with open("/home/pi/logs/compair_offline_log.log", "w") as compair_offline_log: #save this logfile for archive
+	with open(base_dir+"/logs/compair_offline_log.log", "w") as compair_offline_log: #save this logfile for archive
 		compair_offline_log.write("timestamp;bcngm3;atn;bcmsen;bcmref;bcmtemperature;location;filter_status" + "\n\n")
-		os.chmod("/home/pi/logs/compair_offline_log.log", 0o777)
+		os.chmod(base_dir+ "/logs/compair_offline_log.log", 0o777)
 
 def filter_values(log, kernel):
 	file_path = output_file_path = log
@@ -844,7 +854,7 @@ def send_email(payload):
 		body = "Hello dear human, please find attached the log file"
 
 		# Attach the file
-		file_path = "/home/pi/logs/log_current.csv"
+		file_path = base_dir+"/logs/log_current.csv"
 		current_time = datetime.now().strftime("%y%m%d_%H%M")
 		send_file_as = f"{devicename}_{current_time}.csv"
 		with open(file_path, "rb") as file:
@@ -860,7 +870,7 @@ def send_email(payload):
 		body = "I do not register any airflow. Please check the connections and if the pump is working"
 
 		# Attach the file
-		file_path = "/home/pi/logs/log_current.csv"
+		file_path = base_dir+"/logs/log_current.csv"
 		current_time = datetime.now().strftime("%y%m%d_%H%M")
 		send_file_as = f"{devicename}_{current_time}.csv"
 		with open(file_path, "rb") as file:
@@ -918,16 +928,17 @@ def bcmeter_main(stop_event):
 	today = str(datetime.now().strftime("%y-%m-%d"))
 	session_running_since = datetime.now()
 	now = str(datetime.now().strftime("%H:%M:%S"))
-	logFileName =(str(today) + "_" + str(now) + ".csv").replace(':','')
-	header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3_unfiltered;BCngm3;Temperature;notice;main_sensor_bias;reference_sensor_bias;sampleDuration;sht_humidity;airflow"
-	compair_offline_log_header="timestamp,bcngm3,atn,bcmsen,bcmref,bcmtemperature, location, filter_status"
-	new_log_message="Started log " + str(today) + " " + str(now) + " " + str(bcMeter_version) + " " + str(logFileName)
-	print(new_log_message)
-	logger.debug(new_log_message)
-	createLog(logFileName,header)
-	update_interface_status(1)
-	logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";"+ str(BCngm3_unfiltered) + ";" + str(temperature_current) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(sht_humidity) + ";" + str(volume_air_per_sample) 
-	online = check_connection()
+	if debug == False:
+		logFileName =(str(today) + "_" + str(now) + ".csv").replace(':','')
+		header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3_unfiltered;BCngm3;Temperature;notice;main_sensor_bias;reference_sensor_bias;sampleDuration;sht_humidity;airflow"
+		compair_offline_log_header="timestamp,bcngm3,atn,bcmsen,bcmref,bcmtemperature, location, filter_status"
+		new_log_message="Started log " + str(today) + " " + str(now) + " " + str(bcMeter_version) + " " + str(logFileName)
+		print(new_log_message)
+		logger.debug(new_log_message)
+		createLog(logFileName,header)
+		update_interface_status(1)
+		logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";"+ str(BCngm3_unfiltered) + ";" + str(temperature_current) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(sht_humidity) + ";" + str(volume_air_per_sample) 
+		online = check_connection()
 
 	if (compair_upload is True):
 		import compair_frost_upload
@@ -957,9 +968,7 @@ def bcmeter_main(stop_event):
 		sens_correction = float(str(config.get('sens_correction', 1)).replace(',', '.'))
 		ref_correction = float(str(config.get('ref_correction', 1)).replace(',', '.'))
 		sample_spot_diameter = float(str(config.get('sample_spot_diameter', 0.5)).replace(',', '.'))
-
-
-		pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
+		set_pwm_duty_cycle('infrared_led', led_brightness)
 		start = time()
 		if (samples_taken < 3) and (sample_time >60):
 			sample_time=60
@@ -970,10 +979,10 @@ def bcmeter_main(stop_event):
 		reference_sensor_value = sensor_values[1]*ref_correction
 
 
-		#test small compansation:
+		#test small compensation:
 		#env_change = reference_sensor_value_last_run - reference_sensor_value
 		#if env_change !=0:
-	#		main_sensor_value = main_sensor_value * (1 - (numpy.log10(abs(env_change) + 1) * -1 * (1 + abs(env_change))))
+		#	main_sensor_value = main_sensor_value * (1 - (numpy.log10(abs(env_change) + 1) * -1 * (1 + abs(env_change))))
 		if (airflow_sensor is True):
 			airflow_sensor_value = sensor_values[2]
 			airflow_per_minute = round(airflow_by_voltage(airflow_sensor_value,af_sensor_type),4)
@@ -1032,7 +1041,7 @@ def bcmeter_main(stop_event):
 				notice = notice + "PEAK"
 		if (attenuation_last_run == 0):
 			attenuation_last_run = attenuation_current
-		if (airflow_per_minute<0.005) and (airflow_sensor is True):
+		if (airflow_per_minute<0.005) and (airflow_sensor is True) and (disable_pump_control is False):
 			if (mail_logs_to is not None):
 				online=check_connection()
 				logger.error("PUMP MALFUNCTION - STOPPING")
@@ -1057,23 +1066,24 @@ def bcmeter_main(stop_event):
 			BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
 		except Exception as e:
 			BCngm3_unfiltered = 0
-			debug.error("invalid value of BC: ",e)
+			logger.error("invalid value of BC: ",e)
 			print(e)
 		#if (temperature_current != 1.0000):
 		#	BCngm3_unfiltered = apply_temperature_correction(BCngm3_unfiltered, temperature_current)
 		#logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";" + str(round(temperature_current,1)) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(round(sht_humidity,1))
-		if (samples_taken>3) and (airflow_only is False):
-			with open("/home/pi/logs/" + logFileName, "a") as log:
+		if (samples_taken>3) and (airflow_only is False) and (debug is False):
+			with open(base_dir+"/logs/" + logFileName, "a") as log:
 				logString = f"{datetime.now().strftime('%d-%m-%y')};{datetime.now().strftime('%H:%M:%S')};{reference_sensor_value_current};{main_sensor_value_current};{attenuation_current};{attenuation_coeff};{BCngm3_unfiltered};{BCngm3_unfiltered};{round(temperature_current, 1)};{notice};{main_sensor_bias};{reference_sensor_bias};{round(delay, 1)};{round(sht_humidity, 1)};{round(airflow_per_minute,3)}"
 				log.write(logString+"\n")
 
-			kernel = 5
+			kernel = 5 if not is_ebcMeter else 3
+
 			if (samples_taken<kernel):
 				kernel = samples_taken
 
-			filter_values("/home/pi/logs/" + logFileName, kernel)
+			filter_values(base_dir + "/logs/" + logFileName, kernel)
 
-			log_file_path = "/home/pi/logs/" + logFileName
+			log_file_path = base_dir+"/logs/" + logFileName
 			column_index = 7  
 			sum_for_avg = []
 
@@ -1096,7 +1106,7 @@ def bcmeter_main(stop_event):
 			else:
 				show_display(f"No AVG yet", False, 0)
 
-			compair_offline_log_path = "/home/pi/logs/compair_offline_log.log"
+			compair_offline_log_path = base_dir+"/logs/compair_offline_log.log"
 			if (compair_upload is True):
 				online=check_connection()	
 				if (online is True):
@@ -1117,7 +1127,7 @@ def bcmeter_main(stop_event):
 						timestamp = compair_frost_upload.get_timestamp()
 						logString = str(timestamp) + ";" + str(BCngm3_unfiltered) + ";" + str(attenuation_current) + ";" + str(main_sensor_value_current) + ";" + str(reference_sensor_value_current) + ";" + str(temperature_current) + ";" +  str(location) + ";" +  str(filter_status)
 						log.write(logString+"\n")
-			os.popen("cp /home/pi/logs/" + logFileName + " /home/pi/logs/log_current.csv")
+			os.popen("cp " + base_dir + "/logs/" + logFileName + " " + base_dir + "/logs/log_current.csv")
 		notice=""
 		main_sensor_value_last_run=main_sensor_value_current 
 		reference_sensor_value_last_run = reference_sensor_value
@@ -1128,7 +1138,7 @@ def bcmeter_main(stop_event):
 
 		if (run_once == "true"): 
 			logger.debug("cycle of " + str(sample_time) + " took " + str(round(delay,2)) + " seconds")
-			GPIO.output(infrared_led_control, 0)
+			GPIO.output(INFRARED_LED_PIN, 0)
 			shutdown("RUN ONCE")
 		if (debug == False) and (reference_sensor_value_current !=0) and (main_sensor_value !=0) and (output_to_terminal is True): #output in terminal
 			with open('logs/log_current.csv','r') as csv_file:
@@ -1205,11 +1215,11 @@ def housekeeping(stop_event):
 		if (airflow_sensor is False) or (airflow_debug is True):
 			pump_dutycycle = int(config.get('pump_dutycycle', 20))
 			try:
-				if (pump_dutycycle >= 0 ) and (pump_dutycycle <= pump_PWM_range):
-					pi.set_PWM_dutycycle(12,pump_dutycycle)
+				if (pump_dutycycle >= 0 ) and (pump_dutycycle <= PUMP_PWM_RANGE):
+					set_pwm_duty_cycle('pump',pump_dutycycle)
 				else:
 					logger.error(f"wrong pump_dutycycle {pump_dutycycle}")
-					pi.set_PWM_dutycycle(12, 50)
+					set_pwm_duty_cycle('pump', 50)
 			except Exception as e:
 				print(e)
 		#go on with temperature stabilization
@@ -1220,6 +1230,8 @@ def housekeeping(stop_event):
 		skipheat = False
 		skipheat = True if temperature_current == 1 else skipheat
 		heating = config.get('heating', False)
+		led_brightness = config.get('led_brightness',100)
+		set_pwm_duty_cycle('infrared_led', led_brightness)
 		#if debug:
 		#	print("skip heating: " + str(skipheat) + " / heating: " + str(heating) + " / current temp: " + str(temperature_current) + " / temp to keep: " + str(temperature_to_keep))
 
@@ -1327,10 +1339,15 @@ def led_communication():
 
 
 
+
+
 if __name__ == '__main__':
+		# Configure PWM pins
+	GPIO.setup(1,GPIO.OUT)
+	GPIO.setup(23,GPIO.OUT)
 	if (calibration):
 		find_mcp_adress()
-		pi.set_PWM_dutycycle(infrared_led_control, led_brightness)
+		set_pwm_duty_cycle('infrared_led', led_brightness)
 		sleep(1)
 		print("Starting calibration, will take about a minute")
 		calibrate_sens_ref()
@@ -1344,9 +1361,10 @@ if __name__ == '__main__':
 			print("Init")
 
 		find_mcp_adress()
-		pump_test()
+		airflow_sensor_bias = -1
+		read_airflow_sensor_bias = read_adc(MCP342X_DEFAULT_ADDRESS,1)
+		#pump_test()
 		sleep(0.5)
-		startUp()
 
 		if debug:
 			print("starting main thread")

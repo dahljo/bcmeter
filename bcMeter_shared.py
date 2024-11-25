@@ -1,9 +1,9 @@
 
-import json, socket, os, busio, logging, subprocess, re
+import json, socket, os, busio, logging, subprocess, re, time 
 from board import I2C, SCL, SDA
 from datetime import datetime
 import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
-bcMeter_shared_version = "0.1 2024-10-16"
+bcMeter_shared_version = "0.1 2024-11-13"
 # alternative check -- http/www on port 80 instead of dns on port 53
 CONNECTION_TEST_HOST = "www.google.com" 
 CONNECTION_TEST_PORT = 80
@@ -13,9 +13,23 @@ CONNECTION_TEST_RETRY_SLEEP = 2 # in seconds
 devicename = socket.gethostname()
 i2c = busio.I2C(SCL, SDA)
 
+
+
+base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+
+def run_command(command):
+	"""
+	Runs a shell command and handles errors.
+	"""
+	try:
+		subprocess.run(command, shell=True, check=True, text=True)
+	except subprocess.CalledProcessError as e:
+		print(f"Command failed: {command}")
+		print(e)
+
 def setup_logging(log_entity):
 	# Create the log folder if it doesn't exist
-	log_folder = '/home/pi/maintenance_logs/'
+	log_folder = base_dir + '/maintenance_logs/'
 	os.makedirs(log_folder, exist_ok=True)
 
 	# Create a logger
@@ -62,7 +76,7 @@ def setup_logging(log_entity):
 
 def convert_config_to_json():
 	config_variables = {}
-	with open('/home/pi/bcMeterConf.py', 'r') as file:
+	with open(base_dir + '/bcMeterConf.py', 'r') as file:
 		for line in file:
 			# Ignore lines that do not contain variable assignments
 			if '=' not in line or line.startswith('#'):
@@ -98,7 +112,7 @@ def convert_config_to_json():
 				"parameter": param_type
 			}
 
-	with open('/home/pi/bcMeter_config.json', 'w') as json_file:
+	with open(base_dir + '/bcMeter_config.json', 'w') as json_file:
 		json.dump(config_variables, json_file, indent=4)
 
 	return config_variables
@@ -135,11 +149,11 @@ def load_config_from_json():
 	]
 
 	#try:
-	#	modify_parameter_type("/home/pi/bcMeter_config.json", modifications)
+	#	modify_parameter_type(base_dir +"/bcMeter_config.json", modifications)
 	#except Exception as e:
 	#	print(f"Cannot modify bcMeter_config.json: {e}")
 
-	with open('/home/pi/bcMeter_config.json', 'r') as json_file:
+	with open(base_dir + '/bcMeter_config.json', 'r') as json_file:
 
 		full_config = json.load(json_file)
 		# Extract only the value for each setting, flattening the structure
@@ -181,7 +195,7 @@ def save_config_to_json(key, value=None, description=None, parameter_type=None, 
 		}
 	
 	# Write the updated configuration back to the JSON file
-	with open('/home/pi/bcMeter_config.json', 'w') as json_file:
+	with open(base_dir + '/bcMeter_config.json', 'w') as json_file:
 		json.dump(full_config, json_file, indent=4)
 
 		
@@ -217,15 +231,17 @@ else:
 	update_ssid_in_hostapd_conf(revert=True)
 
 def check_connection():
+	result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
+	if "default" not in result.stdout:
+		return False
+	# Attempt socket connection multiple times if necessary
 	for _ in range(CONNECTION_TEST_TRIES):
 		try:
-			# Attempt to create a socket connection to the test host
-			s=socket.create_connection((CONNECTION_TEST_HOST, CONNECTION_TEST_PORT), timeout=CONNECTION_TEST_TIMEOUT)
+			s = socket.create_connection((CONNECTION_TEST_HOST, CONNECTION_TEST_PORT), timeout=CONNECTION_TEST_TIMEOUT)
 			s.close()
-			return True			
-		except Exception as e:
-			if Exception is OSError:
-				sleep(CONNECTION_TEST_RETRY_SLEEP)
+			return True
+		except Exception as e:  
+			time.sleep(CONNECTION_TEST_RETRY_SLEEP)
 	return False
 
 def get_bcmeter_start_time():
@@ -247,7 +263,7 @@ def get_bcmeter_start_time():
 		return None
 
 		
-def update_interface_status(status):
+def update_interface_status(status, prev_log_creation_time=None):
 	'''
 	0=stopped
 	1=initializing 
@@ -255,11 +271,13 @@ def update_interface_status(status):
 	3=running in hotspot
 	4=hotspot only
 	'''
-	if_status_folder = "/home/pi/tmp/"
-	log_file_path = "/home/pi/logs/log_current.csv"
+	if_status_folder = base_dir + "/tmp/"
+	log_file_path = base_dir + "/logs/log_current.csv"
 	
 	os.makedirs(if_status_folder, exist_ok=True)
 	file_path = if_status_folder + 'BCMETER_WEB_STATUS'
+	
+	# Load the existing parameters if they exist
 	try:
 		with open(file_path, 'r') as file:
 			parameters = json.load(file)
@@ -275,16 +293,21 @@ def update_interface_status(status):
 			file_stat = os.stat(log_file_path)
 			file_inode_change_time = datetime.fromtimestamp(file_stat.st_ctime)
 			log_creation_time = file_inode_change_time.strftime("%y%m%d_%H%M%S")
-			#print("Inode change time:", log_creation_time)
 		except FileNotFoundError:
 			log_creation_time = None
 
-	parameters["bcMeter_status"] = status
-	parameters["log_creation_time"] = log_creation_time
-	parameters["hostname"] = parameters.get("hostname", devicename)
+	# Compare the log_creation_time with the prevzif log_creation_time != prev_log_creation_time:
+		parameters["bcMeter_status"] = status
+		parameters["log_creation_time"] = log_creation_time
+		parameters["hostname"] = parameters.get("hostname", devicename)
 
-	with open(file_path, 'w') as file:
-		json.dump(parameters, file)
+		# Write updated parameters to the file
+		with open(file_path, 'w') as file:
+			json.dump(parameters, file)
+
+	# Return the current log_creation_time to be used in the next iteration
+	return log_creation_time
+
 		
 use_display = config.get('use_display', False)
 

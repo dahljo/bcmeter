@@ -6,11 +6,13 @@ from flask_cors import CORS
 import os
 import json
 
+base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+
 app = Flask(__name__)
 # Enable CORS for all domains on all routes
 CORS(app)
 
-config_file_path = '/home/pi/bcMeter_config.json'
+config_file_path = base_dir + '/bcMeter_config.json'
 
 @app.route('/load-config', methods=['GET'])
 def load_config():

@@ -11,7 +11,7 @@ import signal
 import requests
 import uuid
 import json
-from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging, get_pinout_info, find_model_number
+from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging, get_pinout_info, find_model_number, run_command
 import importlib
 from datetime import datetime
 import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
@@ -23,7 +23,7 @@ from threading import Thread, Event
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.9.47 2024-10-16"
+ctrl_lp_ver="0.9.49 2024-11-22"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 
 time_synced = False
@@ -36,8 +36,10 @@ pinout_output = get_pinout_info()
 if pinout_output:
 	logger.debug(find_model_number(pinout_output))
 
+base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+
 try:
-	if os.path.exists('/home/pi/bcMeter_config.json'):
+	if os.path.exists(base_dir + '/bcMeter_config.json'):
 		config = load_config_from_json()
 	else:
 		config = convert_config_to_json()
@@ -71,7 +73,7 @@ show_display(f"Ctrl Loop {ctrl_lp_ver}", False, 1)
 
 
 #wifi credentials file
-WIFI_CREDENTIALS_FILE='/home/pi/bcMeter_wifi.json'
+WIFI_CREDENTIALS_FILE=base_dir + '/bcMeter_wifi.json'
 
 
 
@@ -142,9 +144,10 @@ def get_wifi_bssid(ssid):
 def stop_access_point():
 	deactivate_dnsmasq_service()
 	if check_service_running("hostapd"):
-		p = subprocess.Popen(["sudo", "systemctl", "stop", "hostapd"])
-		p.communicate()
-		#logger.debug("Stopped Accespoint")
+		#run_command("iptables -F")
+		#run_command("iptables -t nat -F")
+		run_command("sudo systemctl stop hostapd")
+
 
 def stop_bcMeter_service():
 	update_interface_status(0)
@@ -208,14 +211,13 @@ def setup_access_point():
 	prepare_dhcpd_conf(1)
 
 	activate_dnsmasq_service()
-	p = subprocess.Popen(["sudo", "systemctl", "daemon-reload"])
-	p.communicate()
+	run_command("sudo systemctl daemon-reload")
 	logger.debug("daemon reloaded")
-	p = subprocess.Popen(["sudo", "service", "dhcpcd", "restart"])
-	p.communicate()
+	run_command("sudo service dhcp restart")
 	# restart the AP
-	p = subprocess.Popen(["sudo", "systemctl", "start", "hostapd"])
-	p.communicate()
+	#run_command("iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j DNAT --to-destination 192.168.18.8:80")
+	#run_command("iptables -t nat -A POSTROUTING -j MASQUERADE")
+	run_command("sudo systemctl start hostapd")
 	logger.debug("hostapd started")
 	show_display("Hotspot", False, 0)
 	show_display("Go to Interface", False, 1)
@@ -341,14 +343,13 @@ def connect_to_wifi():
 			logger.debug("Setup AP cause no SSID / PWD")
 			setup_access_point()
 	else:
-		logger.debug("Found credentials for wifi %s", wifi_ssid)
 		wifi_in_range = is_wifi_in_range(wifi_ssid)
 		if wifi_in_range is False:
 			if check_service_running("hostapd") is False:
-				logger.debug("But it is not in range so I am opening the hotspot")
+				logger.debug("Known WiFi not in range so I am opening the hotspot")
 				setup_access_point()
 		else:
-			logger.debug("Wifi in range", wifi_ssid)
+			logger.debug("Found credentials for wifi %s", wifi_ssid)
 			if wifi_ssid != get_wifi_network():
 				logger.debug(f"Trying to establish connection to Wi-Fi {wifi_ssid}")
 				show_display("Connecting to WiFi", False, 0)
@@ -383,7 +384,15 @@ def connect_to_wifi():
 					logger.debug("stopping accesspoint; i seem to be offline but connected to the desired wifi") 
 					stop_access_point()
 			else:
-				logger.debug("happily staying connected; idle")
+				if check_connection():
+					if not check_service_running('bcMeter'):
+						run_bcMeter_service()
+						show_display(f"Conn OK", False, 0)
+						show_display(f"Starting up", False, 1)
+					else:
+						show_display(f"Conn OK", False, 0)
+						show_display(f"Sampling", False, 1)
+					
 				
 
 
@@ -473,65 +482,62 @@ def ap_control_loop():
 	if (not wifi_ssid and not wifi_pwd):
 		run_hotspot = True if is_ebcMeter else run_hotspot
 
-	try:
-		while True:
-			time_start=time.time()
-			config = load_config_from_json()
-			is_online = check_connection()
-			if time_synced and we_got_correct_time is False:
-				uptime = get_uptime()
-				we_got_correct_time = True
-			else:
-				uptime = keep_hotspot_alive_without_successful_connection-1
-			run_hotspot = config.get('run_hotspot', False)
-			bcMeter_running = check_service_running("bcMeter")
-			bcMeter_flask_running = check_service_running("bcMeter_flask")
-			if not bcMeter_running:
-				update_interface_status(4 if not is_online else 0)
-			else:
-				update_interface_status(3 if not is_online else 2)
-			if not bcMeter_flask_running:
-				subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
-			if not is_online:
-				#logger.debug("Not online")
-				if not run_hotspot:
-					if (time_synced is False):
+	while True:
+		time_start=time.time()
+		config = load_config_from_json()
+		is_online = check_connection()
+		if time_synced and we_got_correct_time is False:
+			uptime = get_uptime()
+			we_got_correct_time = True
+		else:
+			uptime = keep_hotspot_alive_without_successful_connection-1
+		run_hotspot = config.get('run_hotspot', False)
+		bcMeter_running = check_service_running("bcMeter")
+		bcMeter_flask_running = check_service_running("bcMeter_flask")
+		if not bcMeter_running:
+			update_interface_status(4 if not is_online else 0)
+		else:
+			update_interface_status(3 if not is_online else 2)
+		if not bcMeter_flask_running:
+			subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
+		if not is_online:
+			#logger.debug("Not online")
+			if not run_hotspot:
+				if (time_synced is False):
+					keep_running = True
+				if uptime >= keep_hotspot_alive_without_successful_connection:
+					if is_ebcMeter:
 						keep_running = True
-					if uptime >= keep_hotspot_alive_without_successful_connection:
-						if is_ebcMeter:
+					if not keep_running:
+						logger.debug("Still in configuration timeframe")
+						logger.debug("No sampling running")
+						if bcMeter_running:
+							logger.debug("bcMeter is running, so we keep measuring and override the shutdown timer in hotspot mode. make sure to configure it properly!")
+							update_interface_status(3)
 							keep_running = True
-						if not keep_running:
-							logger.debug("Still in configuration timeframe")
-							logger.debug("No sampling running")
-							if bcMeter_running:
-								logger.debug("bcMeter is running, so we keep measuring and override the shutdown timer in hotspot mode. make sure to configure it properly!")
-								update_interface_status(3)
-								keep_running = True
-								logger.debug("Wi-Fi connection lost. Attempting to reconnect.")
-								connect_to_wifi()
-							else:
-								logger.debug("Shutting down due to inactivity.")
-								stop_bcMeter_service()
-								show_display("Shutting down", False, 0)
-								show_display("No Config", False, 1)
-								stop_access_point()
-								os.system("shutdown now -h")
-					else:
-						connect_to_wifi()
+							logger.debug("Wi-Fi connection lost. Attempting to reconnect.")
+							connect_to_wifi()
+						else:
+							logger.debug("Shutting down due to inactivity.")
+							stop_bcMeter_service()
+							show_display("Shutting down", False, 0)
+							show_display("No Config", False, 1)
+							stop_access_point()
+							os.system("shutdown now -h")
+				else:
+					connect_to_wifi()
 
 
-			if is_online and not run_hotspot:
-				if (check_service_running("hostapd")):
-					stop_access_point()
-					logger.debug("(1) Connection ok so stopping hotspot")
+		if (is_online is True) and (run_hotspot is False):
+			if (check_service_running("hostapd")):
+				stop_access_point()
+				logger.debug("(1) Connection ok so stopping hotspot")
 
 
-			time.sleep(scan_interval)
-			#logger.debug("AP loop took ", time.time()-time_start)
+		time.sleep(scan_interval)
+		#logger.debug("AP loop took ", time.time()-time_start)
 
-	except Exception as e:
-		logger.error(f"Exited AP Main loop: {e}")
-		logger.debug(f"Exited AP Main loop: {e}")
+
 
 
 if not debug:

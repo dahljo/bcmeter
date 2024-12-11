@@ -22,7 +22,7 @@ function checkUndervoltage() {
 
 		$response = "
 				<div class='text-center'>
-						{$styles['red']}<strong>WARNING</strong>: Undervoltage detected - use a proper power supply and cable.{$styles['reset']}<br><br>
+						{$styles['red']}<strong>WARNING</strong>: Undervoltage detected - you might ignore it when it does not happen very often. <br>if it repeats a lot, use a 5.25V, 3A power supply and a short cable.{$styles['reset']}<br><br>
 		";
 		
 		foreach (array_slice($lines, -4) as $line) {

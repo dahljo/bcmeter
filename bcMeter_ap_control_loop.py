@@ -191,6 +191,14 @@ def get_uptime():
 	return uptime
 
 
+def delete_wifi_credentials():
+	with open(WIFI_CREDENTIALS_FILE, 'w') as f:
+		f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
+		os.chmod(WIFI_CREDENTIALS_FILE, 0o777)
+	
+	logger.debug("Reset WiFi Configs")
+
+
 def setup_access_point():
 	#p = subprocess.Popen(["sudo", "systemctl", "unmask","hostapd"])
 	#p.communicate()
@@ -200,13 +208,6 @@ def setup_access_point():
 	file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
 	file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
 	file.close()
-
-	#reset our own wifi conf
-	#with open(WIFI_CREDENTIALS_FILE, 'w') as f:
-	#	f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
-	#	os.chmod(WIFI_CREDENTIALS_FILE, 0o777)
-	#
-	#logger.debug("Reset WiFi Configs")
 
 	prepare_dhcpd_conf(1)
 
@@ -364,7 +365,7 @@ def connect_to_wifi():
 				subprocess.Popen(["sudo", "service", "dhcpcd", "restart"]).communicate()
 				# Attempt to connect to the Wi-Fi
 				logger.debug("dhcpcd is restarting and trying to connect to your Wi-Fi")
-				retries = 3
+				retries = 1
 				for attempt in range(retries):
 					logger.debug(f"Connection attempt {attempt + 1}")
 					if check_connection():
@@ -383,6 +384,9 @@ def connect_to_wifi():
 				if wifi_ssid == get_wifi_network():
 					logger.debug("stopping accesspoint; i seem to be offline but connected to the desired wifi") 
 					stop_access_point()
+				else:
+					logger.error(f"Cannot connect to {wifi_ssid} - check and re-enter PSK")
+					delete_wifi_credentials()
 			else:
 				if check_connection():
 					if not check_service_running('bcMeter'):
@@ -486,6 +490,8 @@ def ap_control_loop():
 		time_start=time.time()
 		config = load_config_from_json()
 		is_online = check_connection()
+		if is_online:
+			print("I am online")
 		if time_synced and we_got_correct_time is False:
 			uptime = get_uptime()
 			we_got_correct_time = True

@@ -10,7 +10,6 @@ CONNECTION_TEST_PORT = 80
 CONNECTION_TEST_TIMEOUT = 3     # socket timeout
 CONNECTION_TEST_TRIES = 3       # number of attemps
 CONNECTION_TEST_RETRY_SLEEP = 2 # in seconds
-devicename = socket.gethostname()
 i2c = busio.I2C(SCL, SDA)
 
 
@@ -263,7 +262,7 @@ def get_bcmeter_start_time():
 		return None
 
 		
-def update_interface_status(status, prev_log_creation_time=None):
+def update_interface_status(status=None, prev_log_creation_time=None):
 	'''
 	0=stopped
 	1=initializing 
@@ -297,13 +296,14 @@ def update_interface_status(status, prev_log_creation_time=None):
 			log_creation_time = None
 
 	# Compare the log_creation_time with the prevzif log_creation_time != prev_log_creation_time:
-		parameters["bcMeter_status"] = status
-		parameters["log_creation_time"] = log_creation_time
-		parameters["hostname"] = parameters.get("hostname", devicename)
+	parameters["bcMeter_status"] = status
+	parameters["log_creation_time"] = log_creation_time
+	parameters["hostname"] = socket.gethostname()
 
-		# Write updated parameters to the file
-		with open(file_path, 'w') as file:
-			json.dump(parameters, file)
+
+	# Write updated parameters to the file
+	with open(file_path, 'w') as file:
+		json.dump(parameters, file)
 
 	# Return the current log_creation_time to be used in the next iteration
 	return log_creation_time
@@ -453,4 +453,5 @@ def button_thread():
 #button_thread.daemon = True
 #button_thread.start()
 
-
+if __name__ == '__main__':
+	update_interface_status()

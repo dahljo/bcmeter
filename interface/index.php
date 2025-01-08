@@ -1788,14 +1788,17 @@ function updateStatus(status, deviceName, creationTimeString) {
 		} else {
 				console.error("creationTimeString is null or malformed.");
 		}
-
 		statusDiv.textContent = 
-				(status === -1) ? deviceName + " status unknown" :
-				(status === 0) ? deviceName + " stopped" :
-				(status === 1) ? deviceName + " initializing" :
-				(status === 2) ? deviceName + " running since " + formattedCreationTime :
-				(status === 3) ? deviceName + " running in Hotspot Mode since " + formattedCreationTime :
-				(status === 4) ? "Hotspot mode active, " + deviceName + " not measuring" : ""; // Added for status 4
+		    (status === -1) ? deviceName + " status unknown" :
+		    (status === 0) ? deviceName + " stopped" :
+		    (status === 1) ? deviceName + " initializing" :
+		    (status === 2) ? deviceName + " running since " + formattedCreationTime :
+		    (status === 3) ? deviceName + " running in Hotspot Mode since " + formattedCreationTime :
+		    (status === 4) ? "Hotspot mode active, " + deviceName + " not measuring" : 
+		    (status === 5) ? deviceName + " stopped by user" :
+		    deviceName + " has an unrecognized status"; // Default case added
+
+
 
 		// Adjust class addition for -1 status case if desired
 		statusDiv.classList.add(
@@ -1804,7 +1807,8 @@ function updateStatus(status, deviceName, creationTimeString) {
 				status === 1 ? 'bg-warning' :
 				status === 2 ? 'bg-success' :
 				status === 3 ? 'bg-info' :
-				status === 4 ? 'bg-info' : '' // Added for status 4
+				status === 4 ? 'bg-info' : 
+				status === 5 ? 'bg-warning' : ''
 		);
 
 		statusDiv.classList.add('text-white');
@@ -2700,9 +2704,21 @@ shell_exec("sudo systemctl restart bcMeter_ap_control_loop");
 
 
 
-if (isset($_POST["exec_stop"]))
-{
-shell_exec("sudo systemctl stop bcMeter");
+if (isset($_POST["exec_stop"])) {
+    shell_exec("sudo systemctl stop bcMeter");
+    $jsonFile = "/tmp/BCMETER_WEB_STATUS";
+    if (file_exists($jsonFile) && $fp = fopen($jsonFile, 'c+')) {
+        if (flock($fp, LOCK_EX)) {
+            $data = json_decode(file_get_contents($jsonFile), true);
+            if (is_array($data)) {
+                $data["bcMeter_status"] = 5;
+                ftruncate($fp, 0);
+                fwrite($fp, json_encode($data, JSON_PRETTY_PRINT));
+            }
+            flock($fp, LOCK_UN);
+        }
+        fclose($fp);
+    }
 }
 
 

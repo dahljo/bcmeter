@@ -11,7 +11,7 @@ import signal
 import requests
 import uuid
 import json
-from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging, get_pinout_info, find_model_number, run_command
+from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging, get_pinout_info, find_model_number, run_command, bcMeter_status
 import importlib
 from datetime import datetime
 import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
@@ -490,8 +490,6 @@ def ap_control_loop():
 		time_start=time.time()
 		config = load_config_from_json()
 		is_online = check_connection()
-		if is_online:
-			print("I am online")
 		if time_synced and we_got_correct_time is False:
 			uptime = get_uptime()
 			we_got_correct_time = True
@@ -501,7 +499,8 @@ def ap_control_loop():
 		bcMeter_running = check_service_running("bcMeter")
 		bcMeter_flask_running = check_service_running("bcMeter_flask")
 		if not bcMeter_running:
-			update_interface_status(4 if not is_online else 0)
+			if bcMeter_status() != 5:
+				update_interface_status(4 if not is_online else 0)
 		else:
 			update_interface_status(3 if not is_online else 2)
 		if not bcMeter_flask_running:

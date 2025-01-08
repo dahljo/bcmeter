@@ -10,7 +10,7 @@ import re
 from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c, setup_logging
 import pigpio
 #os.system('clear')
-bcMeter_version = "0.9.931 2024-11-22"
+bcMeter_version = "0.9.932 2025-01-08"
 
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
@@ -95,9 +95,10 @@ bcMeter_revision = 2024
 GPIO.setmode(GPIO.BCM)
 MONOLED_PIN=1
 PUMP_PIN = 12
+TWELVEVOLT_PIN = 27
 GPIO.setup(MONOLED_PIN, GPIO.OUT)
-#GPIO.setup(PUMP_PIN, GPIO.OUT)
-#GPIO.setup(INFRARED_LED_PIN, GPIO.OUT)
+#GPIO.setup(TWELVEVOLT_PIN, GPIO.OUT)
+#GPIO.output(TWELVEVOLT_PIN, 1)
 
 if (use_rgb_led == 1):
 # Set up GPIO pins
@@ -152,7 +153,7 @@ rate_12bit = MCP342X_CONF_SIZE_12BIT
 rate_14bit = MCP342X_CONF_SIZE_14BIT
 rate_16bit = MCP342X_CONF_SIZE_16BIT 
 gain = MCP342X_CONF_GAIN_1X
-rate = rate_16bit
+rate = rate_14bit
 VRef = 2.048
 
 
@@ -166,6 +167,7 @@ change_blinking_pattern = Event()
 
 if (bcMeter_revision < 2025):
 	INFRARED_LED_PIN = 26
+	TWELVEVOLT_PIN=13
 else:
 	INFRARED_LED_PIN = 19
 
@@ -173,7 +175,7 @@ else:
 
 
 # Pump and LED PWM configurations
-PUMP_PWM_RANGE = 100
+PUMP_PWM_RANGE = 100 if reverse_dutycycle else 255
 PUMP_PWM_FREQ = int(config.get('pwm_freq', 20))  # Configured pump PWM frequency
 
 LED_PWM_RANGE = 255
@@ -402,8 +404,11 @@ def signal_handler():
 
 def initialise(channel, rate):
 	config = (ready|channel|mode|rate|gain)
-	bus.write_byte(MCP342X_DEFAULT_ADDRESS, config)
-
+	try:
+		bus.write_byte(MCP342X_DEFAULT_ADDRESS, config)
+	except Exception as e:
+		logger.error(e)
+		shutdown(e)
 
 def update_config_entry(config, key, value, description, value_type, parameter):
 	if key not in config:
@@ -717,7 +722,7 @@ def check_airflow(current_mlpm):
 					adjust_airflow(current_mlpm)
 					pump_dutycycle=pump_pwm_freq
 				else:
-					pump_dutycycle -= 1
+					pump_dutycycle += 1
 			else:
 				if pump_dutycycle >= PUMP_PWM_RANGE:
 					#logger.error("cannot reach desired airflow. please lower it")
@@ -728,7 +733,7 @@ def check_airflow(current_mlpm):
 
 		if current_mlpm > desired_airflow_in_lpm and airflow_debug is False:
 			if reverse_dutycycle is True:
-				pump_dutycycle += 1
+				pump_dutycycle -= 1
 			else:
 				pump_dutycycle -= 1
 

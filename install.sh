@@ -48,17 +48,33 @@ PYTHON_PACKAGES="\
     requests \
     flask-cors"
 
-INSTALLER_VERSION="0.85 24-11-22"
+INSTALLER_VERSION="0.89 08-01-25"
 
 BCMINSTALLLOG="$BASE_DIR/maintenance_logs/bcMeter_install.log"
+BCMINSTALLED=/tmp/bcmeter_installed
+UPDATING=/tmp/bcmeter_updating
+
 mkdir -p "$(dirname "$BCMINSTALLLOG")"
 touch "$BCMINSTALLLOG"
 echo "$(date) installation/update log" >> "$BCMINSTALLLOG"
 
 exec > >(tee -a "$BCMINSTALLLOG") 2>&1
+
+if [ "$1" == "revert" ]; then
+    echo "Reverting"
+    echo "BASE_DIR is set to: $BASE_DIR"
+    rm -f "$UPDATING"
+    rm -rf "$BASE_DIR/logs"
+    rm -rf "$BASE_DIR/maintenance_logs"
+    mkdir "$BASE_DIR/logs/"
+    mkdir "$BASE_DIR/maintenance_logs/"
+    touch "$BASE_DIR/logs/log_current.csv"
+    touch "$BASE_DIR/maintenance_logs/compair_frost_upload.log"
+    chmod -R 777 "$BASE_DIR/."
+    exit
+fi
+
 echo "Checking if the base system is up to date..."
-
-
 
 apt update
 
@@ -74,9 +90,13 @@ systemctl enable rsyslog
 systemctl start rsyslog
 
 echo "Installing/updating python3 packages"
-# Install Python packages globally
-pip3 install --upgrade pip --break-system-packages
-pip3 install $PYTHON_PACKAGES --break-system-packages
+
+pip3 install --upgrade pip $(pip3 --version | awk '{print $2}' | awk -F. '{
+    if ($1 > 22 || ($1 == 22 && $2 >= 3)) print "--break-system-packages"
+}') && pip3 install $PYTHON_PACKAGES $(pip3 --version | awk '{print $2}' | awk -F. '{
+    if ($1 > 22 || ($1 == 22 && $2 >= 3)) print "--break-system-packages"
+}')
+
 
 if ! grep -q "PIGPIO_ADDR=soft" /etc/environment; then
     echo 'PIGPIO_ADDR=soft' >> /etc/environment
@@ -90,20 +110,13 @@ fi
 systemctl enable zramswap.service
 systemctl start zramswap.service
 
-BCMINSTALLED=/tmp/bcmeter_installed
-UPDATING=/tmp/bcmeter_updating
 
-if [ -f "$UPDATING" ]; then
-    echo "Script is in update procedure. Remove /tmp/bcmeter_updating if this is not true to run this script again."
-    exit
-fi
 
-if [ "$1" == "revert" ]; then
-    echo "Reverting"
-    rm "$UPDATING"
-    rm "$BASE_DIR/logs/*"
-    rm "$BASE_DIR/maintenance_logs*"
-    touch "$BASE_DIR/log_current.csv"
+if [[ "$1" != "force-update" ]]; then
+    if [ -f "$UPDATING" ]; then
+        echo "Script seems to be in an update procedure. If you are really sure that it's not, restart the script with force-update"
+        exit
+    fi
 fi
 
 # Resize the root partition when it is smaller than 3GB
@@ -198,6 +211,51 @@ systemctl restart nginx
 
 echo "All configurations for iptables, dnsmasq, and nginx have been applied successfully."
 
+
+get_config_file() {
+    if [ -f "/boot/firmware/config.txt" ]; then
+        echo "/boot/firmware/config.txt"
+    else
+        echo "/boot/config.txt"
+    fi
+}
+
+CONFIG_FILE=$(get_config_file)
+
+
+# Function to append configurations if not already present
+append_config() {
+    local config_line="$1"
+    if ! grep -qF "$config_line" "$CONFIG_FILE"; then
+        echo "$config_line" | tee -a "$CONFIG_FILE"
+    fi
+}
+
+# Append necessary configurations
+append_config "dtoverlay=disable-bt"
+
+
+if ls /sys/bus/w1/devices/ | grep -q "28"; then
+    echo "temperature sensor on onewire bus found."
+    # Enable OneWire interface if not already enabled
+    if ! raspi-config nonint get_onewire | grep -q "1"; then
+        raspi-config nonint do_onewire 1
+        # Ensure the dtoverlay line is in config.txt
+        append_config "dtoverlay=w1-gpio,gpiopin=5"
+    fi
+else
+    echo "No temperature sensor on onewire bus found."
+    # Disable OneWire interface if enabled
+    if raspi-config nonint get_onewire | grep -q "1"; then
+        raspi-config nonint do_onewire 0
+        # Remove the dtoverlay line from config.txt
+        sed -i '/dtoverlay=w1-gpio,gpiopin=5/d' /boot/config.txt
+    fi
+fi
+
+
+
+
 #updating
 if [ "$1" == "update" ]; then
     touch $UPDATING
@@ -257,14 +315,29 @@ if [ "$1" == "update" ]; then
         cp "$BASE_DIR/bcMeter_wifi.json" "$base_dir/bcMeter_wifi.json.orig"
         
         echo "Updating from GitHub"
-        rm -rf "$BASE_DIR/bcmeter/" "$BASE_DIR/interface/"
-        git clone https://github.com/bcmeter/bcmeter.git "$base_dir/bcmeter"
+        if [ -d "$BASE_DIR/bcmeter" ]; then
+            rm -rf "$BASE_DIR/bcmeter"
+        fi
+        if [ -d "$BASE_DIR/interface" ]; then
+            rm -rf "$BASE_DIR/interface"
+        fi       
+
+        git clone https://github.com/bcmeter/bcmeter.git "$BASE_DIR/bcmeter"
         
         # Move cloned files to the base directory
-        mv "$BASE_DIR/bcmeter/"* "$BASE_DIR/"
-        
+        if [ -d "$BASE_DIR/bcmeter" ]; then
+            mv "$BASE_DIR/bcmeter/"* "$BASE_DIR/"
+        else
+            exit 1
+        fi        
         # Clean up unnecessary folders
-        rm -rf "$BASE_DIR/gerbers/" "$BASE_DIR/stl/"
+        if [ -d "$BASE_DIR/gerbers" ]; then
+            rm -rf "$BASE_DIR/gerbers"
+        fi
+        if [ -d "$BASE_DIR/stl" ]; then
+            rm -rf "$BASE_DIR/stl"
+        fi
+
         
         echo "Restoring Parameters"
         mv "$BASE_DIR/bcMeter_config.orig" "$BASE_DIR/bcMeter_config.json"
@@ -276,60 +349,20 @@ if [ "$1" == "update" ]; then
         echo "Most recent version installed"
     fi
 
+    if [ -f "$UPDATING" ]; then
+        rm "$UPDATING"
+    fi
+    apt autoremove -y
+
+    chmod -R 777 "$BASE_DIR"/.
 fi
 
 
-
-get_config_file() {
-    if [ -f "/boot/firmware/config.txt" ]; then
-        echo "/boot/firmware/config.txt"
-    else
-        echo "/boot/config.txt"
-    fi
-}
-
-CONFIG_FILE=$(get_config_file)
-
-# Function to append configurations if not already present
-append_config() {
-    local config_line="$1"
-    if ! grep -qF "$config_line" "$CONFIG_FILE"; then
-        echo "$config_line" | tee -a "$CONFIG_FILE"
-    fi
-}
-
-# Append necessary configurations
-append_config "dtoverlay=disable-bt"
-
-
-
-if ls /sys/bus/w1/devices/ | grep -q "28"; then
-    echo "temperature sensor on onewire bus found."
-    # Enable OneWire interface if not already enabled
-    if ! raspi-config nonint get_onewire | grep -q "1"; then
-        raspi-config nonint do_onewire 1
-        # Ensure the dtoverlay line is in config.txt
-        append_config "dtoverlay=w1-gpio,gpiopin=5"
-    fi
-else
-    echo "No temperature sensor on onewire bus found."
-    # Disable OneWire interface if enabled
-    if raspi-config nonint get_onewire | grep -q "1"; then
-        raspi-config nonint do_onewire 0
-        # Remove the dtoverlay line from config.txt
-        sed -i '/dtoverlay=w1-gpio,gpiopin=5/d' /boot/config.txt
-    fi
-fi
-
-
-
-# installing System
+# continue with installation if its not an update
 if [ -f "$BCMINSTALLED" ]; then
-    echo "Script already installed. Remove /tmp/bcmeter_installed if you really want to run this script again."
     exit
 fi
 
-echo "Installing software packages needed to run bcMeter. This will take a while and is dependent on your internet connection, the amount of updates, and the speed of your Pi."
 
 GITCLONE=0
 read -p "Clone from git (y) or already downloaded (n) (y/n): " yn
@@ -371,15 +404,8 @@ echo "Configuration complete."
 
 
 rm -rf "$BASE_DIR/bcmeter"
-chmod -R 777 "$BASE_DIR"/*
 
 touch "$BCMINSTALLED" 
-
-if [ -f "$UPDATING" ]; then
-    rm "$UPDATING"
-else
-    echo "File $UPDATING does not exist, skipping removal."
-fi
 
 
 
@@ -478,7 +504,7 @@ fi
 
 
 
-chmod 777 -R "$BASE_DIR"
+
 
 systemctl stop bcMeter_ap_control_loop
 systemctl stop bcMeter
@@ -560,6 +586,15 @@ systemctl enable hostapd
 
 touch "$BASE_DIR/maintenance_logs/compair_frost_upload.log"
 
+mkdir -p "$BASE_DIR"/tmp
+[ ! -f "$BASE_DIR"/tmp/BCMETER_WEB_STATUS ] && {
+    HOSTNAME=$(hostname)
+    echo -e "{\n    \"bcMeter_status\": 4,\n    \"log_creation_time\": \"\",\n    \"hostname\": \"$HOSTNAME\"\n}" > "$BASE_DIR"/tmp/BCMETER_WEB_STATUS
+}
+
+
+chmod -R 777 "$BASE_DIR"/.
+
 if [ "$1" != "update" ]; then
     echo "Installation will now finalize silently, cut the network connection and then reboot. This takes a while."
     echo "bcMeter will create a hotspot in about 5 minutes you'll need to connect to:"
@@ -572,5 +607,4 @@ if [ "$1" != "update" ]; then
 
     reboot now
 fi
-apt autoremove -y
 echo "bcMeter Update complete."

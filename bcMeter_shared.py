@@ -261,6 +261,15 @@ def get_bcmeter_start_time():
 	except (subprocess.CalledProcessError, ValueError):
 		return None
 
+def bcMeter_status():
+	file_path = base_dir + "/tmp/BCMETER_WEB_STATUS"
+	try:
+		with open(file_path, 'r') as file:
+			parameters = json.load(file)
+			return parameters.get("bcMeter_status")
+	except (FileNotFoundError, json.JSONDecodeError):
+		return None
+
 		
 def update_interface_status(status=None, prev_log_creation_time=None):
 	'''
@@ -269,6 +278,7 @@ def update_interface_status(status=None, prev_log_creation_time=None):
 	2=running and online
 	3=running in hotspot
 	4=hotspot only
+	5=stopped by user so dont autostart
 	'''
 	if_status_folder = base_dir + "/tmp/"
 	log_file_path = base_dir + "/logs/log_current.csv"

@@ -7,18 +7,19 @@ import os
 import json
 from datetime import datetime
 import re
-from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, i2c, setup_logging
+from collections import deque
+from bcMeter_shared import config_json_handler, check_connection, manage_bcmeter_status, show_display, config, i2c, setup_logging, run_command, send_email, update_config
 import pigpio
 #os.system('clear')
-bcMeter_version = "0.9.932 2025-01-08"
+bcMeter_version = "0.9.938 2025-02-18"
 
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 logger = setup_logging('bcMeter')
 logger.debug(config)
+logger.debug(f"bcMeter Version {bcMeter_version}")
 
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
-
 
 # Set variables with defaults
 disable_pump_control = config.get('disable_pump_control', False)
@@ -38,20 +39,21 @@ is_ebcMeter = config.get('is_ebcMeter', False)
 mail_logs_to = config.get('mail_logs_to', "")
 send_log_by_mail = config.get('send_log_by_mail', False)
 filter_status_mail = config.get('filter_status_mail', False)
-sender_password = config.get('email_service_password', 'email_service_password')
 disable_led = config.get('disable_led', False)
+airflow_type = int(config.get('af_sensor_type', 1))
+TWELVEVOLT_ENABLE = config.get('TWELVEVOLT_ENABLE', False)
+
+if airflow_type == 9:
+	print("configuring for honeywell airflow sensor")
+	from bcMeter_shared import Zephyr, InvalidSensorData, SensorNotSupported, compensated_reading, c_to_kelvin
 
 cooling = False
 temperature_to_keep = 35 if cooling is False else 0
 override_airflow = False
 
 
-
 sigma_air_880nm = 0.0000000777
 run_once = "false"
-
-#pwm for pump:
-#GPIO.setup(12,GPIO.OUT)           # initialize as an output.
 
 airflow_debug = False
 debug = False 
@@ -65,15 +67,11 @@ show_display(f"Initializing bcMeter", False, 0)
 show_display(f"bcMeter {bcMeter_version}", False, 1)
 
 
-import traceback, numpy, os, csv, typing, glob, signal, socket, importlib, smtplib
+import traceback, numpy, os, csv, typing, glob, signal, socket, importlib
 from tabulate import tabulate
 from pathlib import Path
 from time import sleep, strftime, time
 from threading import Thread, Event
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.application import MIMEApplication
-
 
 GPIO.setmode(GPIO.BCM)
 
@@ -87,37 +85,16 @@ debug = True if (len(sys.argv) > 1) and (sys.argv[1] == "debug") else False
 calibration = True if (len(sys.argv) > 1) and (sys.argv[1] == "cal") else False
 airflow_debug = True if (len(sys.argv) > 1) and (sys.argv[1] == "airflow") else False
 
-bcMeter_revision = 2024
-
-
-
 
 GPIO.setmode(GPIO.BCM)
 MONOLED_PIN=1
 PUMP_PIN = 12
 TWELVEVOLT_PIN = 27
+INFRARED_LED_PIN = 26
 GPIO.setup(MONOLED_PIN, GPIO.OUT)
-#GPIO.setup(TWELVEVOLT_PIN, GPIO.OUT)
-#GPIO.output(TWELVEVOLT_PIN, 1)
-
-if (use_rgb_led == 1):
-# Set up GPIO pins
-	R_PIN = 6
-	G_PIN = 7
-	B_PIN = 8
-	GPIO.setup(R_PIN, GPIO.OUT)
-	GPIO.setup(G_PIN, GPIO.OUT)
-	GPIO.setup(B_PIN, GPIO.OUT)
-
-	GPIO.output(R_PIN, 1)
-	GPIO.output(G_PIN, 1)
-	GPIO.output(B_PIN, 1)
 
 
-
-
-
-
+#update_config(variable='TWELVEVOLT_ENABLE', value=False)
 # /RDY bit definition
 MCP342X_CONF_RDY = 0x80
 
@@ -156,22 +133,12 @@ gain = MCP342X_CONF_GAIN_1X
 rate = rate_14bit
 VRef = 2.048
 
-
-
 airflow_only = True if (len(sys.argv) > 1) and (sys.argv[1] == "airflow") else False
 airflow_channel = channel1 if airflow_only is True and sys.argv[1] == "1" else channel3
 
 sampling_thread = housekeeping_thread = set_PWM_dutycycle_thread = None
 stop_event = Event()
 change_blinking_pattern = Event()
-
-if (bcMeter_revision < 2025):
-	INFRARED_LED_PIN = 26
-	TWELVEVOLT_PIN=13
-else:
-	INFRARED_LED_PIN = 19
-
-
 
 
 # Pump and LED PWM configurations
@@ -181,17 +148,13 @@ PUMP_PWM_FREQ = int(config.get('pwm_freq', 20))  # Configured pump PWM frequency
 LED_PWM_RANGE = 255
 LED_PWM_FREQ = 1000  
 
-# Initialize pigpio
-#pi = pigpio.pi()
+TWELVEVOLT_ENABLE = False
 
-# Set up PWM for pump and infrared LED
-
-
-
-
-def shutdown(reason):
+def shutdown(reason, shutdown_code=None):
 	global reverse_dutycycle, housekeeping_thread, set_PWM_dutycycle_thread
-	update_interface_status(0)
+	if shutdown_code is None:
+		shutdown_code=5
+	manage_bcmeter_status(action='set', bcMeter_status=shutdown_code)
 	print(f"Quitting: {reason}")
 	show_display("Goodbye",0,True)
 	if reason == "SIGINT":
@@ -224,6 +187,9 @@ def shutdown(reason):
 		pass
 	stop_event.set()
 	change_blinking_pattern.set()
+
+	run_command("sudo killall pigpio")
+
 	sleep(0.5)
 	os.kill(os.getpid(), 15)
 	sys.exit(1)
@@ -237,7 +203,8 @@ if len(my_pid.splitlines()) > 1:
 	shutdown("Already running")
 
 
-update_interface_status(0)
+if manage_bcmeter_status(parameter='bcMeter_status') !=5:
+	manage_bcmeter_status(action='set', bcMeter_status=0)
 
 online = check_connection()
 if (online):
@@ -252,45 +219,81 @@ except ImportError:
 	shutdown("Update needed for sht4x")
 
 
-
-if not airflow_only:
+def initialize_pwm_control():
+	"""Initialize PWM control and verify connection"""
+	global pi
+	
+	if airflow_only:
+		return True
+		
 	try:
-		pigpiod_running = subprocess.run(["pgrep", "-x", "pigpiod"], stdout=subprocess.PIPE).returncode == 0
+		# Check if pigpiod is already running
+		pigpiod_running = subprocess.run(["pgrep", "-x", "pigpiod"], 
+									   stdout=subprocess.PIPE).returncode == 0
 		if pigpiod_running:
 			subprocess.run(["sudo", "killall", "pigpiod"], check=True)
+			
+		# Start pigpiod
 		os.system("sudo pigpiod")
+		
+		# Verify daemon is responsive
 		delay = 1
-		retries = 20
+		retries = 10
 		for attempt in range(retries):
 			try:
-				result = subprocess.run(["pigs", "t"], check=True, capture_output=True, text=True)
-				break  # Exit the loop if the command succeeds
+				result = subprocess.run(["pigs", "t"], check=True, 
+									  capture_output=True, text=True)
+				print("pigpiod up and running")
+				break
 			except subprocess.CalledProcessError as e:
-				sleep(1)  # Wait for 1 second before retrying
-		else:
-			logger.error("Failed to setup pigpio")
-			print("Failed to setup pigpiod .")
+				if attempt < retries - 1:
+					sleep(1)
+					continue
+				else:
+					logger.error("Failed to setup pigpio")
+					print("Failed to setup pigpiod.")
+					shutdown("Pigpiod Error. Reboot and retry.", 6)
+		
+		# Initialize connection
 		pi = pigpio.pi()
+		if not pi.connected:
+			raise Exception("Failed to connect to pigpiod")
+			
+		# Configure PWM pins
 		pi.set_mode(PUMP_PIN, pigpio.OUTPUT)
 		pi.set_mode(INFRARED_LED_PIN, pigpio.OUTPUT)
 		pi.set_PWM_range(PUMP_PIN, PUMP_PWM_RANGE)
 		pi.set_PWM_frequency(PUMP_PIN, PUMP_PWM_FREQ)
 		pi.set_PWM_range(INFRARED_LED_PIN, LED_PWM_RANGE)
 		pi.set_PWM_frequency(INFRARED_LED_PIN, LED_PWM_FREQ)
+		
+		sleep(0.1)  # Short delay to ensure settings are applied
+					
+		return True
+		
+	except Exception as e:
+		logger.error("Error initializing PWM control: %s", e)
+		return False
 
-		sleep(0.1)
+
+
+if not airflow_only:
+	try:
+		if not initialize_pwm_control():
+			logger.error("Failed to initialize PWM control")
+			shutdown("Pigpiod Error. Reboot and retry.", 6)
 		if debug:
 			print("pigpiod initialized")
 	except Exception as e:
 		logger.error("Error: %s", e)
-
+		shutdown("PWM initialization failed", 6)
 
 try:
 	from scipy.ndimage import median_filter
 
 except ImportError:
 	logger.error("Update bcMeter!")
-	shutdown("Update needed for scipy")
+	shutdown("Update needed for scipy",6)
 
 
 
@@ -371,13 +374,6 @@ if sht40_i2c is False:
 		print("no temperature sensor detected!")
 		ds18b20 = False
 
-	
-
-
-
-
-
-
 def handle_signal(signum, frame):
 	if signum == signal.SIGUSR1:
 		signal_handler()
@@ -408,7 +404,7 @@ def initialise(channel, rate):
 		bus.write_byte(MCP342X_DEFAULT_ADDRESS, config)
 	except Exception as e:
 		logger.error(e)
-		shutdown(e)
+		shutdown(e,6)
 
 def update_config_entry(config, key, value, description, value_type, parameter):
 	if key not in config:
@@ -427,34 +423,51 @@ def update_config_entry(config, key, value, description, value_type, parameter):
 def calibrate_sens_ref():
 	global MCP342X_DEFAULT_ADDRESS
 	calibration_data = read_adc(MCP342X_DEFAULT_ADDRESS, 10)
-	raw_sens = calibration_data[0]
-	raw_ref = calibration_data[1]
+	raw_sens, raw_ref = calibration_data[0], calibration_data[1]
 	print(f"sens={raw_sens}, ref={raw_ref}")
-	if raw_sens < raw_ref:
-		ref_correction = 1
-		sens_correction = raw_ref / raw_sens
-	else:
-		sens_correction = 1
-		ref_correction = raw_sens / raw_ref
+	
+	if (raw_sens > 1.99) or (raw_ref > 1.99):
+		logger.error("LED to bright! Please check if filter paper present or dim the LED brightness!")
+		shutdown("LED brightness",6)
+	
+	if (raw_sens < 0.1) or (raw_ref < 0.1):
+		logger.error("LED to dim!! Please check LED and sensor connection and orientation!")
+		shutdown("LED to dim",6)
+		
 
-	# Load existing configuration or create a new one if it doesn't exist
+	sens_correction = 1 if raw_sens >= raw_ref else raw_ref / raw_sens
+	ref_correction = 1 if raw_ref >= raw_sens else raw_sens / raw_ref 
+
+
 	try:
 		with open("bcMeter_config.json", "r") as f:
 			config = json.load(f)
 	except FileNotFoundError:
 		config = convert_config_to_json()
 
-	# Update or create entries for correction factors
 	config["sens_correction"] = sens_correction
 	config["ref_correction"] = ref_correction
-
+	
 	update_config_entry(config, "sens_correction", sens_correction, "Sensor Correction Factor", "float", "administration")
 	update_config_entry(config, "ref_correction", ref_correction, "Reference Correction Factor", "float", "administration")
+	
+	# Set calibration time
+	calibration_time = datetime.now().strftime("%y%m%d_%H%M%S")
+	manage_bcmeter_status(action='set', calibration_time=calibration_time)
+	print(f"set calibration time to {calibration_time}")
 
+	filter_status_quotient = (raw_sens*sens_correction) / (raw_ref*ref_correction)
+	if filter_status_quotient == 1:
+		manage_bcmeter_status(action='set', filter_status=5)
+		print(f"set filter status to 5")
+	else:
+		logger.debug("Filter status quotient not 1 after calibration")
+		print("Filter status quotient not 1 after calibration")
 	# Store the updated configuration back to the file
 	with open("bcMeter_config.json", "w") as f:
 		json.dump(config, f, indent=4)
 	print(f"correction factor sens: {sens_correction}  and ref: {ref_correction} ")
+	print (f" using {sens_correction*raw_sens} and {ref_correction*raw_ref} as default now")
 
 def find_mcp_adress():
 	global MCP342X_DEFAULT_ADDRESS
@@ -478,33 +491,55 @@ def find_mcp_adress():
 		logger.debug("ADC found at Address: %s", hex(MCP342X_DEFAULT_ADDRESS))
 		return(MCP342X_DEFAULT_ADDRESS)
 	except:
-		shutdown("NO ADC")
+		shutdown("NO ADC",6)
 
+
+exception_timestamps = deque(maxlen=10)  # Keep track of the last 10 errors
+shutdown_threshold = 2  # Number of errors allowed per minute
 
 def getconvert(channel, rate):
 	if rate == rate_12bit:
 		N = 12
-		mcp_sps = 1/240
+		mcp_sps = 1 / 240
 	elif rate == rate_14bit:
 		N = 14
-		mcp_sps = 1/60
+		mcp_sps = 1 / 60
 	elif rate == rate_16bit:
 		N = 16
-		mcp_sps = 1/15
-	sleep(mcp_sps*1.4) #better sleep more than less else buffer can be clogged and we get same values for different channels
-
+		mcp_sps = 1 / 15
+	
+	sleep(mcp_sps * 1.4)
 	try:
 		data = bus.read_i2c_block_data(MCP342X_DEFAULT_ADDRESS, channel, 2)
 	except Exception as e:
-		logger.error(f"Error reading ADC ({e})")
-		shutdown(f"Error reading ADC ({e})")
-	
+		logger.error(f"Error reading ADC: {e}")
+		print("Error reading ADC")
+		current_time = time()
+		exception_timestamps.append(current_time)
+		recent_errors = [t for t in exception_timestamps if current_time - t < 60]
+		if len(recent_errors) > shutdown_threshold:
+			shutdown(f"Frequent ADC errors detected: {e}",6)
 
 	voltage = ((data[0] << 8) | data[1])
 	if voltage >= 32768:
 		voltage = 65536 - voltage
 	voltage = (2 * VRef * voltage) / (2 ** N)
 	return round(voltage,5)
+
+def read_honeywell_airflow():
+	env_temperature = c_to_kelvin(20.0)
+	env_pressure = 1024.0  # hPa
+	try:
+		sensor = Zephyr()
+		samples_to_take=100
+		qs = sensor.read_average(samples_to_take)
+		current_airflow = round(compensated_reading(qs, env_temperature, env_pressure)/samples_to_take,4)
+		#print(current_airflow, qs)
+		return current_airflow
+	except Exception as e:
+		return -1
+		logger.error(f"Honeywell Error {e}")
+		#shutdown(f"Honeywell Error {e}")
 
 
 def read_adc(mcp_i2c_address, sample_time):
@@ -521,24 +556,27 @@ def read_adc(mcp_i2c_address, sample_time):
 	airflow_samples_to_take = 5	if sample_time < 20 else 20
 	airflow_samples_to_take = 200 if airflow_only is True else airflow_samples_to_take
 	check_interval = 1
-
-	try:
-		if (airflow_sensor_bias == -1):
-			sens_bias_samples_to_take = 100
-			initialise(airflow_channel, rate_12bit)
-			airflow_sample_sum = 0
-			while airflow_sample_index<=sens_bias_samples_to_take:
-				airflow_sample_voltage = getconvert(airflow_channel, rate_12bit)
-				airflow_sample_sum += airflow_sample_voltage
-				airflow_sample_index+=1
-			average_channel3 = airflow_sample_sum / sens_bias_samples_to_take
-			airflow_sensor_bias = 0.5-average_channel3
-			#airflow_sensor_bias=0
-			print(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
-			logger.debug(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
-			skipsampling = True
-	except NameError:
-		pass
+	if airflow_type != 9:
+		try:
+			if (airflow_sensor_bias == -1):
+				sens_bias_samples_to_take = 100
+				initialise(airflow_channel, rate_12bit)
+				airflow_sample_sum = 0
+				while airflow_sample_index<=sens_bias_samples_to_take:
+					airflow_sample_voltage = getconvert(airflow_channel, rate_12bit)
+					airflow_sample_sum += airflow_sample_voltage
+					airflow_sample_index+=1
+				average_channel3 = airflow_sample_sum / sens_bias_samples_to_take
+				airflow_sensor_bias = 0.5-average_channel3
+				#airflow_sensor_bias=0
+				if (airflow_sensor_bias > abs(0.05)):
+					logger.error(f"Airflow Sensor Bias is to high ({airflow_sensor_bias}). Check Sensor")
+					shutdown(f"Airflow Sensor Bias is to high ({airflow_sensor_bias}). Check Sensor.",6)
+				print(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
+				logger.debug(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
+				skipsampling = True
+		except NameError:
+			pass
 
 
 	while ((time()-start)<sample_time-0.25) and (skipsampling is False):
@@ -558,28 +596,31 @@ def read_adc(mcp_i2c_address, sample_time):
 				pass
 		sample_every_x_cycle = 5 if rate == rate_12bit else 2
 		if ((airflow_sensor is True) or (airflow_only is True)) and (i % sample_every_x_cycle == 0) and (calibration is False):
-			initialise(airflow_channel, rate_12bit)
-			airflow_sample_sum = 0
-			while airflow_sample_index<=airflow_samples_to_take:
-				airflow_sample_voltage = getconvert(airflow_channel, rate_12bit)
-				if (airflow_sample_voltage)==2.047:
-					airflow_sample_voltage=5 #overweigh for reduction
-				airflow_sample_sum += airflow_sample_voltage
-				airflow_sample_index+=1
-			average_channel3 = airflow_sample_sum / airflow_samples_to_take
-			if (average_channel3 >= 2.047):
-				logger.debug("airflow over sensor limit")
-			sum_channel3+=average_channel3
-			current_airflow=round(airflow_by_voltage(average_channel3, af_sensor_type),4)
-			
-			#blink_led(235)
+			if (airflow_type < 9):
+				initialise(airflow_channel, rate_12bit)
+				airflow_sample_sum = 0
+				while airflow_sample_index<=airflow_samples_to_take:
+					airflow_sample_voltage = getconvert(airflow_channel, rate_12bit)
+					if (airflow_sample_voltage)==2.047:
+						airflow_sample_voltage=5 #overweigh for reduction
+					airflow_sample_sum += airflow_sample_voltage
+					airflow_sample_index+=1
+				average_channel3 = airflow_sample_sum / airflow_samples_to_take
+				if (average_channel3 >= 2.047):
+					logger.debug("airflow over sensor limit")
+				sum_channel3+=average_channel3
+				current_airflow=round(airflow_by_voltage(average_channel3, af_sensor_type),4)
+			if airflow_type==9:
+				current_airflow = read_honeywell_airflow()
+				if current_airflow == -1:
+					continue
+				#blink_led(235)
 			if (airflow_sensor is True):
 				check_airflow(current_airflow)
 				pass
 			airflow_sample_index=1
 			j+=1
 			if airflow_only:
-
 				cycle = (j%20)+1
 				if cycle == 1:
 					airflow_avg = 0
@@ -590,13 +631,12 @@ def read_adc(mcp_i2c_address, sample_time):
 		i+=1
 		if (debug is True):
 			print(f"{i}, {round(sum_channel1/i,3)}, {round(sum_channel2/i,3)}, {round(average_channel3,3)}, current: {round(voltage_channel1,3)}, {round(voltage_channel2,3)}, {round(voltage_channel3,3)} ")
-	if (skipsampling is False):
-		average_channel3 = (sum_channel3 / j) if (airflow_sensor is True) and (calibration is False) else 0
+	if (skipsampling is False) and (i>0):
+		average_channel3 = (sum_channel3 / j) if (airflow_sensor is True) and (calibration is False) and (j > 0) else 0
+
 		#'''	
 		average_channel1 = sum_channel1 / i
 		average_channel2 = sum_channel2 / i
-
-
 
 	#average_channel3 = sum_channel3 / i
 	#logger.debug(round(airflow_by_voltage(average_channel3, af_sensor_type),4),j)
@@ -604,9 +644,10 @@ def read_adc(mcp_i2c_address, sample_time):
 	#logger.debug(i, "SEN: ", round(average_channel1,2), ", REF: ", round(average_channel2,4), ", AIRFLOW/VOLTAGE", round(airflow_by_voltage(average_channel3,af_sensor_type),4),"/",round(average_channel3,1))
 	return average_channel1, average_channel2, average_channel3
 
+
+
 def airflow_by_voltage(voltage,sensor_type):
 	global airflow_sensor_bias
-	pump_type=2
 	if (airflow_only is True) or (debug is True):
 		#print("\033c", end="", flush=True)
 		#print(voltage, airflow_sensor_bias)
@@ -658,39 +699,66 @@ def airflow_by_voltage(voltage,sensor_type):
 
 def get_sensor_values(MCP342X_DEFAULT_ADDRESS,sample_time):
 	main_sensor_value = reference_sensor_value = airflow_sensor_value = 0
-	sensor_values = read_adc(MCP342X_DEFAULT_ADDRESS, sample_time)
+	try:
+		sensor_values = read_adc(MCP342X_DEFAULT_ADDRESS, sample_time)
+	except Exception as e:
+		print(f"Can't read from ADC: {e}")
+		return -1, -1, -1
 	main_sensor_value = sensor_values[0]
 	reference_sensor_value = sensor_values[1]
 	airflow_sensor_value = sensor_values[2]
 	return main_sensor_value, reference_sensor_value, airflow_sensor_value
 
 def set_pwm_duty_cycle(component, duty_cycle, stop_event=None):
-	global config
+	"""Set PWM duty cycle with error handling and reconnection logic"""
+	global config, pi
 	reverse_dutycycle = config.get('reverse_dutycycle', False)
+	
 	try:
 		duty_cycle = int(duty_cycle)
 		if component == 'pump':
 			if 0 <= duty_cycle <= PUMP_PWM_RANGE:
 				adjusted_duty = PUMP_PWM_RANGE - duty_cycle if reverse_dutycycle else duty_cycle
-				pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
+				try:
+					pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
+				except Exception as e:
+					# If we lost connection, try to reinitialize
+					if initialize_pwm_control():
+						pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
+					else:
+						raise e
+						
 		elif component == 'infrared_led':
 			if 0 <= duty_cycle <= LED_PWM_RANGE:
-				pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
+				try:
+					pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
+				except Exception as e:
+					# If we lost connection, try to reinitialize
+					if initialize_pwm_control():
+						pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
+					else:
+						raise e
+						
 	except Exception as e:
-		if debug:
-			print(f"Exception in PWM thread for {component}: {e}")
+		logger.error(f"PWM control failed for {component}: {e}")
 		# Safely shut down the pump on exception
 		if component == 'pump':
-			safe_duty = 0 if not reverse_dutycycle else PUMP_PWM_RANGE
-			pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
+			try:
+				safe_duty = PUMP_PWM_RANGE if reverse_dutycycle else 0
+				pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
+			except:
+				pass
 
 	# Handle stop_event for graceful thread exit
 	if stop_event and stop_event.is_set():
 		if debug:
 			print(f"Exiting PWM thread for {component}")
 		if component == 'pump':
-			safe_duty = 0 if not reverse_dutycycle else PUMP_PWM_RANGE
-			pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
+			try:
+				safe_duty = PUMP_PWM_RANGE if reverse_dutycycle else 0
+				pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
+			except:
+				pass
 
 
 
@@ -762,7 +830,7 @@ def adjust_airflow(current_mlpm):
 		if desired_airflow_in_lpm <= 0.06:
 			logger.error("Minimum airflow of 60 ml not reached. Stopping the script.")
 			print("Minimum airflow of 60 ml not reached. Stopping the script.")
-			shutdown("NOMAXAIRFLOW")
+			shutdown("NOMAXAIRFLOW",6)
 	return
 
 def pump_test():
@@ -836,91 +904,23 @@ def filter_values(log, kernel):
 		writer.writeheader()
 		writer.writerows(data)
 
-def send_email(payload):
-	# Email configuration
-	smtp_server = "live.smtp.mailtrap.io"
-	sender_email = f"{devicename} Status <mailtrap@bcmeter.org>"
-	receiver_email = f"{mail_logs_to}"
-	message = MIMEMultipart()
-	message["From"] = sender_email
-	message["To"] = receiver_email
-	email_receiver_list = receiver_email.split(",")
-	subject_prefix ="bcMeter Status Mail: "
-
-	if (payload == "Filter"):
-		logger.debug("Filter Change Mail sent")
-		subject = subject_prefix + "Change filter!"
-		body = "Hello dear human, please consider changing the filter paper the next time you're around, thank you!"
-
-
-	if (payload == "Log"):
-		logger.debug("Log Mail sent")
-		subject =subject_prefix + "Log file"
-		body = "Hello dear human, please find attached the log file"
-
-		# Attach the file
-		file_path = base_dir+"/logs/log_current.csv"
-		current_time = datetime.now().strftime("%y%m%d_%H%M")
-		send_file_as = f"{devicename}_{current_time}.csv"
-		with open(file_path, "rb") as file:
-			attachment = MIMEApplication(file.read(), Name=send_file_as)
-
-		# Add header for the attachment
-		attachment["Content-Disposition"] = f"attachment; filename={send_file_as}"
-		message.attach(attachment)
-
-	if (payload == "Pump"):
-		logger.error("Error mail (Pump Malfcuntion) sent")
-		subject =subject_prefix + "Pump Malfunction"
-		body = "I do not register any airflow. Please check the connections and if the pump is working"
-
-		# Attach the file
-		file_path = base_dir+"/logs/log_current.csv"
-		current_time = datetime.now().strftime("%y%m%d_%H%M")
-		send_file_as = f"{devicename}_{current_time}.csv"
-		with open(file_path, "rb") as file:
-			attachment = MIMEApplication(file.read(), Name=send_file_as)
-
-		# Add header for the attachment
-		attachment["Content-Disposition"] = f"attachment; filename={send_file_as}"
-		message.attach(attachment)
-
-
-	# Email content
-	message["Subject"] = subject
-	message.attach(MIMEText(body, "plain"))
-
-	# Establish a connection to the SMTP server
-	for receiver in email_receiver_list:
-		try:
-			with smtplib.SMTP(smtp_server, 587) as server:
-				server.starttls()
-				server.login("api", sender_password)
-
-				# Send the email
-				server.sendmail(sender_email, receiver, message.as_string())
-
-			logger.debug("Email to %s sent successfully!", receiver)
-		except Exception as e:
-			logger.error("Email alert: %s", e)
 
 def apply_temperature_correction(BCngm3_unfiltered, temperature_current):
 	# Constants obtained from polynomial regression; EXPERIMENTAL
 	intercept = -15358.619
 	temperature_coefficient = 1918.009
 	temperature_squared_coefficient = -54.284
-	
 	# Calculate the correction factor based on temperature
 	correction_factor = intercept + temperature_current * temperature_coefficient + temperature_current**2 * temperature_squared_coefficient
-	
 	# Apply the correction factor to BCngm3_unfiltered
-	corrected_BCngm3_unfiltered = BCngm3_unfiltered * correction_factor
-	
+	corrected_BCngm3_unfiltered = BCngm3_unfiltered * correction_factor	
 	return corrected_BCngm3_unfiltered
 
 
 def bcmeter_main(stop_event):
-	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password, ds18b20, config, temperature_current
+	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password, ds18b20, config, temperature_current, TWELVEVOLT_ENABLE
+	TWELVEVOLT_IS_ENABLED = False
+	filter_status_threshold = 3
 	compair_offline_logging = False
 	if (airflow_only is True):
 		get_sensor_values(MCP342X_DEFAULT_ADDRESS, 86400*31)
@@ -941,7 +941,7 @@ def bcmeter_main(stop_event):
 		print(new_log_message)
 		logger.debug(new_log_message)
 		createLog(logFileName,header)
-		update_interface_status(1)
+		manage_bcmeter_status(action='set', bcMeter_status=1)
 		logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";"+ str(BCngm3_unfiltered) + ";" + str(temperature_current) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(sht_humidity) + ";" + str(volume_air_per_sample) 
 		online = check_connection()
 
@@ -956,13 +956,17 @@ def bcmeter_main(stop_event):
 		housekeeping_thread.start()
 
 	y = 0
-	
 	while(True):
+		if (TWELVEVOLT_ENABLE is True) and (TWELVEVOLT_IS_ENABLED is False):
+			GPIO.setup(TWELVEVOLT_PIN, GPIO.OUT)
+			GPIO.output(TWELVEVOLT_PIN, 1)
+			TWELVEVOLT_IS_ENABLED = True
+			print("12V Power is on")
 		get_location = config.get('get_location', False)
 		location = config.get('location', [0,0])
 		device_specific_correction_factor = float(str(config.get('device_specific_correction_factor', 1)).replace(',', '.'))
 		filter_scattering_factor = float(str(config.get('filter_scattering_factor', 1.39)).replace(',', '.'))
-		mail_sending_interval = int(config.get('mail_sending_interval', 6))
+		mail_sending_interval = float(str(config.get('mail_sending_interval', 6)).replace(',', '.'))
 		filter_status_mail = config.get('filter_status_mail', False)
 		send_log_by_mail = config.get('send_log_by_mail', False)
 		email_service_password = config.get('email_service_password', 'email_service_password')
@@ -973,6 +977,7 @@ def bcmeter_main(stop_event):
 		sens_correction = float(str(config.get('sens_correction', 1)).replace(',', '.'))
 		ref_correction = float(str(config.get('ref_correction', 1)).replace(',', '.'))
 		sample_spot_diameter = float(str(config.get('sample_spot_diameter', 0.5)).replace(',', '.'))
+		sender_password = str(config.get('sender_password'))
 		set_pwm_duty_cycle('infrared_led', led_brightness)
 		start = time()
 		if (samples_taken < 3) and (sample_time >60):
@@ -980,23 +985,27 @@ def bcmeter_main(stop_event):
 		samples_taken+=1
 		reference_sensor_value_last_run=reference_sensor_value
 		sensor_values=get_sensor_values(MCP342X_DEFAULT_ADDRESS, sample_time)
+		if sensor_values == [-1,-1,-1]:
+			continue
 		main_sensor_value = sensor_values[0]*sens_correction
 		reference_sensor_value = sensor_values[1]*ref_correction
-
-
 		#test small compensation:
 		#env_change = reference_sensor_value_last_run - reference_sensor_value
 		#if env_change !=0:
 		#	main_sensor_value = main_sensor_value * (1 - (numpy.log10(abs(env_change) + 1) * -1 * (1 + abs(env_change))))
 		if (airflow_sensor is True):
-			airflow_sensor_value = sensor_values[2]
-			airflow_per_minute = round(airflow_by_voltage(airflow_sensor_value,af_sensor_type),4)
-			if (af_sensor_type==0) and (airflow_per_minute>0.075):
-				logger.error("To high airflow!")
-			if (af_sensor_type==1) and (airflow_per_minute>450):
-				logger.error("To high airflow!")
+			if airflow_type < 9:
+				airflow_sensor_value = sensor_values[2]
+				airflow_per_minute = round(airflow_by_voltage(airflow_sensor_value,af_sensor_type),4)
+				if (af_sensor_type==0) and (airflow_per_minute>0.075):
+					logger.error("To high airflow!")
+				if (af_sensor_type==1) and (airflow_per_minute>450):
+					logger.error("To high airflow!")
+
+				#logger.debug("measurement took ", delay)
+			else:
+				airflow_per_minute = read_honeywell_airflow()
 			delay = time() - start
-			#logger.debug("measurement took ", delay)
 			volume_air_per_sample=(delay/60)*airflow_per_minute #liters of air between samples	
 		else:
 			airflow_per_minute = float(config.get('airflow_per_minute', 0.100).replace(',', '.'))
@@ -1012,34 +1021,35 @@ def bcmeter_main(stop_event):
 		filter_status_quotient = main_sensor_value_current/reference_sensor_value_current
 		filter_status = (
 			5 if filter_status_quotient > 0.8 else
-			4 if 0.8 < filter_status_quotient <= 0.7 else
-			3 if 0.7 < filter_status_quotient <= 0.55 else
-			2 if 0.55 < filter_status_quotient <= 0.45 else
-			1 if 0.45 < filter_status_quotient <= 0.3 else
+			4 if filter_status_quotient > 0.7 else
+			3 if filter_status_quotient > 0.55 else
+			2 if filter_status_quotient > 0.45 else
+			1 if filter_status_quotient > 0.3 else
 			0 if filter_status_quotient <= 0.3 else
 			-1
 		)
 
+		manage_bcmeter_status(action='set', filter_status=filter_status)
 		current_time = time()
 		mail_sending_interval_in_seconds = mail_sending_interval*60*60
 		if (current_time - last_email_time >= mail_sending_interval_in_seconds) and (samples_taken>1):
-			online=check_connection()
-			if (send_log_by_mail is True) and (mail_logs_to != "your@email.address"):
-				if (sender_password =="email_service_password"):
-					logger.error("Contact jd@bcmeter.org for email service password. this is a antispam protection.")
-					send_log_by_mail = False
-					filter_status_mail = False
-				if (online is True):
-					if (send_log_by_mail is True):
+
+			if (send_log_by_mail is True) and (mail_logs_to != "your@email.address") and (mail_logs_to is not None) and (sender_password !="email_service_password"):
+				if (check_connection()):
+					if (send_log_by_mail):
 						send_email("Log")
-					if (filter_status_mail is True) and (filter_status<3):
+					if (filter_status_mail) and (filter_status<filter_status_threshold):
 						send_email(f"Filter Status {filter_status}")
-				last_email_time = current_time
+			else:
+				logger.error("Contact jd@bcmeter.org for email service password. this is a antispam protection.")
+				send_log_by_mail = False
+				filter_status_mail = False
+			last_email_time = current_time
 		if (abs(bcm_temperature_last_run-temperature_current) > .5): notice = notice + "tempChange-"
 		attenuation_current=round((numpy.log(main_sensor_value_current/reference_sensor_value_current)*-100),5)
 
 		atn_peak = False
-		if (attenuation_last_run != 0) and (samples_taken>1):
+		if (attenuation_last_run != 0) and (samples_taken>1) and (attenuation_current != 0):
 			peakdetection = 1 - abs((attenuation_last_run/attenuation_current))
 			if (peakdetection > 0.015) and (abs(attenuation_current- attenuation_last_run)>1.5):
 				atn_peak = True
@@ -1047,7 +1057,7 @@ def bcmeter_main(stop_event):
 		if (attenuation_last_run == 0):
 			attenuation_last_run = attenuation_current
 		if (airflow_per_minute<0.005) and (airflow_sensor is True) and (disable_pump_control is False):
-			if (mail_logs_to is not None):
+			if (mail_logs_to is not None) and (mail_logs_to != "your@email.address"):
 				online=check_connection()
 				logger.error("PUMP MALFUNCTION - STOPPING")
 				if (online is True): 
@@ -1055,17 +1065,13 @@ def bcmeter_main(stop_event):
 			notice=notice+"NO_AF"
 			print("disable_led", disable_led)
 			if (disable_led is False):
-
 				change_blinking_pattern.set()
-
 				blinking_thread = Thread(target=blink_led, args=(555,change_blinking_pattern))
 				blinking_thread.start()
 			sleep(5)
-			shutdown("PUMP MALFUNCTION")
-
+			shutdown("PUMP MALFUNCTION",6)
 		attenuation_coeff = sample_spot_areasize*((attenuation_current-attenuation_last_run)/100)/volume_air_per_sample	
 		absorption_coeff = attenuation_coeff/filter_scattering_factor
-
 		device_specific_correction_factor = device_specific_correction_factor/1000 if is_ebcMeter else device_specific_correction_factor
 		try:
 			BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
@@ -1080,18 +1086,13 @@ def bcmeter_main(stop_event):
 			with open(base_dir+"/logs/" + logFileName, "a") as log:
 				logString = f"{datetime.now().strftime('%d-%m-%y')};{datetime.now().strftime('%H:%M:%S')};{reference_sensor_value_current};{main_sensor_value_current};{attenuation_current};{attenuation_coeff};{BCngm3_unfiltered};{BCngm3_unfiltered};{round(temperature_current, 1)};{notice};{main_sensor_bias};{reference_sensor_bias};{round(delay, 1)};{round(sht_humidity, 1)};{round(airflow_per_minute,3)}"
 				log.write(logString+"\n")
-
 			kernel = 5 if not is_ebcMeter else 3
-
 			if (samples_taken<kernel):
 				kernel = samples_taken
-
 			filter_values(base_dir + "/logs/" + logFileName, kernel)
-
 			log_file_path = base_dir+"/logs/" + logFileName
 			column_index = 7  
 			sum_for_avg = []
-
 			with open(log_file_path, 'r') as log_file:
 				for line in log_file:
 					columns = line.strip().split(';')
@@ -1100,9 +1101,7 @@ def bcmeter_main(stop_event):
 						sum_for_avg.append(value)
 					except (ValueError, IndexError):
 						pass
-
 			average = sum(sum_for_avg[-12:]) / min(12, len(sum_for_avg))
-
 			if samples_taken > 15:
 				if average > 0:
 					show_display(f"{int(average)} ngm3/hr", False, 0)
@@ -1110,7 +1109,6 @@ def bcmeter_main(stop_event):
 					show_display(f"Sampling...", False, 0)
 			else:
 				show_display(f"No AVG yet", False, 0)
-
 			compair_offline_log_path = base_dir+"/logs/compair_offline_log.log"
 			if (compair_upload is True):
 				online=check_connection()	
@@ -1140,7 +1138,6 @@ def bcmeter_main(stop_event):
 		bcm_temperature_last_run = temperature_current
 		atn_peak = False
 		online = False
-
 		if (run_once == "true"): 
 			logger.debug("cycle of " + str(sample_time) + " took " + str(round(delay,2)) + " seconds")
 			GPIO.output(INFRARED_LED_PIN, 0)
@@ -1184,28 +1181,22 @@ def get_temperature():
 			for i in range(20):
 				temperature_samples.append(sensor.temperature)
 				humidity_samples.append(sensor.relative_humidity)
-
 			temperature_current = sum(temperature_samples) / 20
 			sht_humidity = sum(humidity_samples) / 20		
 		except:
 			pass
 	
 	else:
-		logger.debug("no temperature sensor detected")
+		logger.error("no temperature sensor detected")
 		temperature_current = 1
 	return temperature_current
 
 
 def housekeeping(stop_event):
-	global temperature_to_keep, session_running_since, ds18b20, airflow_debug, config, temperature_current
-
+	global temperature_to_keep, session_running_since, ds18b20, airflow_debug, config, temperature_current, TWELVEVOLT_ENABLE
 	while (True):
-		config = load_config_from_json()
-		if (check_service_running("hostapd")):
-			update_interface_status(3)
-		else:
-			update_interface_status(2)
-
+		config = config_json_handler()
+		TWELVEVOLT_ENABLE = config.get('TWELVEVOLT_ENABLE')
 		now = datetime.now()
 		time_diff = now - session_running_since
 		hours, remainder = divmod(time_diff.seconds, 3600)
@@ -1343,13 +1334,10 @@ def led_communication():
 	GPIO.output(B_PIN, 0)
 
 
-
-
-
 if __name__ == '__main__':
-		# Configure PWM pins
 	GPIO.setup(1,GPIO.OUT)
 	GPIO.setup(23,GPIO.OUT)
+
 	if (calibration):
 		find_mcp_adress()
 		set_pwm_duty_cycle('infrared_led', led_brightness)
@@ -1380,8 +1368,6 @@ if __name__ == '__main__':
 				print("starting housekeeping thread")
 		if debug:
 			print("everything set up and running")
-
-
 
 	except KeyboardInterrupt: 
 		shutdown("CTRL+C")

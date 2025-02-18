@@ -34,6 +34,19 @@
 	$language["edit-password"] = "Edit Password";
 	
 	$language["set_date_and_time"] = "If you plan to run continouusly in hotspot mode, you have to tell bcMeter the current date and time.";
-
+$language["wifi_network"] = "WiFi Network";
+$language["wifi_network_loading_short"] = "Loading networks...";
+$language["wifi_network_loading"] = "Scanning for available networks...";
+$language["add_custom_network"] = "Add custom network";
+$language["custom_network"] = "Network name";
+$language["edit-password"] = "Change password";
+$language["save_and_connect"] = "Save & Connect";
+$language["save_success"] = "WiFi settings saved successfully";
+$language["service_not_running"] = "WiFi service is not running.";
+$language["password"] = "Password";
+$language["scan_networks"] = "Scan for Networks";
+$language["reconnect"] = "Reconnect";
+$language["delete_wifi"] = "Delete WiFi";
+$language["scan_networks"] = "Refresh List";
 ?>
 

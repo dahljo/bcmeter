@@ -11,7 +11,7 @@ import signal
 import requests
 import uuid
 import json
-from bcMeter_shared import load_config_from_json, check_connection, update_interface_status, show_display, config, setup_logging, get_pinout_info, find_model_number, run_command, bcMeter_status
+from bcMeter_shared import config_json_handler, check_connection, manage_bcmeter_status, show_display, config, setup_logging, get_pi_revision, run_command, send_email
 import importlib
 from datetime import datetime
 import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
@@ -23,24 +23,24 @@ from threading import Thread, Event
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.9.49 2024-11-22"
+ctrl_lp_ver="0.9.52 2025-02-04"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
+devicename = socket.gethostname()
 
 time_synced = False
 
 logger = setup_logging('ap_control_loop')
 
 
-logger.debug(f"bcMeter Network Handler started (v{ctrl_lp_ver})")
-pinout_output = get_pinout_info()
-if pinout_output:
-	logger.debug(find_model_number(pinout_output))
+logger.debug(f"bcMeter Network Handler started for {devicename} (v{ctrl_lp_ver})")
+
+logger.debug(get_pi_revision())
 
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 try:
 	if os.path.exists(base_dir + '/bcMeter_config.json'):
-		config = load_config_from_json()
+		config = config_json_handler()
 	else:
 		config = convert_config_to_json()
 		config = {key: value['value'] for key, value in config.items()}
@@ -54,12 +54,14 @@ debug = True if (len(argv) > 1) and (argv[1] == "debug") else False
 enable_wifi = config.get('enable_wifi', True)
 is_ebcMeter = config.get('is_ebcMeter', False)
 use_display = config.get('use_display', False)
-bcMeter_started = str(datetime.now().strftime("%y%m%d_%H%M%S"))
-devicename = socket.gethostname()
+run_hotspot = config.get('run_hotspot', False)
 
+bcMeter_started = str(datetime.now().strftime("%y%m%d_%H%M%S"))
+current_datetime_timestamp = time.time()
 
 
 if (enable_wifi is False):
+	import sys
 	p = subprocess.Popen(["sudo", "ip", "link", "set", "wlan0", "down"])
 	p.communicate()
 	stop_access_point()
@@ -74,93 +76,29 @@ show_display(f"Ctrl Loop {ctrl_lp_ver}", False, 1)
 
 #wifi credentials file
 WIFI_CREDENTIALS_FILE=base_dir + '/bcMeter_wifi.json'
-
-
-
+HOSTAPD_CONF, WPA_CONF = "/etc/hostapd/hostapd.conf", "/etc/wpa_supplicant/wpa_supplicant.conf"
 #stop hotspot from being active after a while (can be overridden by parameter run_hotspot=True)
 keep_hotspot_alive_without_successful_connection = 3600
 
 
-def get_wifi_bssid(ssid):
-	logger.debug('... Getting wifi bssid for ssid={}'.format(ssid))
-	ap_list=[]
-	out_newlines=None
-	for i in range(5):              #try max 5 times
-		logger.debug('\ttrying... {}'.format(i))
-		scan_cmd='sudo iw dev wlan0 scan ap-force'
-		process = subprocess.Popen([scan_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-		out, err = process.communicate()
-		if(len(err)==0):                                                #the command did not produce an error so e can process the list of access points
-			out_newlines=str(out).replace('\\n', '\n')                  #because of the bytes to str conversion newlines are \\n instead of \n
-			break
-		else:
-			logger.debug('\terror: {}'.format(err))
-		time.sleep(2)                                                   #sleep before retrying
-		
-	if(not out_newlines):                                               #the command produced an error every time, return no bssid
-		return None
-		
-	split_str=re.findall('BSS.*\n.*\n.*\n.*\n.*\n.*\n.*\n.*\n.*SSID.*\n', out_newlines, re.MULTILINE)
-
-	for cell in split_str:     
-		ap={}
-		ap['bssid']=None
-		ap['frequency']=None
-		ap['signal']=None
-		ap['ssid']=None
-		
-		m=re.search('BSS\s*([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})', cell)
-		if(m):
-			ap['bssid']=m.group(1)
-
-		m=re.search('freq:\s*(\d+)', cell)
-		if(m):
-			ap['frequency']=int(m.group(1))
-		
-		m=re.search('signal:\s*(-?\d+\.\d+)\s*dBm', cell)
-		if(m):
-			ap['signal']=float(m.group(1))
-		
-		m=re.search('SSID:\s*(.+)', cell)
-		if(m):
-			ap['ssid']=m.group(1)
-		
-		ap_list.append(ap)
-
-	ap_list=[x for x in ap_list if x['ssid']==ssid]                     #filter for ssid
-	
-	logger.debug('Access points found for ssid={}:'.format(ssid))
-	for ap in ap_list:
-		ap_list=[x for x in ap_list if x['frequency']<2500]                 #filter for 2.4 GHz wifi band -> freqs lower than 2500 MHz
-		ap_list=sorted(ap_list, key=lambda x: x['signal'], reverse=True)    #sort on signal_level
-	
-	if(len(ap_list)>0):
-		logger.debug('Using access point: {}'.format(ap_list[0]))
-		return ap_list[0]['bssid']
-	else:
-		logger.debug('Did not find any access points')
-		return None
-
-def stop_access_point():
-	deactivate_dnsmasq_service()
-	if check_service_running("hostapd"):
-		#run_command("iptables -F")
-		#run_command("iptables -t nat -F")
-		run_command("sudo systemctl stop hostapd")
-
-
-def stop_bcMeter_service():
-	update_interface_status(0)
-	if check_service_running("bcMeter"):
-		p = subprocess.Popen(["sudo", "systemctl", "stop", "bcMeter"]).communicate()
-		p = subprocess.Popen(["sudo", "systemctl", "disable", "bcMeter"]).communicate()
-		logger.debug("bcMeter service disabled.")
+def check_service_running(service_name):
+	try:
+		result = subprocess.run(['systemctl', 'is-active', service_name], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		return result.stdout.decode().strip() == 'active'
+	except subprocess.CalledProcessError:
+		return False
 
 def activate_dnsmasq_service():
-	if check_service_running("dnsmasq") is False:
-		#p = subprocess.Popen(["sudo", "systemctl", "enable", "dnsmasq"]).communicate()
-		p = subprocess.Popen(["sudo", "systemctl", "start", "dnsmasq"]).communicate()
-		logger.debug("Dnsmasq service started.")
+	try:
+		if check_service_running("dnsmasq"):
+			run_command("sudo systemctl stop dnsmasq")
+		run_command("sudo systemctl start dnsmasq")
+		logger.debug("Dnsmasq service started successfully")
+		return True
+	except Exception as e:
+		logger.error(f"Error activating dnsmasq: {e}")
+		return False
+
 
 
 def deactivate_dnsmasq_service():
@@ -169,22 +107,119 @@ def deactivate_dnsmasq_service():
 		p = subprocess.Popen(["sudo", "systemctl", "disable", "dnsmasq"]).communicate()
 		logger.debug("Dnsmasq service stopped/deactivated.")
 
-def run_bcMeter_service():
+def stop_access_point(checkpoint = None):
+	logger.debug(f"Stopping Hotspot ({checkpoint})")
+	deactivate_dnsmasq_service()
+	prepare_dhcpcd_conf(0)
+	if check_service_running("hostapd"):
+		run_command("sudo systemctl stop hostapd")
+
+
+def stop_bcMeter_service(checkpoint = None):
+
+	if check_service_running("bcMeter"):
+		manage_bcmeter_status(action='set', bcMeter_status=5)
+		subprocess.run(["sudo", "systemctl", "start", "bcMeter"])
+		logger.debug("bcMeter service disabled.")
+
+
+
+def run_bcMeter_service(checkpoint = None):
+	logger.debug(f"Starting bcMeter ({checkpoint})")
 	if check_service_running("bcMeter") is False:
-		#p = subprocess.call(["sudo", "systemctl", "enable", "bcMeter"])
-		p = subprocess.Popen(["sudo", "systemctl", "start", "bcMeter"]).communicate()
+		subprocess.run(["sudo", "systemctl", "start", "bcMeter"])
 		logger.debug("bcMeter service started.")
+		time.sleep(5)
 
-def force_wlan0_reset():
-	logger.debug("forcing wlan0 reset")
-	p = subprocess.Popen(["sudo", "ip", "link", "set", "wlan0", "down"])
-	p.communicate()
-	p = subprocess.Popen(["sudo", "ip", "link", "set", "wlan0", "up"])
-	p.communicate()
-
-
-
-
+def force_wlan0_reset(checkpoint=None):
+	"""
+	Force reset the WLAN interface with comprehensive hardware checks and logging.
+	Returns:
+		bool: True if reset was successful, False otherwise
+	"""
+	try:
+		logger.debug(f"Starting WLAN reset procedure {checkpoint}")
+		# Check if WiFi hardware is blocked
+		rfkill_output = subprocess.run(['rfkill', 'list', 'wifi'], 
+												capture_output=True, 
+												text=True)
+		if "blocked: yes" in rfkill_output.stdout:
+			logger.warning("WiFi is blocked by rfkill - attempting to unblock")
+			subprocess.run(["sudo", "rfkill", "unblock", "wifi"], check=True)
+			time.sleep(1)
+		
+		# Check for hardware presence
+		if not os.path.exists('/sys/class/net/wlan0'):
+			logger.error("WLAN interface not found in system")
+			return False
+				
+		# Get initial device state
+		iwconfig_output = subprocess.run(['iwconfig', 'wlan0'], 
+													capture_output=True, 
+													text=True)
+		logger.debug(f"Initial WLAN state: {iwconfig_output.stdout.strip()}")
+		
+		# Check driver status
+		driver_check = subprocess.run(['lsmod'], capture_output=True, text=True)
+		if 'brcmfmac' not in driver_check.stdout:
+			logger.error("WiFi driver not loaded - attempting to load")
+			try:
+				subprocess.run(["sudo", "modprobe", "brcmfmac"], check=True)
+				time.sleep(2)
+			except subprocess.CalledProcessError as e:
+				logger.error(f"Failed to load WiFi driver: {e}")
+				return False
+		
+		# Perform the reset sequence
+		reset_sequence = [
+				["sudo", "ip", "link", "set", "wlan0", "down"],
+				["sudo", "ip", "addr", "flush", "dev", "wlan0"],
+				["sudo", "systemctl", "restart", "wpa_supplicant"],
+				["sudo", "ip", "link", "set", "wlan0", "up"]
+		]
+		
+		for cmd in reset_sequence:
+			try:
+				result = subprocess.run(cmd, 
+											capture_output=True, 
+											text=True, 
+											check=True)
+				logger.debug(f"Executed {' '.join(cmd)}: {result.stdout.strip()}")
+				time.sleep(1)  # Give system time to process each step
+			except subprocess.CalledProcessError as e:
+				logger.error(f"Command failed {' '.join(cmd)}: {e}")
+				return False
+		
+		# Verify interface is up
+		post_reset_check = subprocess.run(['ip', 'link', 'show', 'wlan0'], 
+													capture_output=True, 
+													text=True)
+		if "state UP" not in post_reset_check.stdout:
+			logger.error("WLAN interface failed to come up after reset")
+			return False
+			
+		# Check for firmware errors
+		dmesg_output = subprocess.run(['dmesg', '|', 'grep', 'brcmfmac'], 
+												shell=True, 
+												capture_output=True, 
+												text=True)
+		if "firmware error" in dmesg_output.stdout:
+			logger.error("Firmware errors detected in system log")
+			return False
+			
+		# Final connectivity check
+		time.sleep(2)  # Wait for interface to fully initialize
+		final_state = subprocess.run(['iwconfig', 'wlan0'], 
+											capture_output=True, 
+											text=True)
+		logger.debug(f"Final WLAN state: {final_state.stdout.strip()}")
+		
+		return True
+		
+	except Exception as e:
+		logger.error(f"Critical error during WLAN reset: {str(e)}")
+		logger.debug("Error details:", exc_info=True)  # Log full traceback
+		return False
 
 def get_uptime():
 	uptime = time.time()-current_datetime_timestamp
@@ -199,46 +234,113 @@ def delete_wifi_credentials():
 	logger.debug("Reset WiFi Configs")
 
 
-def setup_access_point():
-	#p = subprocess.Popen(["sudo", "systemctl", "unmask","hostapd"])
-	#p.communicate()
-	#stop_access_point()
+def debug_dhcp_status():
+	logger.debug("=== DHCP Debug Info ===")
+	debug_commands = [
+		["systemctl", "status", "dnsmasq"],
+		"ps aux | grep dnsmasq",  # Shell command
+		["ip", "addr", "show", "wlan0"],
+		["cat", "/var/lib/misc/dnsmasq.leases"],
+		["cat", "/etc/dnsmasq.conf"],
+		["iptables", "-L", "-n", "-t", "nat"],
+		["route", "-n"],
+		["cat", "/proc/sys/net/ipv4/ip_forward"]
+	]
 	
-	#reset wpa_supplicant
-	file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
-	file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
-	file.close()
+	for cmd in debug_commands:
+		try:
+			if isinstance(cmd, str):  # Shell command with pipes
+				output = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+			else:  # List of command arguments
+				output = subprocess.run(cmd, capture_output=True, text=True)
+			logger.debug(f"\n=== {cmd if isinstance(cmd, str) else ' '.join(cmd)} ===\n{output.stdout}")
+			if output.stderr:
+				logger.error(f"Error in {cmd}: {output.stderr}")
+		except Exception as e:
+				logger.error(f"Failed to run {cmd}: {e}")
 
-	prepare_dhcpd_conf(1)
+def setup_access_point():
+	stop_access_point(1)
+	time.sleep(1)
+	force_wlan0_reset(1)
+	time.sleep(1)
+	restart_ap_loop = False
+	try:
+		# Configure hostapd
+		device_name = socket.gethostname()
+		try:
+			with open(HOSTAPD_CONF, 'r') as f:
+				config = f.read()
+			ssid_match = re.search(r'^ssid=(.*)$', config, flags=re.MULTILINE)
+			current_ssid = ssid_match.group(1) if ssid_match else None
+			
+			if current_ssid != device_name:
+				new_config = re.sub(r'^ssid=.*$', f'ssid={device_name}', config, flags=re.MULTILINE)
+				with open(HOSTAPD_CONF, 'w') as f:
+					f.write(new_config)
+				os.chmod(HOSTAPD_CONF, 0o600)
+				restart_ap_loop = True
+		except PermissionError:
+				logger.debug("Permission denied to change SSID")
+		except Exception as e:
+				logger.debug(f"Error: {e}")
+		# Configure wpa_supplicant
+		with open(WPA_CONF, 'w') as f:
+			f.write('\n'.join([
+				"ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev",
+				"update_config=1",
+				"country=DE"
+			]))
 
-	activate_dnsmasq_service()
-	run_command("sudo systemctl daemon-reload")
-	logger.debug("daemon reloaded")
-	run_command("sudo service dhcp restart")
-	# restart the AP
-	#run_command("iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j DNAT --to-destination 192.168.18.8:80")
-	#run_command("iptables -t nat -A POSTROUTING -j MASQUERADE")
-	run_command("sudo systemctl start hostapd")
-	logger.debug("hostapd started")
-	show_display("Hotspot", False, 0)
-	show_display("Go to Interface", False, 1)
+		# Configure dhcpcd and services
+		prepare_dhcpcd_conf(1)
+		run_command("sudo systemctl daemon-reload")
+		run_command("sudo service dhcpcd restart")
+		time.sleep(2)
+		
+		if activate_dnsmasq_service():
+			time.sleep(1)
+			run_command("sudo systemctl restart hostapd")
+			logger.debug(f"AP setup complete with SSID: {device_name}")
+			show_display("Hotspot", False, 0)
+			show_display("Go to Interface", False, 1)
+			#debug_dhcp_status()
+			return True
+		return False
 
+	except Exception as e:
+		logger.error(f"Error in setup_access_point: {e}")
+		return False
+
+
+def validate_wifi_credentials(ssid, pwd):
+	if ssid is None or pwd is None:
+		return False
+	if not (1 <= len(ssid) <= 32):
+		return False
+	if not (8 <= len(pwd) <= 63):
+		return False
+	if not all(32 <= ord(char) <= 126 for char in pwd):
+		return False
+	return True
 
 
 def get_wifi_credentials():
-	#logger.debug('Getting wifi credentials from file')
 	try:
 		with open(WIFI_CREDENTIALS_FILE) as wifi_file:
-			data=json.load(wifi_file)
-			if (data['wifi_ssid'] == '') or (data['wifi_pwd'] == ''):
-				return None, None
+			data = json.load(wifi_file)
+			if not validate_wifi_credentials(data['wifi_ssid'], data['wifi_pwd']):
+				raise ValueError("Invalid WiFi credentials")
 			return data['wifi_ssid'], data['wifi_pwd']
 	except FileNotFoundError as e:
 		logger.error('FileNotFoundError:\n{}'.format(e))
 		with open(WIFI_CREDENTIALS_FILE, 'w') as f:
 			f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
 		os.chmod(WIFI_CREDENTIALS_FILE, 0o777)
-	logger.debug("no file/ssid/pwd!")
+	except (ValueError, KeyError) as e:
+		pass
+		#logger.error(f'Credentials error: {e}')
+	#logger.debug("no file/ssid/pwd!")
 	return None, None
 
 
@@ -249,8 +351,10 @@ def is_wifi_driver_loaded():
 		output = result.stdout.strip()
 
 		if "Interface" in output:
+			logger.debug("WiFi adapter found")
 			return True
 		else:
+			logger.error("NO WIFI ADAPTER FOUND!")
 			return False
 	except FileNotFoundError:
 		return False
@@ -266,15 +370,22 @@ for _ in range(3):
 
 
 def create_wpa_supplicant(wifi_ssid, wifi_pwd):
-	# SSID is new, so replace the conf file
-	file = open("/etc/wpa_supplicant/wpa_supplicant.conf", "w")
-	file.write("ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n")
-	file.write("\nnetwork={\n")
-	file.write("\tssid=\"" + wifi_ssid + "\"\n")
-	file.write("\tpsk=\"" + wifi_pwd + "\"\n")
-	file.write("\tscan_ssid=1\n")
-	file.write("}")
-	file.close()
+	config = [
+		"ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev",
+		"update_config=1",
+		"country=DE",
+		"network={",
+		f'\tssid="{wifi_ssid}"',
+		f'\tpsk="{wifi_pwd}"',
+		"\tscan_ssid=1",
+		"\tkey_mgmt=WPA-PSK",
+		"\tproto=RSN WPA",
+		"\tpairwise=CCMP",
+		"}"
+	]
+	
+	with open("/etc/wpa_supplicant/wpa_supplicant.conf", "w") as file:
+		file.write("\n".join(config))
 
 def is_wifi_in_range(wifi_name):
 	retries = 10
@@ -301,13 +412,13 @@ def is_wifi_in_range(wifi_name):
 		attempts += 1  # Increment the attempt counter
 
 	logger.error("Failed to execute WiFi Scan after multiple attempts. Giving up.")
-	reset_wlan0()
+
 
 	return False
 
 
 
-def prepare_dhcpd_conf(option):
+def prepare_dhcpcd_conf(option):
 	# remove the static IP  (last 3 lines of dhcpcd.conf file)
 	file = open('/etc/dhcpcd.conf', 'r+')
 	data = file.readlines()
@@ -325,6 +436,7 @@ def prepare_dhcpd_conf(option):
 	elif (option == 1):
 		# and then add our hotspot dhcp config (always after #bcMeterConfig)
 		file = open("/etc/dhcpcd.conf", "a")
+		file.write("#bcMeterConfig\n")  
 		file.write("interface wlan0\n")
 		file.write("  static ip_address=192.168.18.8/24\n")
 		file.write("  nohook wpa_supplicant")
@@ -332,88 +444,6 @@ def prepare_dhcpd_conf(option):
 
 		logger.debug("edited dhcpcd for AP")
 
-
-
-
-
-
-def connect_to_wifi():
-	wifi_ssid, wifi_pwd = get_wifi_credentials()
-	if wifi_ssid == None and wifi_pwd == None:
-		if check_service_running("hostapd") is False:
-			logger.debug("Setup AP cause no SSID / PWD")
-			setup_access_point()
-	else:
-		wifi_in_range = is_wifi_in_range(wifi_ssid)
-		if wifi_in_range is False:
-			if check_service_running("hostapd") is False:
-				logger.debug("Known WiFi not in range so I am opening the hotspot")
-				setup_access_point()
-		else:
-			logger.debug("Found credentials for wifi %s", wifi_ssid)
-			if wifi_ssid != get_wifi_network():
-				logger.debug(f"Trying to establish connection to Wi-Fi {wifi_ssid}")
-				show_display("Connecting to WiFi", False, 0)
-				show_display(f"{wifi_ssid}", False, 1)
-				create_wpa_supplicant(wifi_ssid, wifi_pwd)
-				# Stop the access point if it is running and reset dhcpcd configuration
-				prepare_dhcpd_conf(0)
-				stop_access_point()
-
-				subprocess.Popen(["sudo", "systemctl", "daemon-reload"]).communicate()
-				logger.debug("reloading dhcpcd")
-				subprocess.Popen(["sudo", "service", "dhcpcd", "restart"]).communicate()
-				# Attempt to connect to the Wi-Fi
-				logger.debug("dhcpcd is restarting and trying to connect to your Wi-Fi")
-				retries = 1
-				for attempt in range(retries):
-					logger.debug(f"Connection attempt {attempt + 1}")
-					if check_connection():
-						if not check_service_running('bcMeter'):
-							run_bcMeter_service()
-							show_display(f"Conn OK", False, 0)
-							show_display(f"Starting up", False, 1)
-						else:
-							show_display(f"Conn OK", False, 0)
-							show_display(f"Sampling", False, 1)
-						break
-					else:
-						logger.debug("Connection not OK, resetting interface and retrying")
-						force_wlan0_reset()
-						time.sleep(3)
-				if wifi_ssid == get_wifi_network():
-					logger.debug("stopping accesspoint; i seem to be offline but connected to the desired wifi") 
-					stop_access_point()
-				else:
-					logger.error(f"Cannot connect to {wifi_ssid} - check and re-enter PSK")
-					delete_wifi_credentials()
-			else:
-				if check_connection():
-					if not check_service_running('bcMeter'):
-						run_bcMeter_service()
-						show_display(f"Conn OK", False, 0)
-						show_display(f"Starting up", False, 1)
-					else:
-						show_display(f"Conn OK", False, 0)
-						show_display(f"Sampling", False, 1)
-					
-				
-
-
-
-def reset_wlan0():
-	try:
-		subprocess.run(["sudo", "rfkill", "unblock", "all"], check=True)
-		logger.debug("Bringing down wlan0 interface...")
-		subprocess.run(["sudo", "ip", "link", "set", "wlan0", "down"], check=True)
-
-
-		logger.debug("Bringing up wlan0 interface...")
-		subprocess.run(["sudo", "ip", "link", "set", "wlan0", "up"], check=True)
-
-
-	except Exception as e:
-		logger.error(f"An unexpected error occurred: {e}")
 
 
 
@@ -428,13 +458,6 @@ def get_wifi_network():
 	except subprocess.CalledProcessError:
 		# Handle errors if the command fails
 		return -1
-
-def check_service_running(service_name):
-	try:
-		result = subprocess.run(['systemctl', 'is-active', service_name], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-		return result.stdout.decode().strip() == 'active'
-	except subprocess.CalledProcessError:
-		return False
 
 def check_time_sync():
 	try:
@@ -465,89 +488,157 @@ def time_sync_check_loop(stop_event):
 			time.sleep(30)
 
 
+wifi_connection_retries = 0
+
+
+def manage_wifi(checkpoint = None):
+	global wifi_connection_retries
+	wifi_ssid, wifi_pwd = get_wifi_credentials()
+	bcMeter_running = check_service_running("bcMeter")
+	if (not wifi_ssid or not wifi_pwd) or run_hotspot:
+		if not check_service_running("hostapd"):
+			logger.debug("Setting up Hotspot - no credentials or forced mode")
+			subprocess.Popen(["sudo", "systemctl", "daemon-reload"]).communicate()
+			setup_access_point()
+		return
+
+	current_network = get_wifi_network()
+	if current_network == wifi_ssid and check_connection():
+		wifi_connection_retries = 0
+		if check_service_running("hostapd"):
+			stop_access_point(2)
+		if not check_service_running('bcMeter') and manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6):
+			if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
+
+				run_bcMeter_service("1")
+				show_display("Conn OK", False, 0)
+				show_display("Starting up", False, 1)
+
+		return
+
+	# Not connected to desired network
+	logger.debug(f"Not connected to desired network. Current: {current_network}")
+	if is_wifi_in_range(wifi_ssid):
+		logger.debug(f"WiFi {wifi_ssid} in range, attempting connection")
+		show_display("Connecting to WiFi", False, 0)
+		show_display(f"{wifi_ssid}", False, 1)
+		create_wpa_supplicant(wifi_ssid, wifi_pwd)
+		if check_service_running("hostapd"):
+			stop_access_point(3)
+		subprocess.Popen(["sudo", "systemctl", "daemon-reload"]).communicate()
+		subprocess.Popen(["sudo", "service", "dhcpcd", "restart"]).communicate()
+		
+		for attempt in range(2):
+			if check_connection():
+				wifi_connection_retries = 0
+				if not check_service_running('bcMeter') and manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6):
+					if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
+						run_bcMeter_service("2")
+						show_display("Conn OK", False, 0)
+						show_display("Starting up", False, 1)
+				return
+			force_wlan0_reset()
+			time.sleep(2)
+		
+		wifi_connection_retries += 1
+		if wifi_connection_retries >= 5:
+			logger.error(f"Cannot connect to {wifi_ssid}")
+			wifi_connection_retries = 0
+			delete_wifi_credentials()
+			if not check_service_running("hostapd"):
+				setup_access_point()
+	else:
+		#logger.debug(f"WiFi {wifi_ssid} not in range. Retry: {wifi_connection_retries}")
+		wifi_connection_retries += 1
+		if wifi_connection_retries >= 3 and not check_service_running("hostapd"):
+			logger.debug("Starting hotspot after failed attempts")
+			setup_access_point()
+
+
 def ap_control_loop():
 	global time_synced
-	config = load_config_from_json()
+	if (manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6)):
+		manage_bcmeter_status(action='set', bcMeter_status=4)
+	config = config_json_handler()
 	keep_running = we_got_correct_time = is_online = False
 	scan_interval = 10
 	run_hotspot = config.get('run_hotspot', False)
 	is_ebcMeter = config.get('is_ebcMeter', False)
-	wifi_ssid, wifi_pwd = get_wifi_credentials()
-	update_interface_status(4)
-	if not run_hotspot and (wifi_ssid != None and wifi_pwd != None):
-		connect_to_wifi()
-		stop_time_sync_thread = Event()
-		time_sync_thread = Thread(target=time_sync_check_loop, args=(stop_time_sync_thread,))
-		time_sync_thread.start()
-	if run_hotspot or (wifi_ssid == None and wifi_pwd is None):
-		setup_access_point()	
-	logger.debug("bcMeter AP Control Loop initialized")
+	prev_log_creation_time = None
+	was_offline = True
 
-	if (not wifi_ssid and not wifi_pwd):
-		run_hotspot = True if is_ebcMeter else run_hotspot
+	wifi_ssid, _ = get_wifi_credentials()
+	if not wifi_ssid or not is_wifi_in_range(wifi_ssid):
+		logger.debug("Initial check: No WiFi available, starting hotspot")
+		setup_access_point()
+	else:
+		manage_wifi(1)
+	stop_time_sync_thread = Event()
+	time_sync_thread = Thread(target=time_sync_check_loop, args=(stop_time_sync_thread,))
+	time_sync_thread.start()
 
 	while True:
-		time_start=time.time()
-		config = load_config_from_json()
-		is_online = check_connection()
-		if time_synced and we_got_correct_time is False:
-			uptime = get_uptime()
-			we_got_correct_time = True
-		else:
-			uptime = keep_hotspot_alive_without_successful_connection-1
+		config = config_json_handler()
 		run_hotspot = config.get('run_hotspot', False)
+		is_online = check_connection()
 		bcMeter_running = check_service_running("bcMeter")
-		bcMeter_flask_running = check_service_running("bcMeter_flask")
-		if not bcMeter_running:
-			if bcMeter_status() != 5:
-				update_interface_status(4 if not is_online else 0)
+
+		# Check network state
+		current_network = get_wifi_network()
+		wifi_ssid, _ = get_wifi_credentials()
+		
+		if current_network != wifi_ssid:
+			manage_wifi(2)
+
+
+
+		if run_hotspot or check_service_running("hostapd"):
+			current_status = 3 if bcMeter_running else 4
+		elif is_online:
+			current_status = 2
+		elif not is_online and check_service_running("hostapd"):
+			current_status = 4
 		else:
-			update_interface_status(3 if not is_online else 2)
-		if not bcMeter_flask_running:
-			subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
-		if not is_online:
-			#logger.debug("Not online")
-			if not run_hotspot:
-				if (time_synced is False):
-					keep_running = True
-				if uptime >= keep_hotspot_alive_without_successful_connection:
-					if is_ebcMeter:
-						keep_running = True
-					if not keep_running:
-						logger.debug("Still in configuration timeframe")
-						logger.debug("No sampling running")
-						if bcMeter_running:
-							logger.debug("bcMeter is running, so we keep measuring and override the shutdown timer in hotspot mode. make sure to configure it properly!")
-							update_interface_status(3)
-							keep_running = True
-							logger.debug("Wi-Fi connection lost. Attempting to reconnect.")
-							connect_to_wifi()
-						else:
-							logger.debug("Shutting down due to inactivity.")
-							stop_bcMeter_service()
-							show_display("Shutting down", False, 0)
-							show_display("No Config", False, 1)
-							stop_access_point()
-							os.system("shutdown now -h")
-				else:
-					connect_to_wifi()
+			current_status = 0
+
+		if (current_status in (3,4)):
+			manage_bcmeter_status(action='set',in_hotspot=True)
+		else:
+			manage_bcmeter_status(action='set',in_hotspot=False)
+
+		if (manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6)):
+			if is_online and not bcMeter_running:
+				run_bcMeter_service("3")
+			prev_log_creation_time = manage_bcmeter_status(action='set', bcMeter_status=current_status, log_creation_time=prev_log_creation_time)
 
 
-		if (is_online is True) and (run_hotspot is False):
-			if (check_service_running("hostapd")):
-				stop_access_point()
-				logger.debug("(1) Connection ok so stopping hotspot")
 
-
+		if is_online:
+			if was_offline:
+				try:
+					logger.debug("Device connected, sending onboarding email")
+					send_email("Onboarding")
+				except Exception as e:
+					logger.error(f"Failed to send onboarding email: {e}")
+				was_offline = False
+			if time_synced and not we_got_correct_time:
+				uptime = get_uptime()
+				we_got_correct_time = True
+		else:
+			was_offline = True
+		if not is_online and not run_hotspot:
+			uptime = get_uptime() if time_synced else keep_hotspot_alive_without_successful_connection-1
+			if uptime >= keep_hotspot_alive_without_successful_connection:
+				if not (is_ebcMeter or bcMeter_running or keep_running):
+					logger.debug("Still No Configuration")                            
+					show_display("No Config", False, 0)
+					#run_commmand("sudo shotdown now")
+					keep_running = True 
+					
 		time.sleep(scan_interval)
-		#logger.debug("AP loop took ", time.time()-time_start)
-
-
 
 
 if not debug:
-	stop_access_point()
-	reset_wlan0()
 	ap_control_loop()
 else:
 	logger.debug("HAPPY DEBUGGING")

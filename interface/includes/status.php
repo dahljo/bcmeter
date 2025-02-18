@@ -1,41 +1,78 @@
 
 <?php
 // Start the PHP session
-//$version = "24-10-16"
+//$version = "0.5 2025-02-01"
 session_start();
 header('X-Accel-Buffering: no');
 $baseDir = file_exists('/home/bcMeter') ? '/home/bcMeter' : '/home/pi';
 
-function checkUndervoltage() {
-		$styles = [
-				'red' => "<span class='text-danger font-weight-bold'>",
-				'black' => "<span class='text-dark'>",
-				'reset' => "</span>"
-		];
-		$today = date('M d');
-		
-		// Get the syslog entries after the newest "Linux version" occurrence
-		$output = shell_exec("sudo tac /var/log/syslog | awk '/Linux version/ {exit} {print}' | grep -a 'Undervoltage'");
-		$lines = array_filter(explode("\n", trim($output)));
-		
-		if (empty($lines)) return "";
-
-		$response = "
-				<div class='text-center'>
-						{$styles['red']}<strong>WARNING</strong>: Undervoltage detected - you might ignore it when it does not happen very often. <br>if it repeats a lot, use a 5.25V, 3A power supply and a short cable.{$styles['reset']}<br><br>
-		";
-		
-		foreach (array_slice($lines, -4) as $line) {
-				$style = (strpos($line, $today) !== false) ? 'red' : 'black';
-				$response .= "{$styles[$style]}{$line}{$styles['reset']}<br>";
-		}
-
-		// Add Bootstrap-styled button centered
-		$response .= "<br /><button class='btn btn-danger mt-3' onclick='ignoreWarning()'>Ignore undervoltage warning</button></div><br />";
-
-		return $response;
+function checkUpdate($path) {
+    $local = '0.9.20';  // default for old versions
+    $remote = '0.9.19'; // default if not found online
+    
+    // Get local version
+    if ($content = @file_get_contents($path)) {
+        preg_match('/bcMeter_version\s*=\s*"([0-9.]+)"/', $content, $m);
+        if ($m) $local = $m[1];
+    }
+    
+    // Get remote version
+    if ($content = @file_get_contents('https://raw.githubusercontent.com/dahljo/bcmeter/main/bcMeter.py')) {
+        preg_match('/bcMeter_version\s*=\s*"([0-9.]+)"/', $content, $m);
+        if ($m) $remote = $m[1];
+    }
+    
+    // Split versions
+    $l = explode('.', $local);
+    $r = explode('.', $remote);
+    
+    // Compare versions
+    $update = false;
+    if ($r[0] > $l[0]) $update = true;
+    elseif ($r[0] == $l[0]) {
+        if ($r[1] > $l[1]) $update = true;
+        elseif ($r[1] == $l[1] && $r[2] > $l[2]) $update = true;
+    }
+    
+    return [
+        'update' => $update,
+        'current' => $local,
+        'available' => $remote
+    ];
 }
 
+function checkUndervoltage() {
+    $styles = [
+        'red' => "<span class='text-danger font-weight-bold'>",
+        'black' => "<span class='text-dark'>",
+        'reset' => "</span>"
+    ];
+    $today = date('M d');
+    
+    // Get syslog entries from last 10 minutes only
+    $timeFilter = date('Y-m-d H:i:s', strtotime('-10 minutes'));
+    $output = shell_exec("sudo tac /var/log/syslog | awk '/Linux version/ {exit} {print}' | grep -a 'Undervoltage' | awk -v time='$timeFilter' '$0 >= time'");
+    $lines = array_filter(explode("\n", trim($output)));
+    
+    // Only show warning if more than 4 events in last 10 minutes
+    if (count($lines) <= 4) {
+        return "";
+    }
+    
+    $response = "
+        <div class='text-center'>
+            {$styles['red']}<strong>WARNING</strong>: Frequent undervoltage detected - Please use a 5.25V, 3A power supply and a short cable.{$styles['reset']}<br><br>
+    ";
+    
+    // Only show the events from within the 10-minute window
+    foreach ($lines as $line) {
+        $style = (strpos($line, $today) !== false) ? 'red' : 'black';
+        $response .= "{$styles[$style]}{$line}{$styles['reset']}<br>";
+    }
+    
+    $response .= "<br /><button class='btn btn-danger mt-3' onclick='ignoreWarning()'>Ignore undervoltage warning</button></div><br />";
+    return $response;
+}
 
 
 // Check if the request is a POST request
@@ -234,16 +271,13 @@ case 'deleteOld':
 			$bcMeter_wifi_address ="http://$bcMeter_hostname.local";
 
 			if(empty($wifi_pwd)){   
-				exec("sudo bash -c \"echo 'ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=DE\n' > /etc/wpa_supplicant/wpa_supplicant.conf\"");
-				
 				echo "<pre style='text-align:center'><h2>Rebooting to hotspot mode</h2>";
-				echo "Connect to WiFi called bcMeter when it shows up in a minute before you connect to <a href='$bcMeter_hotspot_address'>$bcMeter_hotspot_address</a>.";  
+				echo "Connect to WiFi called bcMeter when it shows up in a minute or two before you connect to <a href='$bcMeter_hotspot_address'>$bcMeter_hotspot_address</a>.";  
 
 			}
 			else {
 				echo "<pre style='text-align:center'><h2>Rebooting and logging into WiFi $wifi_ssid</h2>";  
-				echo "You can access your bcMeter then at <br /> <a href='$bcMeter_wifi_address'>$bcMeter_wifi_address</a> <br /> I will try to automatically redirect in about in about a minute.";  
-				 
+				echo "You can access your bcMeter then at <br /> <a href='$bcMeter_wifi_address'>$bcMeter_wifi_address</a> <br /> I will try to automatically redirect in about in about a minute."; 
 				echo "</pre><script>setTimeout(function(){window.location.replace('$bcMeter_wifi_address');}, 70000);</script>";
 			}
 			exec('sudo reboot now');
@@ -253,7 +287,7 @@ case 'deleteOld':
 
 			break;
 		case 'shutdown':
-			echo "bcMeter will now shutdown<br />You may disconnect the power source in 20 seconds or when you hear the pump is stopped.<br /><br /><pre>";
+			echo "bcMeter will now shutdown<br />You may disconnect the power source in about 20 seconds.<br /><br /><pre>";
 			$cmd = 'sudo shutdown now';
 					echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
 

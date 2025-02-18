@@ -185,9 +185,7 @@ border: 1px solid #ccc;
         .table {
             margin-top: 20px;
         }
-        .btn-primary, .btn-danger {
-            margin: 5px;
-        }
+
         /* Additional styles for your switch */
         .bootstrap-switch .bootstrap-switch-handle-on, .bootstrap-switch .bootstrap-switch-handle-off {
             white-space: nowrap; /* Ensures text doesn't wrap */

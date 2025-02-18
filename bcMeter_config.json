@@ -11,6 +11,12 @@
         "type": "boolean",
         "parameter": "session"
     },
+    "show_undervoltage_warning": {
+        "value": false,
+        "description": "Display undervoltage warnings in the interface.",
+        "type": "boolean",
+        "parameter": "device"
+    },
     "sample_spot_diameter": {
         "value": 0.4,
         "description": "Set the Diameter of the sample spot size in cm",
@@ -163,5 +169,11 @@
         "description": "Contact jd@bcmeter.org for the mail sending service password - not public for spam protection",
         "type": "string",
         "parameter": "device"
-    }
+    },
+    "TWELVEVOLT_ENABLE": {
+    "value": false,
+    "description": "Enable 12V power output on the device",
+    "type": "boolean",
+    "parameter": "device"
+}
 }

@@ -48,7 +48,7 @@ PYTHON_PACKAGES="\
     requests \
     flask-cors"
 
-INSTALLER_VERSION="0.89 08-01-25"
+INSTALLER_VERSION="0.90 2025-02-18"
 
 BCMINSTALLLOG="$BASE_DIR/maintenance_logs/bcMeter_install.log"
 BCMINSTALLED=/tmp/bcmeter_installed
@@ -114,20 +114,11 @@ systemctl start zramswap.service
 
 if [[ "$1" != "force-update" ]]; then
     if [ -f "$UPDATING" ]; then
-        echo "Script seems to be in an update procedure. If you are really sure that it's not, restart the script with force-update"
+        echo "Script seems to be in an update procedure. If you are really sure that it's not, restart the script with parameter 'force-update'"
         exit
     fi
 fi
 
-# Resize the root partition when it is smaller than 3GB
-SIZE=$(df -h --output=size,target | grep "/" | awk '{print $1}' | head -1)
-SIZE=$(echo "$SIZE" | sed 's/[^0-9]//g')
-TOCOMPARE=3
-
-if [ "$SIZE" -lt "$TOCOMPARE" ]; then
-    raspi-config nonint do_expand_rootfs
-    echo "Resizing partition to full size"
-fi
 
 alias_bcd="alias bcd='python3 bcMeter.py debug'"
 alias_bcc="alias bcc='python3 bcMeter.py cal'"
@@ -258,6 +249,7 @@ fi
 
 #updating
 if [ "$1" == "update" ]; then
+    echo "Updating bcMeter"
     touch $UPDATING
     version=''
     localfile=bcMeter.py
@@ -343,8 +335,6 @@ if [ "$1" == "update" ]; then
         mv "$BASE_DIR/bcMeter_config.orig" "$BASE_DIR/bcMeter_config.json"
         mv "$BASE_DIR/bcMeter_wifi.json.orig" "$BASE_DIR/bcMeter_wifi.json"
         
-        # Restart the service
-        systemctl restart bcMeter_ap_control_loop
     else
         echo "Most recent version installed"
     fi
@@ -358,10 +348,93 @@ if [ "$1" == "update" ]; then
 fi
 
 
-# continue with installation if its not an update
-if [ -f "$BCMINSTALLED" ]; then
-    exit
+
+
+
+
+systemctl stop bcMeter_ap_control_loop
+# Remove existing service files if they exist and create new ones
+rm /lib/systemd/system/bcMeter_ap_control_loop.service
+touch /lib/systemd/system/bcMeter_ap_control_loop.service
+tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF > /dev/null
+[Unit]
+Description=bcMeter manage-access point & connections to wifi
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 $BASE_DIR/bcMeter_ap_control_loop.py
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
+echo "Set up bcMeter_ap_control_loop service"
+systemctl enable bcMeter_ap_control_loop
+
+rm /lib/systemd/system/bcMeter.service
+touch /lib/systemd/system/bcMeter.service
+tee /lib/systemd/system/bcMeter.service <<EOF > /dev/null
+[Unit]
+Description=bcMeter.org service
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 $BASE_DIR/bcMeter.py
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+Restart=no
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+chmod 644 /lib/systemd/system/bcMeter.service
+echo "Set up bcMeter service"
+
+rm /lib/systemd/system/bcMeter_flask.service
+touch /lib/systemd/system/bcMeter_flask.service
+tee /lib/systemd/system/bcMeter_flask.service <<EOF > /dev/null
+[Unit]
+Description=bcMeter.org flask webservice
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=/usr/bin/python3 $BASE_DIR/app.py
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+chmod 644 /lib/systemd/system/bcMeter_flask.service
+echo "Set up bcMeter_flask service"
+
+if [ "$1" == "update" ]; then
+systemctl daemon-reload
+systemctl start bcMeter_ap_control_loop
+systemctl restart bcMeter
+apt autoremove -y
 fi
+
+raspi-config nonint do_expand_rootfs
+
+
+
+
+# continue with installation if its not an update
+if [ "$1" != "update" ]; then
 
 
 GITCLONE=0
@@ -390,11 +463,18 @@ raspi-config nonint do_net_names 0
 
 cp /usr/share/dhcpcd/hooks/10-wpa_supplicant /lib/dhcpcd/dhcpcd-hooks/10-wpa_supplicant
 
-usermod -aG sudo www-data
-usermod -aG sudo pi
+configure_user_sudo() {
+    local user=$1
+    if id -u "$user" >/dev/null 2>&1; then
+        echo "Configuring sudo access for user: $user"
+        usermod -aG sudo "$user"
+        echo "$user ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/"$user"
+    fi
+}
 
-echo "www-data  ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/www-data
-echo "pi  ALL=(ALL) NOPASSWD:ALL" | tee /etc/sudoers.d/pi
+configure_user_sudo "bcMeter"
+configure_user_sudo "pi"
+configure_user_sudo "www-data"
 
 systemctl start nginx
 echo "Enabled webserver."
@@ -407,6 +487,7 @@ rm -rf "$BASE_DIR/bcmeter"
 
 touch "$BCMINSTALLED" 
 
+fi
 
 
 
@@ -434,26 +515,26 @@ configure_dhcpcd() {
         tee -a "$DHCPCD_CONF" <<EOF > /dev/null
 #bcMeterConfig
 interface wlan0
-    static ip_address=192.168.18.8/24
-    nohook wpa_supplicant
+static ip_address=192.168.18.8/24
+nohook wpa_supplicant
 EOF
     fi
 }
 
 configure_dhcpcd
 
-mv /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
 
 configure_dnsmasq() {
     DNSMASQ_CONF="/etc/dnsmasq.conf"
+if ! grep -q "^#bcMeterConfig" "$DNSMASQ_CONF"; then
 
     # Append the bcMeterConfig settings to the dnsmasq config
     tee -a "$DNSMASQ_CONF" <<EOF > /dev/null
 #bcMeterConfig
 interface=wlan0
-    dhcp-range=192.168.18.9,192.168.18.254,255.255.255.0,24h
+dhcp-range=192.168.18.9,192.168.18.254,255.255.255.0,24h
 EOF
-
+fi
     # Disable DNS caching if not already disabled
     if ! grep -q "^cache-size=0" "$DNSMASQ_CONF"; then
         if grep -q "^cache-size" "$DNSMASQ_CONF"; then
@@ -464,11 +545,10 @@ EOF
     fi
 }
 
-# Run the combined function
 configure_dnsmasq
 
 mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.orig
-tee -a /etc/hostapd/hostapd.conf <<EOF
+tee -a /etc/hostapd/hostapd.conf <<EOF > /dev/null
 interface=wlan0
 driver=nl80211
 ssid=bcMeter
@@ -506,79 +586,9 @@ fi
 
 
 
-systemctl stop bcMeter_ap_control_loop
-systemctl stop bcMeter
-# Remove existing service files if they exist and create new ones
-rm /lib/systemd/system/bcMeter_ap_control_loop.service
-touch /lib/systemd/system/bcMeter_ap_control_loop.service
-tee /lib/systemd/system/bcMeter_ap_control_loop.service <<EOF
-[Unit]
-Description=bcMeter manage-access point & connections to wifi
-After=multi-user.target
-
-[Service]
-Type=idle
-ExecStart=/usr/bin/python3 $BASE_DIR/bcMeter_ap_control_loop.py
-KillSignal=SIGINT
-StandardOutput=journal
-StandardError=journal
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-chmod 644 /lib/systemd/system/bcMeter_ap_control_loop.service
-echo "Set up bcMeter_ap_control_loop service"
-
-rm /lib/systemd/system/bcMeter.service
-touch /lib/systemd/system/bcMeter.service
-tee /lib/systemd/system/bcMeter.service <<EOF
-[Unit]
-Description=bcMeter.org service
-After=multi-user.target
-
-[Service]
-Type=idle
-ExecStart=/usr/bin/python3 $BASE_DIR/bcMeter.py
-KillSignal=SIGINT
-StandardOutput=journal
-StandardError=journal
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-chmod 644 /lib/systemd/system/bcMeter.service
-echo "Set up bcMeter service"
-
-rm /lib/systemd/system/bcMeter_flask.service
-touch /lib/systemd/system/bcMeter_flask.service
-tee /lib/systemd/system/bcMeter_flask.service <<EOF
-[Unit]
-Description=bcMeter.org flask webservice
-After=multi-user.target
-
-[Service]
-Type=idle
-ExecStart=/usr/bin/python3 $BASE_DIR/app.py
-KillSignal=SIGINT
-StandardOutput=journal
-StandardError=journal
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-chmod 644 /lib/systemd/system/bcMeter_flask.service
-echo "Set up bcMeter_flask service"
-
 rm /etc/wpa_supplicant/wpa_supplicant.conf
 
 systemctl disable hciuart
-systemctl enable bcMeter_ap_control_loop
 systemctl enable bcMeter_flask
 systemctl daemon-reload 
 systemctl unmask hostapd
@@ -591,6 +601,32 @@ mkdir -p "$BASE_DIR"/tmp
     HOSTNAME=$(hostname)
     echo -e "{\n    \"bcMeter_status\": 4,\n    \"log_creation_time\": \"\",\n    \"hostname\": \"$HOSTNAME\"\n}" > "$BASE_DIR"/tmp/BCMETER_WEB_STATUS
 }
+
+
+read -r -d '' SERVICE_CHECK << 'EOF'
+
+# Check and start bcMeter_ap_control_loop service if not running
+if ! systemctl is-active --quiet bcMeter_ap_control_loop; then
+    echo "bcMeter_ap_control_loop service is not running. Attempting to enable and start..."
+    sudo systemctl enable bcMeter_ap_control_loop
+    sudo systemctl start bcMeter_ap_control_loop
+fi
+EOF
+
+# Path to .bashrc
+BASHRC="$BASE_DIR/.bashrc"
+
+# Check if the content is already in .bashrc
+if grep -q "bcMeter_ap_control_loop" "$BASHRC"; then
+    echo "Service check is already present in .bashrc"
+else
+    # Add the content to .bashrc
+    echo "$SERVICE_CHECK" >> "$BASHRC"
+    echo "Service check has been added to .bashrc"
+    echo "Please run 'source ~/.bashrc' to apply the changes"
+fi
+
+
 
 
 chmod -R 777 "$BASE_DIR"/.

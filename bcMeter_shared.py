@@ -2,29 +2,43 @@
 import json, socket, os, busio, logging, subprocess, re, time 
 from board import I2C, SCL, SDA
 from datetime import datetime
-import RPi.GPIO as GPIO # Import Raspberry Pi GPIO library
-bcMeter_shared_version = "0.1 2024-11-13"
-# alternative check -- http/www on port 80 instead of dns on port 53
-CONNECTION_TEST_HOST = "www.google.com" 
-CONNECTION_TEST_PORT = 80
-CONNECTION_TEST_TIMEOUT = 3     # socket timeout
-CONNECTION_TEST_TRIES = 3       # number of attemps
-CONNECTION_TEST_RETRY_SLEEP = 2 # in seconds
+import RPi.GPIO as GPIO 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+import platform
+import os
+import shutil
+
+bcMeter_shared_version = "0.1 2025-02-01"
+
 i2c = busio.I2C(SCL, SDA)
-
-
-
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
-def run_command(command):
-	"""
-	Runs a shell command and handles errors.
-	"""
-	try:
-		subprocess.run(command, shell=True, check=True, text=True)
-	except subprocess.CalledProcessError as e:
-		print(f"Command failed: {command}")
-		print(e)
+CONNECTION_TEST_HOST = "www.google.com" 
+CONNECTION_TEST_PORT = 80
+CONNECTION_TEST_TIMEOUT = 3	  # socket timeout
+CONNECTION_TEST_TRIES = 3		 # number of attemps
+CONNECTION_TEST_RETRY_SLEEP = 2 # in seconds
+
+hostname = socket.gethostname()
+
+def check_connection():
+	result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
+	if "default" not in result.stdout:
+		return False
+	# Attempt socket connection multiple times if necessary
+	for _ in range(CONNECTION_TEST_TRIES):
+		try:
+			s = socket.create_connection((CONNECTION_TEST_HOST, CONNECTION_TEST_PORT), timeout=CONNECTION_TEST_TIMEOUT)
+			s.close()
+			return True
+		except Exception as e:  
+			time.sleep(CONNECTION_TEST_RETRY_SLEEP)
+	return False
+
+
 
 def setup_logging(log_entity):
 	# Create the log folder if it doesn't exist
@@ -72,6 +86,69 @@ def setup_logging(log_entity):
 
 	return logger
 
+logger = setup_logging('shared_functions')
+
+
+def run_command(command):
+	try:
+		result = subprocess.run(command.split(), capture_output=True, text=True)
+		if result.returncode != 0:
+			logger.error(f"Command failed: {command}")
+			logger.error(f"Error: {result.stderr}")
+			return None
+		return result.stdout.strip()
+	except Exception as e:
+		logger.error(f"Exception running command '{command}': {e}")
+		return None
+
+def get_basic_info():
+	"""Gather useful system information using only standard library."""
+	try:
+		# Get hostname and IP
+		hostname = socket.gethostname()
+		ip = socket.gethostbyname(hostname)
+		
+		# Get disk usage
+		total, used, free = shutil.disk_usage("/")
+		disk_total = f"{total // (2**30)} GB"
+		disk_free = f"{free // (2**30)} GB"
+		disk_used_percent = f"{(used / total) * 100:.1f}%"
+		
+		# Get directory size
+		log_dir = base_dir + '/logs/'
+		log_size = sum(
+			os.path.getsize(os.path.join(log_dir, f)) 
+			for f in os.listdir(log_dir) 
+			if os.path.isfile(os.path.join(log_dir, f))
+		)
+		log_size_mb = f"{log_size / (2**20):.1f} MB"
+		
+		info = {
+			'hostname': hostname,
+			'ip_address': ip,
+			'platform': platform.platform(),  # More detailed than platform.system()
+			'python_version': platform.python_version(),
+			'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+			'disk_total': disk_total,
+			'disk_free': disk_free,
+			'disk_used': disk_used_percent,
+			'log_dir_size': log_size_mb
+		}
+		
+		# Try to get additional network info if available
+		try:
+			with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+				s.connect(("8.8.8.8", 80))  # Doesn't actually send data
+				external_ip = s.getsockname()[0]
+				info['external_ip'] = external_ip
+		except:
+			info['external_ip'] = 'Could not determine'
+			
+		return info
+	except Exception as e:
+		return {'error': str(e)}
+
+
 
 def convert_config_to_json():
 	config_variables = {}
@@ -80,7 +157,6 @@ def convert_config_to_json():
 			# Ignore lines that do not contain variable assignments
 			if '=' not in line or line.startswith('#'):
 				continue
-
 			# Extract the key, value, comment, and parameter type from each line
 			parts = line.split('#', 2)
 			key_value_part = parts[0].strip()
@@ -130,49 +206,184 @@ def modify_parameter_type(json_file, modifications):
 		json.dump(data, file, indent=4)
 
 
-
-
-def load_config_from_json():
-	modifications = [
-		("compair_upload", "compair"),
-		("get_location", "compair"),
-		("location", "compair"),
-		("send_log_by_mail", "email"),
-		("mail_logs_to", "email"),
-		("filter_status_mail", "email"),
-		("mail_sending_interval", "email"),
-		("email_service_password", "email"),
-		("run_hotspot", "session"),
-		("heating", "session"),
-
-	]
-
-	#try:
-	#	modify_parameter_type(base_dir +"/bcMeter_config.json", modifications)
-	#except Exception as e:
-	#	print(f"Cannot modify bcMeter_config.json: {e}")
-
+def config_json_handler():
 	with open(base_dir + '/bcMeter_config.json', 'r') as json_file:
-
 		full_config = json.load(json_file)
-		# Extract only the value for each setting, flattening the structure
 		flattened_config = {key: value['value'] for key, value in full_config.items()}
 		return flattened_config
 
+def update_config(*, variable, value=None, description=None, type=None, parameter=None):
+	with open(base_dir + '/bcMeter_config.json', 'r+') as json_file:
+		config = json.load(json_file)
+		
+		is_new_variable = variable not in config
+		
+		if is_new_variable:
+			if any(field is None for field in [value, description, type, parameter]):
+				logger.error(f"Creating new variable '{variable}' requires all fields: value, description, type, and parameter")
+				raise ValueError(f"Missing required fields for new variable '{variable}'")
+				
+			config[variable] = {
+				'value': value,
+				'description': description,
+				'type': type,
+				'parameter': parameter
+			}
+		else:
+			if value is not None:
+				config[variable]['value'] = value
+			if description is not None:
+				config[variable]['description'] = description
+			if type is not None:
+				config[variable]['type'] = type
+			if parameter is not None:
+				config[variable]['parameter'] = parameter
+		
+		json_file.seek(0)
+		json.dump(config, json_file, indent=4)
+		json_file.truncate()
 
+# Usage:
 try:
-	config = load_config_from_json()
+	config = config_json_handler()
 except FileNotFoundError:
 	config = convert_config_to_json()
-	config = load_config_from_json()
+	config = config_json_handler()
 except Exception as e:
 	print(f"Error while loading config: {e}")
+	
+sender_password = config.get('email_service_password', 'email_service_password')
+mail_logs_to = config.get('mail_logs_to',"your@email.address")
 
+def send_email(payload):
+	"""
+	Send email notifications based on payload type.
+	
+	Args:
+		payload (str): Type of email to send ("Filter", "Log", "Pump", or "Onboarding")
+	"""
+	# Email configuration
+
+	if sender_password=="email_service_password" or sender_password =="" or mail_logs_to.split(",")[0] == "your@email.address":
+		logger.error("No mailing password or receiver set")
+		return
+
+	smtp_server = "live.smtp.mailtrap.io"
+	smtp_port = 587
+	sender_email = f"{hostname} Status <mailtrap@bcmeter.org>"
+	email_receiver_list = mail_logs_to.split(",")
+	subject_prefix = "bcMeter Status Mail: "
+
+	# Prepare email content based on payload type
+	templates = {
+		"Filter": {
+			"subject": "Change filter!",
+			"body": "Hello dear human, please consider changing the filter paper the next time you're around, thank you!",
+			"needs_attachment": False,
+			"log_message": "Filter Change Mail sent"
+		},
+		"Log": {
+			"subject": "Log file",
+			"body": "Hello dear human, please find attached the log file",
+			"needs_attachment": True,
+			"log_message": "Log Mail sent"
+		},
+		"Pump": {
+			"subject": "Pump Malfunction",
+			"body": "I do not register any airflow. Please check the connections and if the pump is working",
+			"needs_attachment": True,
+			"log_message": "Error mail (Pump Malfunction) sent"
+		},
+		"Onboarding": {
+			"subject": "Device Information",
+			"body": None,  # Will be set dynamically
+			"needs_attachment": False,
+			"log_message": "Onboarding information sent"
+		}
+	}
+
+	if payload not in templates:
+		logger.error(f"Unknown payload type: {payload}")
+		return
+
+	template = templates[payload]
+	
+	# Create message
+	message = MIMEMultipart()
+	message["From"] = sender_email
+	message["Subject"] = subject_prefix + template["subject"]
+
+	# Special handling for onboarding payload
+	if payload == "Onboarding":
+		body = "bcMeter Device Information:\n\n"
+		try:
+			info = get_basic_info()
+			body = "bcMeter Device Information:\n\n"
+			body += "Network:\n"
+			body += f"- Hostname: {info['hostname']}\n"
+			body += f"- Access interface in LAN by: http://{info['external_ip']}\n\n"
+			
+			body += "System:\n"
+			body += f"- Platform: {info['platform']}\n"
+			body += f"- Python Version: {info['python_version']}\n"
+			body += f"- Time: {info['time']}\n\n"
+			
+			body += "Storage:\n"
+			body += f"- Total Disk Space: {info['disk_total']}\n"
+			body += f"- Free Disk Space: {info['disk_free']}\n"
+			body += f"- Disk Usage: {info['disk_used']}\n"
+			body += f"- Log Directory Size: {info['log_dir_size']}\n"
+		except Exception as e:
+			logger.error(f"Failed to gather system information: {str(e)}")
+			body += {e}
+			#return
+	else:
+		body = template["body"]
+
+	message.attach(MIMEText(body, "plain"))
+
+	# Add attachment if needed
+	if template["needs_attachment"]:
+		try:
+			file_path = base_dir + "/logs/log_current.csv"
+			current_time = datetime.now().strftime("%y%m%d_%H%M")
+			send_file_as = f"{hostname}_{current_time}.csv"
+			
+			with open(file_path, "rb") as file:
+				attachment = MIMEApplication(file.read(), Name=send_file_as)
+				attachment["Content-Disposition"] = f"attachment; filename={send_file_as}"
+				message.attach(attachment)
+		except Exception as e:
+			logger.error(f"Failed to attach file: {str(e)}")
+			return
+
+	# Log based on payload type
+	if payload == "Pump":
+		logger.error(template["log_message"])
+	else:
+		logger.debug(template["log_message"])
+
+	# Send email to each recipient
+	for receiver in email_receiver_list:
+		message["To"] = receiver
+		try:
+			with smtplib.SMTP(smtp_server, smtp_port) as server:
+				server.starttls()
+				server.login("api", sender_password)
+				server.sendmail(sender_email, receiver, message.as_string())
+			logger.debug(f"Email sent successfully to {receiver}")
+		except Exception as e:
+			logger.error(f"Failed to send email to {receiver}: {str(e)}")
+
+
+
+airflow_type = config.get('af_sensor_type', 1)
+print(f"Using Airflow sensor type {airflow_type}")
 
 def save_config_to_json(key, value=None, description=None, parameter_type=None, parameter_category=None):
 	"""Saves or updates a configuration parameter in the JSON file."""
 	# Load the existing configuration
-	full_config = load_config_from_json()
+	full_config = config_json_handler()
 	
 	# If the key exists, update the entry based on provided parameters
 	if key in full_config:
@@ -229,19 +440,6 @@ if (is_ebcMeter):
 else:
 	update_ssid_in_hostapd_conf(revert=True)
 
-def check_connection():
-	result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
-	if "default" not in result.stdout:
-		return False
-	# Attempt socket connection multiple times if necessary
-	for _ in range(CONNECTION_TEST_TRIES):
-		try:
-			s = socket.create_connection((CONNECTION_TEST_HOST, CONNECTION_TEST_PORT), timeout=CONNECTION_TEST_TIMEOUT)
-			s.close()
-			return True
-		except Exception as e:  
-			time.sleep(CONNECTION_TEST_RETRY_SLEEP)
-	return False
 
 def get_bcmeter_start_time():
 	try:
@@ -261,62 +459,90 @@ def get_bcmeter_start_time():
 	except (subprocess.CalledProcessError, ValueError):
 		return None
 
-def bcMeter_status():
-	file_path = base_dir + "/tmp/BCMETER_WEB_STATUS"
-	try:
-		with open(file_path, 'r') as file:
-			parameters = json.load(file)
-			return parameters.get("bcMeter_status")
-	except (FileNotFoundError, json.JSONDecodeError):
-		return None
-
 		
-def update_interface_status(status=None, prev_log_creation_time=None):
-	'''
-	0=stopped
-	1=initializing 
-	2=running and online
-	3=running in hotspot
-	4=hotspot only
-	5=stopped by user so dont autostart
-	'''
-	if_status_folder = base_dir + "/tmp/"
-	log_file_path = base_dir + "/logs/log_current.csv"
-	
-	os.makedirs(if_status_folder, exist_ok=True)
-	file_path = if_status_folder + 'BCMETER_WEB_STATUS'
-	
-	# Load the existing parameters if they exist
-	try:
-		with open(file_path, 'r') as file:
-			parameters = json.load(file)
-	except (FileNotFoundError, json.JSONDecodeError):
-		parameters = {}
-
-	# Get the log creation time when bcMeter service was started, if running
-	log_creation_time = get_bcmeter_start_time()
-	
-	# If service is not running, fallback to file inode change time
-	if log_creation_time is None:
-		try:
-			file_stat = os.stat(log_file_path)
-			file_inode_change_time = datetime.fromtimestamp(file_stat.st_ctime)
-			log_creation_time = file_inode_change_time.strftime("%y%m%d_%H%M%S")
-		except FileNotFoundError:
-			log_creation_time = None
-
-	# Compare the log_creation_time with the prevzif log_creation_time != prev_log_creation_time:
-	parameters["bcMeter_status"] = status
-	parameters["log_creation_time"] = log_creation_time
-	parameters["hostname"] = socket.gethostname()
-
-
-	# Write updated parameters to the file
-	with open(file_path, 'w') as file:
-		json.dump(parameters, file)
-
-	# Return the current log_creation_time to be used in the next iteration
-	return log_creation_time
+def manage_bcmeter_status(
+    parameter=None,
+    action='get',
+    bcMeter_status=None,
+    calibration_time=None,
+    log_creation_time=None,
+    hostname=None,  
+    filter_status=None,
+    in_hotspot=None
+):
+    """
+    Manage BCMeter status parameters including calibration time.
+    
+    Args:
+        parameter (str, optional): Specific parameter to get. If None, returns full status.
+        action (str): 'get' or 'set' to retrieve or update status.
+        bcMeter_status (int, optional): Status code (0=stopped, 1=initializing, 2=running/online,
+            3=running in hotspot, 4=hotspot only, 5=stopped by user, 6=stopped by script because of error)
+        calibration_time (str, optional): Timestamp of last calibration in format "YYMMDD_HHMMSS"
+        log_creation_time (str, optional): Log creation timestamp
+        hostname (str, optional): Deprecated - hostname is now automatically set
+        filter_status (int, optional): Filter status code (0-5)
+        in_hotspot (boolean, optionak):  true or false
+    
+    Returns:
+        dict or any: Retrieved parameter(s) for 'get', None for 'set'
+    
+    Raises:
+        ValueError: If invalid parameter requested or invalid action specified
+    """
+    import socket
+    
+    if_status_folder = base_dir + "/tmp/"
+    file_path = if_status_folder + 'BCMETER_WEB_STATUS'
+    log_file_path = base_dir + "/logs/log_current.csv"
+    
+    try:
+        with open(file_path, 'r') as file:
+            parameters = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        parameters = {}
+        
+    valid_params = ['bcMeter_status', 'log_creation_time', 'hostname', 
+                    'calibration_time', 'filter_status', 'in_hotspot']
+    
+    if action == 'get':
+        if parameter and parameter not in valid_params:
+            raise ValueError(f"Invalid parameter. Choose from: {valid_params}")
+        parameters['hostname'] = socket.gethostname()
+        return parameters if parameter is None else parameters.get(parameter)
+        
+    elif action == 'set':
+        if log_creation_time is None:
+            log_creation_time = get_bcmeter_start_time()
+            if log_creation_time is None:
+                try:
+                    file_stat = os.stat(log_file_path)
+                    log_creation_time = datetime.fromtimestamp(file_stat.st_ctime).strftime("%y%m%d_%H%M%S")
+                except FileNotFoundError:
+                    log_creation_time = None
+        
+        # Handle filter status
+        if filter_status is not None:
+            filter_status = min(max(0, filter_status), 5)
+        
+        update_dict = {
+            k: v for k, v in {
+                'bcMeter_status': bcMeter_status,
+                'calibration_time': calibration_time,
+                'log_creation_time': log_creation_time,
+                'hostname': socket.gethostname(), 
+                'filter_status': filter_status,
+                'in_hotspot': in_hotspot
+            }.items() if v is not None
+        }
+        
+        parameters.update(update_dict)
+        
+        os.makedirs(if_status_folder, exist_ok=True)
+        with open(file_path, 'w') as file:
+            json.dump(parameters, file)
+    else:
+        raise ValueError("Invalid action. Use 'get' or 'set'")
 
 		
 use_display = config.get('use_display', False)
@@ -354,70 +580,75 @@ def show_display(message, line, clear):
 		oled.text(str(message),line+1)
 
 
-
-revision_table = {
-	"0002": "Model B Rev 1",
-	"0003": "Model B Rev 1 ECN0001 (no fuses, D14 removed)",
-	"0004": "Model B Rev 2", "0005": "Model B Rev 2", "0006": "Model B Rev 2",
-	"0007": "Model A", "0008": "Model A", "0009": "Model A",
-	"000d": "Model B Rev 2 512MB", "000e": "Model B Rev 2 512MB", "000f": "Model B Rev 2 512MB",
-	"0010": "Model B+", "0013": "Model B+", "900032": "Model B+",
-	"0011": "Compute Module", "0014": "Compute Module (Embest, China)",
-	"0012": "Model A+ 256MB", "0015": "Model A+ 256MB/512MB (Embest, China)",
-	"a01041": "Pi 2 Model B v1.1 (Sony, UK)", "a21041": "Pi 2 Model B v1.1 (Embest, China)",
-	"a22042": "Pi 2 Model B v1.2",
-	"900092": "Pi Zero v1.2", "900093": "Pi Zero v1.3", "9000c1": "Pi Zero W",  # Lowercase "c"
-	"a02082": "Pi 3 Model B 1.2 (Sony, UK)", "a22082": "Pi 3 Model B 1.2 (Embest, China)",
-	"a020d3": "Pi 3 Model B+ 1.3 (Sony, UK)",
-	"a03111": "Pi 4 1GB 1.1 (Sony, UK)", "b03111": "Pi 4 2GB 1.1 (Sony, UK)",
-	"b03112": "Pi 4 2GB 1.2 (Sony, UK)", "b03114": "Pi 4 2GB 1.4 (Sony, UK)",
-	"c03111": "Pi 4 4GB 1.1 (Sony, UK)", "c03112": "Pi 4 4GB 1.2 (Sony, UK)",
-	"c03114": "Pi 4 4GB 1.4 (Sony, UK)", "d03114": "Pi 4 8GB 1.4 (Sony, UK)",
-	"c03130": "Pi 400 4GB 1.0 (Sony, UK)", "902120": "Pi Zero 2 W 1GB 1.0 (Sony, UK)"
-}
-
-# Function to execute the pinout command and capture the output
-def get_pinout_info():
+def get_pi_revision():
 	try:
-		result = subprocess.run(['pinout'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-		if result.returncode != 0:
-			print(f"Error running pinout command: {result.stderr}")
-			return None
-		return result.stdout
+		with open('/proc/cpuinfo', 'r') as f:
+			for line in f:
+				if line.startswith('Revision'):
+					rev_code_str = line.split(':')[1].strip()
+					rev_code = int(rev_code_str, 16)
+
+					# The 'new_flag' bit (bit 23) tells us if it's the new-style code.
+					new_flag = (rev_code >> 23) & 0x1
+					if not new_flag:
+						# Here you might want to handle old/legacy revision codes more fully,
+						# but for illustration:
+						return f"Legacy revision code (0x{rev_code:x})"
+
+					# Bits 4-11 give the model
+					model = (rev_code >> 4) & 0xFF
+					# Bits 20-22 give the RAM size
+					memory = (rev_code >> 20) & 0x7
+
+					# This dictionary includes most Pi boards, including Pi 3, Zero 2 W, etc.
+					models = {
+						0x00: "A",
+						0x01: "B",
+						0x02: "A+",
+						0x03: "B+",
+						0x04: "2B",
+						0x05: "Alpha (early prototype)",
+						0x06: "Compute Module 1",
+						0x08: "3B",
+						0x09: "Zero",
+						0x0a: "Compute Module 3",
+						0x0c: "Zero W",
+						0x0d: "3B+",
+						0x0e: "3A+",
+						0x10: "Compute Module 3+",
+						0x11: "4B",
+						0x13: "400",
+						0x14: "Compute Module 4",
+						0x15: "Zero 2 W",
+						0x17: "5",
+						0x18: "Compute Module 5",
+						0x19: "500 (Pi 5 in keyboard form)",
+						0x1a: "Compute Module 5 Lite",
+					}
+
+					# Bits 20-22 for memory size:
+					#   0 => 256MB, 1 => 512MB, 2 => 1GB, 3 => 2GB,
+					#   4 => 4GB,   5 => 8GB,   6 => 16GB, ...
+					memory_map = {
+						0: "256MB",
+						1: "512MB",
+						2: "1GB",
+						3: "2GB",
+						4: "4GB",
+						5: "8GB",
+						6: "16GB"
+					}
+
+					model_name  = models.get(model, "Unknown model")
+					memory_size = memory_map.get(memory, "unknown RAM size")
+
+					return f"Raspberry Pi {model_name} with {memory_size} RAM"
+
+		return "No revision code found"
 	except Exception as e:
-		print(f"An error occurred: {e}")
-		return None
+		return f"Error reading revision: {str(e)}"
 
-# Function to find and print the model number based on the revision code
-def find_model_number(pinout_output):
-	# Search for the Revision line in the output
-	match = re.search(r'Revision\s+:\s+(\w+)', pinout_output)
-	if match:
-		revision_code = match.group(1).lower()  # Convert to lowercase for consistency
-		model = revision_table.get(revision_code)
-		if model:
-			return f"Revision code: {revision_code} - Model: {model}"
-		else:
-			return f"Revision code: {revision_code} not found in the table."
-	else:
-		return "No revision code found in the pinout output."
-
-
-
-
-
-GPIO.setwarnings(False) # Ignore warning for now
-try:
-	GPIO.setmode(GPIO.BCM) 
-except:
-	pass #was already set 
-
-bcMeter_button_gpio = 16
-
-GPIO.setup(bcMeter_button_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Set pin 10 to be an input pin and set initial value to be pulled low (off)
-
-button_press_count = 0
-last_press_time = 0
+	   
 
 def button_callback(channel):	
 	global button_press_count, last_press_time
@@ -463,5 +694,93 @@ def button_thread():
 #button_thread.daemon = True
 #button_thread.start()
 
+if int(airflow_type) == 9:
+	from smbus2 import SMBus
+	print("initializing honeywell")
+	SUPPORTED_FLOW_RANGE = [50.0, 100.0, 200.0, 400.0, 750.0]
+	SUPPORTED_SENSOR_ADDRESS = [0x49, 0x59, 0x69, 0x79]
+
+	class SensorNotSupported(Exception):
+		def __init__(self, flow_range, sensor_address):
+			message = (
+				f"Device with flow range {flow_range} and address {hex(sensor_address)} supported\n"
+				f"Supported flow range: {SUPPORTED_FLOW_RANGE}\n"
+				f"Supported address: {SUPPORTED_SENSOR_ADDRESS}"
+			)
+			super().__init__(message)
+
+	class InvalidSensorData(Exception):
+		def __init__(self, data, max_retry=1):
+			message = f"Invalid data received after {max_retry} retries, last data received {hex(data)}."
+			super().__init__(message)
+
+	STANDARD_TEMPERATURE = 273.15
+	STANDARD_PRESSURE = 1023.38
+
+	def c_to_kelvin(temp_c):
+		return 273.15 + temp_c
+
+	def compensated_reading(flow_at_stp, temperature, pressure):
+		qx = flow_at_stp * (STANDARD_PRESSURE * temperature) / (pressure * STANDARD_TEMPERATURE)
+		return qx
+
+	class Zephyr:
+		def __init__(self, flow_range=50.0, sensor_address=0x49, smbus_ch=1):
+			if flow_range not in SUPPORTED_FLOW_RANGE or sensor_address not in SUPPORTED_SENSOR_ADDRESS:
+				raise SensorNotSupported(flow_range, sensor_address)
+
+			self._smbus_ch = smbus_ch
+			self._FS_flow_rate = flow_range
+			self._sensor_address = sensor_address
+			self._last_flow_rate = 0.0
+
+			self._initialize_sensor()
+
+		def _initialize_sensor(self):
+			start_up_time = 0.017
+			warm_up_time = 0.030
+
+			with SMBus(self._smbus_ch) as bus:
+				time.sleep(start_up_time)
+				bus.read_byte(self._sensor_address)
+				time.sleep(warm_up_time)
+				bus.read_byte(self._sensor_address)
+
+		def _convert_to_digital_output(self, flow_rate):
+			digital_output_code = int(16384 * (0.5 + 0.4 * (flow_rate / self._FS_flow_rate)))
+			return digital_output_code
+
+		def _convert_to_flow_rate(self, digital_output):
+			flow_rate = self._FS_flow_rate * ((digital_output / 16384) - 0.5) / 0.4
+			return flow_rate
+
+		@staticmethod
+		def _validate_data(data):
+			return (data & 0xc000) == 0
+
+		def _read_digital_output(self):
+			with SMBus(self._smbus_ch) as bus:
+				raw_data_block = bus.read_i2c_block_data(self._sensor_address, 0, 2)
+				digital_output = raw_data_block[0] << 8 | raw_data_block[1]
+
+				if self._validate_data(digital_output):
+					return digital_output
+
+			raise InvalidSensorData(digital_output)
+
+		def read(self):
+			flow_rate = self._convert_to_flow_rate(self._read_digital_output())
+			self._last_flow_rate = flow_rate
+			return flow_rate
+
+		def read_average(self, n_data=100):
+			data = [self.read() for _ in range(n_data)]
+			return sum(data) / n_data
+
+
+
+
+
+
 if __name__ == '__main__':
-	update_interface_status()
+	manage_bcmeter_status()

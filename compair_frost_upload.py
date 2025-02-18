@@ -10,9 +10,9 @@ from time import sleep
 import sys
 from datetime import datetime
 import importlib
-from bcMeter_shared import convert_config_to_json, load_config_from_json, check_connection, update_interface_status, show_display, setup_logging
+from bcMeter_shared import convert_config_to_json, config_json_handler, check_connection, manage_bcmeter_status, show_display, setup_logging
 
-config = load_config_from_json()
+config = config_json_handler()
 
 logger = setup_logging('compair_frost_upload')
 
@@ -59,7 +59,7 @@ if (config.get('get_location') is True) and online is True:
 	config['location']['value'] = location
 	with open('bcMeter_config.json', 'w') as file:
 		json.dump(config, file, indent=4)
-	config = load_config_from_json()
+	config = config_json_handler()
 
 location=config.get('location')
 location_to_reverse = config.get('location')

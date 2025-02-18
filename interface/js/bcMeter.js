@@ -1,187 +1,4 @@
-<?php
-//interface version 0.91 2025-02-18
-// Start the PHP session
-session_start();
-$_SESSION['valid_session'] = 1;
-header('X-Accel-Buffering: no');
 
-
-$macAddr = exec("/sbin/ifconfig wlan0 | grep 'ether' | awk '{print $2}'");
-$macAddr = str_replace(':', '', $macAddr);
-
-
-$baseDir = file_exists('/home/bcMeter') ? '/home/bcMeter' : '/home/pi';
-
-
-function getBcMeterConfigValue($bcMeter_variable) {
-	global $baseDir;
-		$jsonFilePath = $baseDir . '/bcMeter_config.json';
-		if (file_exists($jsonFilePath)) {
-				$jsonData = file_get_contents($jsonFilePath);
-				$configData = json_decode($jsonData, true);
-				if (isset($configData[$bcMeter_variable]['value'])) {
-						return $configData[$bcMeter_variable]['value'];
-				} else {
-						return null;
-				}
-		} else {
-				// File does not exist
-				return null;
-		}
-}
-
-$is_ebcMeter = getBcMeterConfigValue('is_ebcMeter');
-$is_hotspot = getBcMeterConfigValue('run_hotspot');
-$compair_upload = getBcMeterConfigValue('compair_upload');
-$show_undervoltage_warning = getBcMeterConfigValue('show_undervoltage_warning');
-
-$version = '';
-$localfile = $baseDir . '/bcMeter.py';
-
-for($i = 1; $i <= 50; $i++) {
-    $line = trim(exec("head -$i $localfile| tail -1"));
-    if (strpos($line, 'bcMeter_version') === 0) {
-        $version = explode('"', $line)[1];
-        break;
-    }
-}
-$version_parts = explode('.', $version);
-$VERSION = $version_parts[0] . "." . $version_parts[1]  . "." .  $version_parts[2];
-
-function checkUpdate() {
-    global $VERSION;  // Add this line to access the global variable
-    $local = '0.9.20';  // default for old versions
-    $remote = '0.9.19'; // default if not found online
-    
-    // Get remote version
-    if ($content = @file_get_contents('https://raw.githubusercontent.com/dahljo/bcmeter/main/bcMeter.py')) {
-        preg_match('/bcMeter_version\s*=\s*"([0-9.]+)"/', $content, $m);
-        if ($m) $remote = $m[1];
-    }
-    
-    // Split versions
-    $l = explode('.', $VERSION);  // Now $VERSION is accessible
-    $r = explode('.', $remote);
-    
-    // Compare versions
-    $update = false;
-    if ($r[0] > $l[0]) $update = true;
-    elseif ($r[0] == $l[0]) {
-        if ($r[1] > $l[1]) $update = true;
-        elseif ($r[1] == $l[1] && $r[2] > $l[2]) $update = true;
-    }
-    
-    return [
-        'update' => $update,
-        'current' => $VERSION,
-        'available' => $remote
-    ];
-}
-
-$grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
-$check = checkUpdate($localfile);
-#echo "Available: " . $check['available'] . "\n";
-if ($check['update']) {
-    echo "<div style='text-align:center';'><strong>bcMeter Software Update available!</strong></div>";
-}
-?>
-
-<!DOCTYPE html>
-<meta charset="utf-8">
-<head>    
-	<link rel="stylesheet" type="text/css" href="css/bootstrap.min.css">
-	<link rel="stylesheet" type="text/css" href="css/bootstrap4-toggle.min.css">
-	<link rel="stylesheet" type="text/css" href="css/bcmeter.css">
-	<link href="css/all.min.css" rel="stylesheet">
-</head>
-<body>
-	<a href="" id="download" style="display: none;"></a>
-<br />
-<a href="http://<?php echo $_SERVER['HTTP_HOST']; ?>"><img src="bcMeter-logo.png" style="width: 250px; display:block; margin: 0 auto;"/></a>
- <?php if ($is_ebcMeter === true):?>
-	<p style='text-align:center;font-weight:bold;'>emission measurement prototype</p>
- <?php endif; ?>
- <div class="status-div" id="statusDiv"></div>
- <div class="container">
-	<div class="row">
-		<div class="col-sm-12">
-		<div style='display:none; margin: 20px 0;' id='hotspotwarning' class='alert'>
-			<div style='text-align:center;'><strong>You're currently offline</strong></div>
-				<div style="display: block;margin: 0 auto;">
-					<p style="text-align: center;" id="datetime_note"></p>
-					<pre style='text-align:center;' id='datetime_device'></pre>
-					<pre style='text-align:center;' id='datetime_local'></pre>
-					 </div>
-					<!-- end set time modal-->
-					<div style="text-align: center";>
-						<form method="POST">
-							<input type="hidden" id="set_time" name="set_time" value="">
-							<input type="submit" value="Set clock on bcMeter to your time" class="btn btn-primary" >
-						</form>
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
-<div id="report-value" style="text-align: center; display: block;margin: 20px 0;"></div>
-<?php if ($show_undervoltage_warning === true): ?>
-<div id='undervoltage-status' class='status'></div>
-<?php endif;?>
-<!-- Bootstrap Layout -->
-	 <!-- CONTAINER FOR DROP DOWN MENU -->
-	<div class="menu" style="display: block; text-align: center;">Selected View:
-		<!-- get the list of log -->
-		<?php
-			$folder_path = '../logs';
-			$logString = "<select id = 'logs_select'>";
-			$logFiles = scandir($folder_path);
-			foreach ($logFiles as $key => $value) {
-				if ($key > 1) {
-					$logString .= "<option value='{$value}'>{$value}</option>"; 
-				}
-			}
-			$logString .= "<option value='combine_logs'>Combine Logs</option></select>";
-			echo '<span id="logs">'.$logString.'</span>'; 
-		?>
-
-		<span class="y-menu">
-			<select id="y-menu"></select>
-		</span>
-
-		<span class="y-menu2">
-				<select id="y-menu2"></select>
-		</span>
-
-		<span class="btn btn-light" id="hide-y-menu2">Hide</span>
-		<span class="btn" id="resetZoom">Reset Zoom</span>
-
-	</div>
-
-
-	<!-- CONTAINER FOR CHART -->
-	<div id="svg-container">
-			 <input type="number"  id="y-menu-min" placeholder="min">
-			 <input type="number"  id="y-menu-max" placeholder="max">
-			 <input type="number" id="y-menu2-min" placeholder="min">
-			 <input type="number" id="y-menu2-max" placeholder="max">
-		<div class="tooltip" style="position: absolute;"></div>
-
-		<svg id="line-chart" width="1100" height="480" style="margin: 0px auto 10px">
-	</div>
-
-	</svg>
-
-
-
-
-
-	<!-- load the d3.js library -->
-	<script src="js/d3.min.js"></script>
-	<script src="js/jquery-3.6.0.min.js"></script>
-	<script src="js/bootstrap.min.js"></script>
-	<script src="js/bootbox.min.js"></script>
-
-<script>
 $(document).ready(function() {
 /* VARS*/
 
@@ -831,23 +648,41 @@ const dataFile = (file, isCombineLogsSelected = false) => {
 
 
 
-								filterStatus = bcmSen / bcmRef;
-								btn.className = (
-								    !is_ebcMeter ? (
-								        filterStatus > 0.8 ? "btn btn-success" :
-								        filterStatus > 0.7 ? "btn btn-warning" :
-								        filterStatus > 0.55 ? "btn btn-danger" :
-								        filterStatus > 0.45 ? "btn btn-secondary" :
-								        filterStatus > 0.3 ? "btn btn-dark" :
-								        "btn btn-dark"  // for <= 0.3
-								    ) : (
-								        filterStatus <= 0.1 ? "btn btn-dark" :
-								        filterStatus <= 0.2 ? "btn btn-secondary" :
-								        filterStatus <= 0.25 ? "btn btn-danger" :
-								        filterStatus <= 0.4 ? "btn btn-warning" :
-								        "btn btn-success"
-								    )
-								);
+
+
+										filterStatus = bcmSen / bcmRef;
+
+										if (is_ebcMeter === false) {
+
+												if (filterStatus <= 0.3) {
+														btn.className = "btn btn-dark"; 
+												} else if (filterStatus > 0.3 && filterStatus <= 0.45) {
+														btn.className = "btn btn-secondary";
+												} else if (filterStatus > 0.45 && filterStatus <= 0.55) {
+														btn.className = "btn btn-danger"; 
+												} else if (filterStatus > 0.55 && filterStatus <= 0.7) {
+														btn.className = "btn btn-warning"; 
+												} else if (filterStatus > 0.7) {
+														btn.className = "btn btn-success"; 
+												}
+										}
+										else {
+
+
+												if (filterStatus <= 0.1) {
+														btn.className = "btn btn-dark"; 
+												} else if (filterStatus > 0.1 && filterStatus <= 0.2) {
+														btn.className = "btn btn-secondary";
+												} else if (filterStatus > 0.2 && filterStatus <= 0.25) {
+														btn.className = "btn btn-danger"; 
+												} else if (filterStatus > 0.25 && filterStatus <= 0.4) {
+														btn.className = "btn btn-warning"; 
+												} else if (filterStatus > 0.4) {
+														btn.className = "btn btn-success"; 
+												}
+
+
+										}
 						}
 
 						if (len < 0) {
@@ -1307,9 +1142,9 @@ const tabsConfig = [
 // Iterate over the array and create event listeners for each tab
 tabsConfig.forEach(tab => {
 		document.getElementById(`save${tab.configType.charAt(0).toUpperCase() + tab.configType.slice(1)}Settings`).addEventListener("click", function(event) {
-			event.preventDefault();
-			saveConfigurationBasedOnTab(tab.tabId);
-			$('#device-parameters').modal('hide'); // Close the modal after saving
+				event.preventDefault();
+				saveConfigurationBasedOnTab(tab.tabId);
+				$('#device-parameters').modal('hide'); // Close the modal after saving
 		});
 });
 
@@ -1317,67 +1152,67 @@ $('#bcMeter_reboot').click(function(e) {
 		e.preventDefault(); // Prevent the default submit behavior
 
 		bootbox.dialog({
-			title: 'Reboot bcMeter?',
-			message: "<p>Do you want to reboot the device?</p>",
-			size: 'small',
-			buttons: {
-				cancel: {
-					label: "No",
-					className: 'btn-success',
-					callback: function() {
+				title: 'Reboot bcMeter?',
+				message: "<p>Do you want to reboot the device?</p>",
+				size: 'small',
+				buttons: {
+						cancel: {
+								label: "No",
+								className: 'btn-success',
+								callback: function() {
 
-					}
-				},
-				ok: {
-					label: "Yes",
-					className: 'btn-danger',
-					callback: function() {
-							window.location.href = 'includes/status.php?status=reboot';
+								}
+						},
+						ok: {
+								label: "Yes",
+								className: 'btn-danger',
+								callback: function() {
+										window.location.href = 'includes/status.php?status=reboot';
 
-					}
+								}
+						}
 				}
-			}
 		});
 
 });
 
 
 $('#bcMeter_stop').click(function(e) {
-	e.preventDefault(); // Prevent the default submit behavior
+		e.preventDefault(); // Prevent the default submit behavior
 
-	bootbox.dialog({
-			title: 'Stop logging',
-			message: "<p>This will stop the current measurement. Sure?</p>",
-			size: 'small',
-			buttons: {
-				cancel: {
-					label: "No",
-					className: 'btn-success',
-					callback: function() {
-
-					}
-				},
-				ok: {
-					label: "Yes",
-					className: 'btn-danger',
-					callback: function() {
-
-
-						$.ajax({
-								type: 'post',
-								data: 'exec_stop',
-								success: function(response) {
+		bootbox.dialog({
+				title: 'Stop logging',
+				message: "<p>This will stop the current measurement. Sure?</p>",
+				size: 'small',
+				buttons: {
+						cancel: {
+								label: "No",
+								className: 'btn-success',
+								callback: function() {
 
 								}
-						});
+						},
+						ok: {
+								label: "Yes",
+								className: 'btn-danger',
+								callback: function() {
+
+
+										$.ajax({
+												type: 'post',
+												data: 'exec_stop',
+												success: function(response) {
+
+												}
+										});
 
 
 
 
-					}
+								}
+						}
 				}
-			}
-	});
+		});
 
 });
 
@@ -1400,21 +1235,21 @@ $('#bcMeter_debug').click(function(e) {
 								}
 						},
 						ok: {
-							label: "Yes",
-							className: 'btn-danger',
-							callback: function() {
+								label: "Yes",
+								className: 'btn-danger',
+								callback: function() {
 
-								$.ajax({
-										type: 'post',
-										data: 'exec_debug',
-										success: function(response) {
-												window.location.href = 'includes/status.php?status=debug';
-										}
-								});
+										$.ajax({
+												type: 'post',
+												data: 'exec_debug',
+												success: function(response) {
+														window.location.href = 'includes/status.php?status=debug';
+												}
+										});
 
 
 
-							}
+								}
 						}
 				}
 		});
@@ -1425,41 +1260,41 @@ $('#bcMeter_debug').click(function(e) {
 
 
 $('#force_wifi').click(function(e) {
-	e.preventDefault(); // Prevent the default submit behavior
+		e.preventDefault(); // Prevent the default submit behavior
 
-	bootbox.dialog({
-		title: 'Reset Wifi?',
-		message: "<p>This will trigger a manual reload of the WiFi credentials and cut your current connection. </p>",
-		size: 'small',
-		buttons: {
-			cancel: {
-				label: "No",
-				className: 'btn-success',
-				callback: function() {
+		bootbox.dialog({
+				title: 'Reset Wifi?',
+				message: "<p>This will trigger a manual reload of the WiFi credentials and cut your current connection. </p>",
+				size: 'small',
+				buttons: {
+						cancel: {
+								label: "No",
+								className: 'btn-success',
+								callback: function() {
 
+								}
+						},
+						ok: {
+								label: "Yes",
+								className: 'btn-danger',
+								callback: function() {
+										// Make AJAX call to initiate the backend process
+										$.ajax({
+												type: 'post',
+												data: {
+														force_wifi: true
+												}, // Adjusted to pass data as an object
+												success: function(response) {
+														// Handle success
+												},
+												error: function() {
+														// Handle error
+												}
+										});
+								}
+						}
 				}
-			},
-			ok: {
-				label: "Yes",
-				className: 'btn-danger',
-				callback: function() {
-					// Make AJAX call to initiate the backend process
-					$.ajax({
-							type: 'post',
-							data: {
-									force_wifi: true
-							}, // Adjusted to pass data as an object
-							success: function(response) {
-									// Handle success
-							},
-							error: function() {
-									// Handle error
-							}
-					});
-				}
-			}
-		}
-	});
+		});
 
 });
 
@@ -1474,18 +1309,18 @@ $('#bcMeter_calibration').click(function(e) {
 				message: "<p>Calibrate only with new filterpaper. Avoid direct sunlight. Continue? </p>",
 				size: 'medium',
 				buttons: {
-					cancel: {
-							label: "No",
-							className: 'btn-success',
-							callback: function() {}
-					},
-					ok: {
-							label: "Yes",
-							className: 'btn-danger',
-							callback: function() {
-									window.location.href = 'includes/status.php?status=calibration';
+						cancel: {
+								label: "No",
+								className: 'btn-success',
+								callback: function() {}
+						},
+						ok: {
+								label: "Yes",
+								className: 'btn-danger',
+								callback: function() {
+										window.location.href = 'includes/status.php?status=calibration';
 
-							}
+								}
 						}
 				}
 		});
@@ -1495,115 +1330,116 @@ $('#bcMeter_calibration').click(function(e) {
 
 
 $('#bcMeter_update, #bcMeter_update2').click(function(e) {
-	e.preventDefault(); // Prevent the default submit behavior
-	// Ask the user if they want to download the config file
-	bootbox.confirm({
-		title: 'Download Config File?',
-		message: "Would you like to download the current configuration file (bcMeter_config.json) before proceeding with the update?",
-		buttons: {
-				cancel: {
-						label: 'No',
-						className: 'btn-secondary'
-				},
-				confirm: {
-						label: 'Yes',
-						className: 'btn-primary'
-				}
-		},
-		callback: function(result) {
-			if (result) {
-					// If the user wants to download, fetch and download the file
-					fetch('/bcMeter_config.json')
-						.then(response => {
-								if (!response.ok) {
-										throw new Error('Network response was not ok');
-								}
-								return response.blob();
-						})
-						.then(blob => {
-								// Create a link to download the file
-								const downloadUrl = URL.createObjectURL(blob);
-								const a = document.createElement('a');
-								a.href = downloadUrl;
-								a.download = 'bcMeter_config.json';
-								document.body.appendChild(a);
-								a.click();
-								a.remove();
-								URL.revokeObjectURL(downloadUrl); // Clean up the URL object
+		e.preventDefault(); // Prevent the default submit behavior
 
-								// Proceed to the update dialog after download
+		// Ask the user if they want to download the config file
+		bootbox.confirm({
+				title: 'Download Config File?',
+				message: "Would you like to download the current configuration file (bcMeter_config.json) before proceeding with the update?",
+				buttons: {
+						cancel: {
+								label: 'No',
+								className: 'btn-secondary'
+						},
+						confirm: {
+								label: 'Yes',
+								className: 'btn-primary'
+						}
+				},
+				callback: function(result) {
+						if (result) {
+								// If the user wants to download, fetch and download the file
+								fetch('/bcMeter_config.json')
+										.then(response => {
+												if (!response.ok) {
+														throw new Error('Network response was not ok');
+												}
+												return response.blob();
+										})
+										.then(blob => {
+												// Create a link to download the file
+												const downloadUrl = URL.createObjectURL(blob);
+												const a = document.createElement('a');
+												a.href = downloadUrl;
+												a.download = 'bcMeter_config.json';
+												document.body.appendChild(a);
+												a.click();
+												a.remove();
+												URL.revokeObjectURL(downloadUrl); // Clean up the URL object
+
+												// Proceed to the update dialog after download
+												showUpdateDialog();
+										})
+										.catch(error => {
+												console.error('There was a problem with the fetch operation:', error);
+												alert("Failed to download the configuration file.");
+										});
+						} else {
+								// Skip download and proceed directly to the update dialog
 								showUpdateDialog();
-						})
-						.catch(error => {
-								console.error('There was a problem with the fetch operation:', error);
-								alert("Failed to download the configuration file.");
-						});
-			} else {
-					// Skip download and proceed directly to the update dialog
-					showUpdateDialog();
-			}
-		}
-	});
+						}
+				}
+		});
 });
 
 function showUpdateDialog() {
-	bootbox.dialog({
-		title: 'Update bcMeter?',
-		message: "<p>The most recent files will be downloaded. If possible, your parameters will be kept but please save them and check after the update if they are the same.</p>",
-		size: 'medium',
-		buttons: {
-			cancel: {
-					label: "No",
-					className: 'btn-success',
-					callback: function() {}
-			},
-			ok: {
-					label: "Yes",
-					className: 'btn-danger',
-					callback: function() {
-							window.location.href = 'includes/status.php?status=update';
-					}
+		bootbox.dialog({
+				title: 'Update bcMeter?',
+				message: "<p>The most recent files will be downloaded. If possible, your parameters will be kept but please save them and check after the update if they are the same.</p>",
+				size: 'medium',
+				buttons: {
+						cancel: {
+								label: "No",
+								className: 'btn-success',
+								callback: function() {}
+						},
+						ok: {
+								label: "Yes",
+								className: 'btn-danger',
+								callback: function() {
+										window.location.href = 'includes/status.php?status=update';
+								}
+						}
 				}
-			}
-	});
+		});
 }
 
 
 
 
 $('#saveGraph').click(function(e) {
-	e.preventDefault(); // Prevent the default submit behavior
+		e.preventDefault(); // Prevent the default submit behavior
 
-	bootbox.dialog({
-		title: 'Save graph as',
-		message: "<p>Choose the type of file you want to save the current measurements as</p>",
-		size: 'large',
-		buttons: {
-			1: {
-					label: "CSV (MS Office/Google Docs)",
-					className: 'btn-info',
-					callback: function() {
-							saveCSV();
+		bootbox.dialog({
+				title: 'Save graph as',
+				message: "<p>Choose the type of file you want to save the current measurements as</p>",
+				size: 'large',
+				buttons: {
+						1: {
+								label: "CSV (MS Office/Google Docs)",
+								className: 'btn-info',
+								callback: function() {
+										saveCSV();
 
-					}
-			},
-			2: {
-					label: "PNG (Web/Mail)",
-					className: 'btn-info',
-					callback: function() {
-							savePNG();
+								}
+						},
+						2: {
+								label: "PNG (Web/Mail)",
+								className: 'btn-info',
+								callback: function() {
+										savePNG();
 
-					}
-			},
-			3: {
-					label: "SVG (DTP)",
-					className: 'btn-info',
-					callback: function() {
-							saveSVG();
-					}
+								}
+						},
+						3: {
+								label: "SVG (DTP)",
+								className: 'btn-info',
+								callback: function() {
+										saveSVG();
+								}
+						}
 				}
-			}
-	});
+		});
 
 });
 
@@ -1611,41 +1447,41 @@ $('#saveGraph').click(function(e) {
 
 
 $('#startNewLog').click(function(e) {
-	e.preventDefault(); // Prevent the default submit behavior
+		e.preventDefault(); // Prevent the default submit behavior
 
-	bootbox.dialog({
-		title: 'Start new log?',
-		message: "<p>This will start a new log. It takes a few minutes for the new chart to appear.</p>",
-		size: 'small',
-		buttons: {
-			cancel: {
-					label: "No",
-					className: 'btn-success',
-					callback: function() {
-							// Cancel callback
-					}
-			},
-			ok: {
-				label: "Yes",
-				className: 'btn-danger',
-				callback: function() {
-					// Make AJAX call to initiate the backend process
-					$.ajax({
-						type: 'post',
-						data: {
-								exec_new_log: true
-						}, // Adjusted to pass data as an object
-						success: function(response) {
-								// Handle success
+		bootbox.dialog({
+				title: 'Start new log?',
+				message: "<p>This will start a new log. It takes a few minutes for the new chart to appear.</p>",
+				size: 'small',
+				buttons: {
+						cancel: {
+								label: "No",
+								className: 'btn-success',
+								callback: function() {
+										// Cancel callback
+								}
 						},
-						error: function() {
-								// Handle error
+						ok: {
+								label: "Yes",
+								className: 'btn-danger',
+								callback: function() {
+										// Make AJAX call to initiate the backend process
+										$.ajax({
+												type: 'post',
+												data: {
+														exec_new_log: true
+												}, // Adjusted to pass data as an object
+												success: function(response) {
+														// Handle success
+												},
+												error: function() {
+														// Handle error
+												}
+										});
+								}
 						}
-					});
 				}
-			}
-		}
-	});
+		});
 });
 
 
@@ -1793,9 +1629,9 @@ function showWarningModal(calibrationTime, filterStatus) {
     });
 }
 
-function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
+function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus) {
 	window.deviceName = deviceName;
-    if (!calibrationTime || (filterStatus !== null && filterStatus < 2)) {
+    if (!calibrationTime || (filterStatus !== null && filterStatus < 3)) {
         showWarningModal(calibrationTime, filterStatus);
     }
     const statusDiv = document.getElementById('statusDiv');
@@ -1825,7 +1661,7 @@ function updateStatus(status, deviceName, creationTimeString, calibrationTime, f
     statusDiv.textContent = statusText;
     
     setStatusColors(statusDiv, status);
-    updateHotspotWarning(in_hotspot);
+    updateHotspotWarning(status);
 }
 
 // Reset modal state on page reload
@@ -1856,8 +1692,7 @@ function getStatusText(status, deviceName, formattedCreationTime) {
        '2': `${deviceName} running since ${formattedCreationTime}`,
        '3': `${deviceName} running in Hotspot Mode since ${formattedCreationTime}`,
        '4': `Hotspot mode active, ${deviceName} not measuring`,
-       '5': `${deviceName} stopped by user`,
-       '6': `${deviceName} stopped because of an error. See bcMeter.log in System Logs Tab.`
+       '5': `${deviceName} stopped by user`
    };
    return statusMessages[status] || `${deviceName} has an unrecognized status`;
 }
@@ -1870,15 +1705,14 @@ function setStatusColors(statusDiv, status) {
        '2': 'bg-success',
        '3': 'bg-info',
        '4': 'bg-info',
-       '5': 'bg-warning',
-       '6': 'bg-danger'
+       '5': 'bg-warning'
    };
    statusDiv.classList.add(statusColors[status] || '', 'text-white');
 }
 
-function updateHotspotWarning(in_hotspot) {
+function updateHotspotWarning(status) {
    const hotspotWarningDiv = document.getElementById('hotspotwarning');
-   if (in_hotspot === true) {
+   if (status === 4) {
        hotspotWarningDiv.style.display = 'block';
        hotspotWarningDiv.className = 'alert alert-warning';
    } else {
@@ -1896,10 +1730,9 @@ function fetchStatus() {
            const logCreationTime = jsonData.log_creation_time;
            const calibrationTime = jsonData.calibration_time;
            const filterStatus = jsonData.filter_status;
-           const in_hotspot = jsonData.in_hotspot;
 
-           updateStatus(status, hostname, logCreationTime, calibrationTime, filterStatus, in_hotspot);
-           return {status, hostname, logCreationTime, calibrationTime, filterStatus, in_hotspot};
+           updateStatus(status, hostname, logCreationTime, calibrationTime, filterStatus);
+           return {status, hostname, logCreationTime, calibrationTime, filterStatus};
        })
        .catch(error => {
            console.error('Fetch error:', error);
@@ -1955,7 +1788,7 @@ setInterval(function() {
 						var errorMessage = xhr.status + ': ' + xhr.statusText;
 						var deviceURL = (deviceName !== "") ? "http://" + deviceName : "";
 
-						document.getElementById("datetime_device").innerHTML = "No connection to bcMeter<br /> Wait a minute to click <a href=\"" + deviceURL + "\">here </a> after WiFi Setup";
+						document.getElementById("datetime_device").innerHTML = "No connection to bcMeter<br /> click <a href=\"" + deviceURL + "\">here </a>to force reload after WiFi Setup ";
 						document.getElementById("datetime_local").innerHTML = "";
 						document.getElementById("set_time").value = "";
 						document.getElementById("datetime_note").innerHTML = "";
@@ -1992,894 +1825,3 @@ $('#filterStatusModal').on('show.bs.modal', function (event) {
 
 
 
-
-
-	</script>
-
-
-<form style="display: block; text-align:center;" method="post">
-		<input type="submit" id="startNewLog" name="newlog" value="Start" class="btn btn-info" />
-		<input type="submit" id="bcMeter_stop" name="bcMeter_stop" value="Stop" class="btn btn-secondary" />
-		<input type="submit" id="saveGraph" name="saveGraph" value="Download" class="btn btn-info bootbox-accept" />
-<button type="button" class="btn btn-info" data-toggle="pill" data-target="#pills-devicecontrol" role="tab">Administration</button>
-
-		<!-- Trigger Modal Button for Filter Status -->
-		<button type="button" class="btn btn-info" data-toggle="modal" data-target="#filterStatusModal" id="report-button">Filter</button>
-</form>
-
-<!-- Filter Status Modal -->
-<div class="modal fade" id="filterStatusModal" tabindex="-1" role="dialog" aria-labelledby="filterStatusModalLabel" aria-hidden="true">
-		<div class="modal-dialog" role="document">
-				<div class="modal-content">
-						<div class="modal-header">
-								<h5 class="modal-title" id="filterStatusModalLabel">Filter Status</h5>
-								<button type="button" class="close" data-dismiss="modal" aria-label="Close">
-										<span aria-hidden="true">&times;</span>
-								</button>
-						</div>
-						<div class="modal-body">
-								<p>Filter loading: <span id="filterStatusValue"></span>%</p>
-								<p>5 colors are possible: Green, red, orange, grey and black. Red means: be prepared to change. <br /> When grey, it should be changed. <br />Data will still be gathered. When black, the paper cannot load any more black carbon.</p>
-								You may calibrate the device with fresh filter paper to get the most reliable results. 
-						</div>
-						<div class="modal-footer">
-								<button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-						</div>
-				</div>
-		</div>
-</div>
-
-<br />
-
-<div class="tab-pane fade" id="pills-devicecontrol" role="tabpanel" aria-labelledby="pills-devicecontrol-tab" style="display: none;">
-		<form style="text-align:center;" method="post">
-					<button type="button" class="btn btn-primary" data-toggle="modal" data-target="#wifisetup">WiFi Settings</button>
-				<button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#device-parameters">Settings</button>
-				<button type="button" class="btn btn-info" data-toggle="modal" data-target="#downloadOld"> All logs </button>
-								<input type="submit" name="deleteOld" value="Delete old logs" class="btn btn-info" />
-				<input type="submit" id="bcMeter_calibration" name="bcMeter_calibration" value="Calibration" class="btn btn-info" />
-
-								<button type="button" class="btn btn-info" data-toggle="modal" data-target="#systemlogs"> System Logs </button>
-				<input type="hidden" name="randcheck" />
-				<input type="submit" id="bcMeter_update" name="bcMeter_update" value="Update bcMeter" class="btn btn-info" />
-				<button type="button" class="btn btn-info" data-toggle="modal" data-target="#edithostname"> Change Hostname </button> 
-								<input type="submit" name="bcMeter_reboot" id="bcMeter_reboot" value="Reboot" class="btn btn-info" />
-
-						<input type="submit" name="shutdown" value="Shutdown" class="btn btn-danger" />
-
-				<?php
-						
-
-
-						$hostname = $_SERVER['HTTP_HOST'];
-						$macAddr = 'bcMeter_0x' . $macAddr;
-						echo "<br />thingID: $macAddr<br />Version: $VERSION <br /><br />";
-						echo "<div id='calibrationTime'></div><div id='filterStatusDiv'></div>"
-
-
-
-				?>
-		</form>
-
-		<!-- Modal for Downloading Old Logs -->
-	 <div class="modal fade" id="downloadOld" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
-		<div class="modal-dialog modal-dialog-centered" role="document">
-				<div class="modal-content">
-						<div class="modal-header">
-								<h5 class="modal-title" id="exampleModalLongTitle">Old logs</h5>
-								<button type="button" class="close" data-dismiss="modal" aria-label="Close">
-										<span aria-hidden="true">&times;</span>
-								</button>
-						</div>
-						<div class="modal-body">
-								<!-- Tabs navigation -->
-								<ul class="nav nav-tabs" id="logTabs" role="tablist">
-										<li class="nav-item">
-												<a class="nav-link active" id="large-files-tab" data-toggle="tab" href="#large-files" role="tab" aria-controls="large-files" aria-selected="true">Logs over 2KB</a>
-										</li>
-										<li class="nav-item">
-												<a class="nav-link" id="small-files-tab" data-toggle="tab" href="#small-files" role="tab" aria-controls="small-files" aria-selected="false">Logs with very few samples</a>
-										</li>
-								</ul>
-
-								<!-- Tab content -->
-								<div class="tab-content">
-										<!-- Tab for large files -->
-										<div class="tab-pane fade show active" id="large-files" role="tabpanel" aria-labelledby="large-files-tab">
-												<table class='container'>
-														<thead>
-																<tr>
-																		<th>Download log from</th>
-																		<th>File Size</th>
-																</tr>
-														</thead>
-														<tbody>
-																<?php
-																$hostname = $_SERVER['HTTP_HOST'];
-																// List all .csv files in current directory
-																$dir = "../logs";
-																$files = scandir($dir);
-
-																foreach ($files as $file) :
-																		if (pathinfo($file, PATHINFO_EXTENSION) === 'csv' && $file != 'log_current.csv') :
-																				// Get file size
-																				$file_size = filesize($dir . '/' . $file);
-																				$file_size_kb = $file_size / 1024;
-
-																				if ($file_size_kb >= 2) {
-																						// Extract the date and time from the filename
-																						$date_time = explode("_", substr($file, 0, -4))[1];
-																						$date_time_day = explode("_", substr($file, 0, -4))[0];
-																						$date_time = $date_time_day . " " . substr($date_time, 0, 2) . ":" . substr($date_time, 2, 2) . ":" . substr($date_time, 4, 2);
-																?>
-																						<tr>
-																								<td><?= $date_time ?></td>
-																								<td><?= number_format($file_size_kb, 2) ?> KB</td>
-																								<td>
-																										<a href='<?= $dir . "/" . $file ?>' download='<?= $hostname . '_' . $file; ?>'>
-																												<button type="button" class='btn btn-primary'>Download</button>
-																										</a>
-																								</td>
-																						</tr>
-																<?php
-																				}
-																		endif;
-																endforeach;
-																?>
-														</tbody>
-												</table>
-										</div>
-
-										<!-- Tab for small files -->
-										<div class="tab-pane fade" id="small-files" role="tabpanel" aria-labelledby="small-files-tab">
-												<table class='container'>
-														<thead>
-																<tr>
-																		<th>Download log from</th>
-																		<th>File Size</th>
-																</tr>
-														</thead>
-														<tbody>
-																<?php
-																foreach ($files as $file) :
-																		if (pathinfo($file, PATHINFO_EXTENSION) === 'csv' && $file != 'log_current.csv') :
-																				// Get file size
-																				$file_size = filesize($dir . '/' . $file);
-																				$file_size_kb = $file_size / 1024;
-
-																				if ($file_size_kb < 2) {
-																						// Extract the date and time from the filename
-																						$date_time = explode("_", substr($file, 0, -4))[1];
-																						$date_time_day = explode("_", substr($file, 0, -4))[0];
-																						$date_time = $date_time_day . " " . substr($date_time, 0, 2) . ":" . substr($date_time, 2, 2) . ":" . substr($date_time, 4, 2);
-																?>
-																						<tr style="font-style: italic;" title="very few samples">
-																								<td><?= $date_time ?></td>
-																								<td><?= number_format($file_size_kb, 2) ?> KB</td>
-																								<td>
-																										<a href='<?= $dir . "/" . $file ?>' download='<?= $hostname . '_' . $file; ?>'>
-																												<button type="button" class='btn btn-primary'>Download</button>
-																										</a>
-																								</td>
-																						</tr>
-																<?php
-																				}
-																		endif;
-																endforeach;
-																?>
-														</tbody>
-												</table>
-										</div>
-								</div>
-						</div>
-						<div class="modal-footer">
-								<button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-						</div>
-				</div>
-		</div>
-</div>
-
-</div>
-
-
-
-
-<div class="container mt-5">
-		<div class="log-container">
-			 
-		 
-
-		</div>
-</div>
-
-	</div>
-</div>
-<!-- begin edit hostname modal -->
-<div class="modal fade" id="edithostname" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
-	<div class="modal-dialog modal-dialog-centered" role="document">
-		<div class="modal-content">
-			<div class="modal-header">
-				<h5 class="modal-title" id="exampleModalLongTitle">Change the Hostname of the device</h5>
-				<button type="button" class="close" data-dismiss="modal" aria-label="Close">
-					<span aria-hidden="true">&times;</span>
-				</button>
-			</div>
-			<div class="modal-body">
-				<form action="/interface/includes/status.php" method="GET">
-					<label for="new_hostname">New Hostname:</label>
-					<input type="text" id="new_hostname" name="new_hostname" pattern="[a-zA-Z0-9]+" required>
-					<input type="hidden" name="status" value="change_hostname">
-					<input type="submit" value="Submit">
-				</form>
-			</div>
-		</div>
-	</div>
-</div>
-<!-- End Edit Parameters -->
-
-
-<!-- begin Log modal -->
-<div class="modal fade" id="systemlogs" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
-	<div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 90%;">
-		<div class="modal-content">
-			<div class="modal-header">
-				<h5 class="modal-title" id="exampleModalLongTitle">bcMeter Logs</h5>
-				<button type="button" class="close" data-dismiss="modal" aria-label="Close">
-					<span aria-hidden="true">&times;</span>
-				</button>
-			</div>
-			<div class="modal-body"> 
-
-				<p style="text-align:center"></p>
-				<div class="accordion" id="accordionExample">
-		<div class="card">
-				<div class="card-header" id="headingOne">
-						<h2 class="mb-0">
-								<button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseOne" aria-expanded="false" aria-controls="collapseOne">
-										bcMeter.log
-								</button>
-						</h2>
-				</div>
-				<div id="collapseOne" class="collapse" aria-labelledby="headingOne" data-parent="#accordionExample">
-						<div class="card-body">
-								<div class="log-box" id="logBcMeter">
-										<!-- Log content will be injected here -->
-								</div>
-						</div>
-				</div>
-		</div>
-		<div class="card">
-				<div class="card-header" id="headingTwo">
-						<h2 class="mb-0">
-								<button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
-										ap_control_loop.log
-								</button>
-						</h2>
-				</div>
-				<div id="collapseTwo" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionExample">
-						<div class="card-body">
-								<div class="log-box" id="logApControlLoop">
-										<!-- Log content will be injected here -->
-								</div>
-						</div>
-				</div>
-		</div>
-		<div class="card">
-				<div class="card-header" id="headingThree">
-						<h2 class="mb-0">
-								<button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
-										compair_frost_upload.log
-								</button>
-						</h2>
-				</div>
-				<div id="collapseThree" class="collapse" aria-labelledby="headingThree" data-parent="#accordionExample">
-						<div class="card-body">
-								<div class="log-box" id="logCompairFrostUpload">
-										<!-- Log content will be injected here -->
-								</div>
-						</div>
-				</div>
-		</div>
-</div>
-
-<script>
-function fetchAndProcessLogFile(logType, elementId) {
-    fetch(`../maintenance_logs/${logType}.log`)
-        .then(response => {
-            if (response.status === 404) {
-                document.getElementById(elementId).innerHTML = 'Log file not found (404).';
-                throw new Error('404 Not Found');
-            }
-            if (!response.ok) {
-                document.getElementById(elementId).innerHTML = 'Error fetching log file.';
-                throw new Error('Fetch error');
-            }
-            return response.text();
-        })
-        .then(data => {
-            const lines = data.split('\n');
-            let prevMessage = '';
-            let prevTimestamp = '';
-            let contentCount = 0;
-            let output = '';
-
-            lines.forEach(line => {
-                const matches = line.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}),\d{3}\s+-\s+(DEBUG|ERROR): (.+)/);
-                if (matches) {
-                    const timestamp = matches[1];
-                    const level = matches[2];
-                    const message = matches[3];
-                    const currentMessage = message;
-
-                    if (currentMessage === prevMessage) {
-                        contentCount++;
-                    } else {
-                        if (contentCount > 1) {
-                            output += `${prevTimestamp} ${level}: ${prevMessage} (Repeated ${contentCount} times)<br>`;
-                        } else if (prevMessage !== '') {
-                            output += `${prevTimestamp} ${level}: ${prevMessage}<br>`;
-                        }
-                        prevMessage = currentMessage;
-                        prevTimestamp = timestamp;
-                        contentCount = 1;
-                    }
-                }
-            });
-
-            if (contentCount > 1) {
-                output += `${prevTimestamp} DEBUG: ${prevMessage} (Repeated ${contentCount} times)<br>`;
-            } else if (prevMessage !== '') {
-                output += `${prevTimestamp} DEBUG: ${prevMessage}<br>`;
-            }
-
-            document.getElementById(elementId).innerHTML = output;
-        })
-        .catch(error => console.error(error));
-}
-
-
-function startLogFetching() {
-		const logs = [
-						{ type: 'bcMeter', elementId: 'logBcMeter' },
-						{ type: 'ap_control_loop', elementId: 'logApControlLoop' }
-						<?php if ($compair_upload === true): ?>
-						, { type: 'compair_frost_upload', elementId: 'logCompairFrostUpload' }
-						<?php endif; ?>
-				];
-
-		logs.forEach(log => {
-				fetchAndProcessLogFile(log.type, log.elementId);
-			
-				// Set interval for periodic fetching (e.g., every 15 seconds)
-				setInterval(() => fetchAndProcessLogFile(log.type, log.elementId), 15000);
-		});
-}
-
-document.addEventListener('DOMContentLoaded', startLogFetching);
-</script>
-
-
-<br />
-
-<form method="post" action="">
-		<input type="submit" name="syslog" value="Download logs" class="btn btn-info" style="display: block;width: 50%;margin: 0 auto;" />
-</form><br />
-<p style="display:block; margin 0 auto;">In case of problems, please download the logs and send it to jd@bcmeter.org!</p>
-			</div>
-		</div>
-	</div>
-</div>
-<!-- End Log Parameters -->
-<?php
-// Define tab titles and parameter types
-$tabs = [
-		"session" => "Session Parameters",
-		"device" => "Device Parameters",
-		"administration" => "Administration Parameters",
-		"email" => "Email Parameters",
-		"compair" => "COMPAIR Parameters"
-];
-?>
-
-<!-- Start Edit device Parameters -->
-<script src="js/bootstrap4-toggle.min.js"></script>
-<!-- begin edit device parameters modal -->
-<div class="modal fade" id="device-parameters" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle1" aria-hidden="true">
-	<div class="modal-dialog modal-dialog-centered" role="document" style="max-width: 90%;">
-		<div class="modal-content">
-			<div class="modal-header">
-				<h5 class="modal-title" id="exampleModalLongTitle">Edit Parameters</h5>
-				<button type="button" class="close" data-dismiss="modal" aria-label="Close">
-					<span aria-hidden="true">&times;</span>
-				</button>
-			</div>
-			<div class="modal-body">
-				<div class="container mt-3">
-					<!-- Nav tabs -->
-					<ul class="nav nav-tabs" id="configTabs" role="tablist">
-						<?php foreach ($tabs as $type => $title): ?>
-							<li class="nav-item">
-								<a class="nav-link <?php if ($type === 'session') echo 'active'; ?>" id="<?= $type ?>-tab" data-toggle="tab" href="#<?= $type ?>" role="tab" aria-controls="<?= $type ?>" aria-selected="<?= $type === 'session' ? 'true' : 'false' ?>"><?= $title ?></a>
-							</li>
-						<?php endforeach; ?>
-					</ul>
-					<!-- Tab panes -->
-					<div class="tab-content">
-						<?php foreach ($tabs as $type => $title): ?>
-							<div class="tab-pane <?php if ($type === 'session') echo 'active'; ?>" id="<?= $type ?>" role="tabpanel" aria-labelledby="<?= $type ?>-tab">
-								<!-- <?= $title ?> parameters form -->
-								<form id="<?= $type ?>-parameters-form">
-									<table class="table table-bordered">
-										<thead>
-											<tr>
-												<th scope="col" style="width: 90%;" data-toggle="tooltip" data-placement="top" title="Variable Name">Description</th>
-												<th scope="col" style="width: 10%;">Value</th>
-											</tr>
-										</thead>
-										<tbody>
-												<!-- Dynamic <?= $title ?> Configuration Rows Will Be Inserted Here by JavaScript -->
-										</tbody>
-									</table>
-									<button type="button" class="btn btn-primary" id="save<?= ucfirst($type) ?>Settings">Save <?= $title ?> Settings</button>
-								</form>
-							</div>
-						<?php endforeach; ?>
-					</div>
-				</div>
-
-			</div>
-		</div>
-	</div>
-</div>
-<!-- End Edit device Parameters -->
-
-
-
-
-
-
-<!-- Begin Set WiFi -->
-<div class="modal fade" id="wifisetup" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle2" aria-hidden="true">
-	<div class="modal-dialog modal-dialog-centered modal-lg" role="document">
-		<div class="modal-content">
-			<div class="modal-header">
-				<h2 class="modal-title" id="exampleModalLongTitle" style="text-align: center;">Select your Network</h2>
-				<button type="button" class="close" data-dismiss="modal" aria-label="Close">
-					<span aria-hidden="true">&times;</span>
-				</button>
-			</div>
-				<!-- start dynamic content for wifi setup --> <?php
-				//languages
-				if(isset($_GET['lang']) && in_array($_GET['lang'],['nl', 'en', 'si', 'es', 'de', 'fr'])) {
-					$lang = $_GET['lang'];
-					$_SESSION['lang'] = $lang;
-				} else {
-					$lang = isset($_SESSION['lang']) ? $_SESSION['lang'] : 'en';
-				}
-				require_once("lang/lang.".$lang.".php");
-
-
-				//mac adress and checksum
-				$macAddressHex = exec('cat /sys/class/net/wlan0/address');
-				$macAddressDec = base_convert($macAddressHex, 16,10);
-				$readableMACAddressDec = trim(chunk_split($macAddressDec, 4, '-'), '-');
-				$convert_arr=range('A', 'Z');
-					//split into 2 chunks -> max integer on 32bit system is 2147483647
-					//otherwise the modulo operation does work as expected
-				$chunk1=substr($macAddressDec, 0, 8);
-				$chunk2=substr($macAddressDec, 8);
-				$chunk1_mod=$chunk1 % 23;   //mod 23 because there are 26 letters
-				$chunk2_mod=$chunk2 % 23;
-				$checkModulo=$convert_arr[$chunk1_mod].$convert_arr[$chunk2_mod];
-
-
-				// wifi vars
-				$wifiFile=$baseDir.'/bcMeter_wifi.json';
-
-				$currentWifiSsid=null;
-				$currentWifiPwd=null;
-				$sendBackground=true;
-				$credsUpdated=false;
-
-				// save wifi credentials to json file
-				if (isset($_POST['conn_submit'])) {
-					$wifi_ssid=null;
-					if(trim($_POST['wifi_ssid'])==='custom-network-selection'){     //Own custom network, not in the network list
-						$wifi_ssid = trim($_POST['custom_wifi_name']);
-					}
-					else{
-						$wifi_ssid = trim($_POST['wifi_ssid']);
-					}
-
-					$wifi_pwd = trim($_POST['wifi_pwd']);
-					if(empty($wifi_pwd)){ 
-						$data=json_decode(file_get_contents($wifiFile),TRUE);                     //no pwd given, resubmit of old wifi network
-						$wifi_pwd = $data["wifi_pwd"];
-					}
-
-					$data = array("wifi_ssid"=>$wifi_ssid, "wifi_pwd"=>$wifi_pwd);
-					file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
-					
-					$credsUpdated=true;
-
-				}
-
-				// check for existing wifi credentials
-				$data=json_decode(file_get_contents($wifiFile),TRUE);
-				$currentWifiSsid=$data["wifi_ssid"];
-				$currentWifiPwd=$data["wifi_pwd"];
-				$currentWifiPwdHidden=str_repeat("•", strlen($currentWifiPwd));
-
-				if (isset($_POST['reset_wifi_json'])) {
-						$wifiFile=$baseDir . '/bcMeter_wifi.json';
-						$wifi_ssid = "";
-						$wifi_pwd = "";
-						$data = array("wifi_ssid" => $wifi_ssid, "wifi_pwd" => $wifi_pwd);
-						file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
-
-						// Redirect to the same page to reload it
-						header('Location: ' . $_SERVER['PHP_SELF']);
-				}
-				$sendBackground=false;
-
-				// send interrupt to bcMeter_ap_control_loop service and try to connect to the wifi network
-				$interruptSent=false;
-				if (isset($_POST['conn_submit'])) {
-					// get this pid for the bcMeter_ap_control_loop service
-					exec('systemctl show --property MainPID --value bcMeter_ap_control_loop.service', $output);
-					$pid=$output[0];
-					
-					if($pid==0){
-						echo("<div class='error'>". $language["service_not_running"]." Check logs and reconnect manually by button below.</div>");
-					}
-					else{
-						// send SIGUSR1 signal to the bcMeter_ap_control_loop service
-						//exec('sudo kill -SIGUSR1 '.$pid, $output);
-						$interruptSent=true;
-					}
-				}
-				?> <script>
-				var currentWifiSsid = "<?php echo $currentWifiSsid; ?>";
-				</script>
-				<div class="modal-body p-4">
-				  <h4 class="mb-4">Select your Network</h4>
-				  
-				  <form name="conn_form" method="POST" action="index.php">
-				    <!-- Network Selection -->
-				    <div class="mb-4">
-				      <label class="mb-2">WiFi Network</label>
-						<div class="d-flex gap-2">
-						  <select name="wifi_ssid" id="js-wifi-dropdown" class="form-control">
-						    <?php if ($currentWifiSsid === null) { ?>
-						      <option selected><?php echo $language["wifi_network_loading_short"]; ?></option>
-						    <?php } else { ?>
-						      <option selected><?php echo $currentWifiSsid; ?></option>
-						    <?php } ?>
-						    <option value="custom-network-selection"><?php echo $language["add_custom_network"]; ?></option>
-						  </select>
-						  <button type="button" id="refreshWifi" class="btn btn-outline-secondary">
-						    Rescan
-						  </button>
-						</div>
-						<!-- Add the custom network input field (initially hidden) -->
-						<div id="custom-network-input" class="mt-2" style="display: none;">
-						  <input type="text" name="custom_wifi_name" class="form-control" placeholder="Enter network name">
-						</div>
-				    </div>
-
-				    <!-- Password Field -->
-				    <div class="mb-4">
-				      <!--div class="d-flex justify-content-between mb-2">
-				        <label>Password</label>
-				        <?php if(!empty($currentWifiPwd)) { ?>
-				          <a href="#" class="js-edit-password text-secondary">Change password</a>
-				        <?php } ?>
-				      </div-->
-				      
-						<div class="input-group">
-						    <input type="password" id="pass_log_id" name="wifi_pwd" class="form-control">
-						    <button type="button" class="btn btn-outline-secondary toggle-password px-3">
-						        <i class="far fa-eye"></i>
-						    </button>
-						</div>
-				    </div>
-
-				    <!-- Action Buttons -->
-					  <div >
-					    <button type="submit" name="conn_submit" class="btn btn-primary" onclick="showReconnectModal()">Save & Connect</button>
-
-					    <button type="submit" name="cancel" 	 class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-					     <button type="button" class="btn btn-danger" data-toggle="modal" data-target="#deleteWifiModal">Delete Wifi</button>
-					    <button type="submit" name="force_wifi" class="btn btn-info">Reconnect</button>
-					  </div>
-				  </form>
-				</div>
-				<!-- end dynamic content for wifi setup -->
-		</div>
-	</div>
-</div>
-<!-- end set WiFi modal-->
-
-
-<!--deleteWifiModal modal markup -->
-<div class="modal fade" id="deleteWifiModal" tabindex="-1" role="dialog" aria-labelledby="deleteWifiModalLabel" aria-hidden="true">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="deleteWifiModalLabel">Confirm Delete</h5>
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-          <span aria-hidden="true">&times;</span>
-        </button>
-      </div>
-      <div class="modal-body">
-        This will delete the saved WiFi credentials and switch the bcMeter to run as Hotspot. Continue?
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-dismiss="modal">No</button>
-        <form method="POST" style="display: inline;">
-          <button type="submit" name="reset_wifi_json" class="btn btn-danger">Yes</button>
-        </form>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  // Get the modal
-  var modal = document.getElementById('deleteWifiModal');
-  
-  // When the modal is hidden, reset any form inside it
-  modal.addEventListener('hidden.bs.modal', function () {
-    var form = modal.querySelector('form');
-    if (form) {
-      form.reset();
-    }
-  });
-});
-
-
-document.addEventListener('DOMContentLoaded', function() {
-    const wifiDropdown = document.getElementById('js-wifi-dropdown');
-    const customNetworkInput = document.getElementById('custom-network-input');
-    
-    // Show/hide custom network input based on selection
-    wifiDropdown.addEventListener('change', function() {
-        if (this.value === 'custom-network-selection') {
-            customNetworkInput.style.display = 'block';
-        } else {
-            customNetworkInput.style.display = 'none';
-        }
-    });
-    
-    // If custom-network-selection is selected on page load (e.g., after form submission)
-    if (wifiDropdown.value === 'custom-network-selection') {
-        customNetworkInput.style.display = 'block';
-    }
-});
-
-
-</script>
-
-
-
-
-<br />
-
-
-
-
-
-
-
-
-<br /> <br />
-
-
-
-
-
-<?php
-
-
-
-
-
-
-
-
-
-
-if (isset($_POST["deleteOld"]))
-{
-
-echo <<< javascript
-<script>
-var dialog = bootbox.dialog({
-		title: 'Delete old logs from device?',
-		message: "<p>This cannot be undone.</p>",
-		size: 'small',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-								window.location.href='includes/status.php?status=deleteOld';
-
-						}
-				}
-		}
-});
-</script>
-javascript;
-
-
-}
-
-
-
-
-
-if (isset($_POST["set_time"]))
-{
-
-	$set_timestamp_to = $_POST['set_time'];
-
-echo("<script>window.location.href='includes/status.php?status=timestamp&timestamp=$set_timestamp_to'</script>");
-
-}
-
-
-
-
-
-if (isset($_POST["syslog"]))
-{
-
-echo <<< javascript
-<script>
-var dialog = bootbox.dialog({
-		title: 'Download Syslog?',
-		message: "<p>Do you want to download the syslog for debugging?</p>",
-		size: 'small',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-								window.location.href='includes/status.php?status=syslog';
-
-						}
-				}
-		}
-});
-</script>
-javascript;
-
-
-}
-
-
-
-
-
-if (isset($_POST["shutdown"]))
-{
-
-echo <<< javascript
-<script>
-var dialog = bootbox.dialog({
-		title: 'Turn off bcMeter?',
-		message: "<p>Do you want to shutdown the device?</p>",
-		size: 'small',
-		buttons: {
-				cancel: {
-						label: "No",
-						className: 'btn-success',
-						callback: function(){
-
-						}
-				},
-				ok: {
-						label: "Yes",
-						className: 'btn-danger',
-						callback: function(){
-								window.location.href='includes/status.php?status=shutdown';
-
-						}
-				}
-		}
-});
-</script>
-javascript;
-
-
-}
-
-
-if (isset($_POST["force_wifi"]))
-{
-shell_exec("sudo systemctl restart bcMeter_ap_control_loop");
-}
-
-
-
-if (isset($_POST["exec_stop"])) {
-    shell_exec("sudo systemctl stop bcMeter");
-}
-
-
-
-if (isset($_POST["exec_debug"]))
-{
-	shell_exec("sudo kill -SIGINT $PID");
-}
-
-
-if (isset($_POST["startbcm"]))
-{
-	 echo "<script>bootbox.alert('Starting new log. Wait a few minutes for graph to appear');</script>";
-			shell_exec("sudo systemctl restart bcMeter");
-}
-
-
-	 
-
-if (isset($_POST["exec_new_log"])){
-		shell_exec("sudo systemctl restart bcMeter");
-}
-
-
-?>
-
-<!-- Div to display the result -->
-
-<script>
-
-function checkUndervoltageStatus() {
-    $.ajax({
-        url: 'includes/status.php',
-        type: 'POST',
-        data: { status: 'undervolt' },
-        success: function(response) {
-            if (response.trim() !== '') {
-                $('#undervoltage-status').html(response);
-            }
-        },
-        error: function() {
-            $('#undervoltage-status').html('');
-        }
-    });
-}
-
-function ignoreWarning() {
-    var warningDiv = document.getElementById('undervoltage-status');
-    if (warningDiv) {
-        warningDiv.style.display = 'none';
-    }
-}
-
-// Initialize and set interval for checking
-$(document).ready(function() {
-    checkUndervoltageStatus();
-    // Check every 2 minutes (120000 milliseconds)
-    setInterval(checkUndervoltageStatus, 120000);
-});
-</script>
-
-</body>
-</html>

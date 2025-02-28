@@ -1752,7 +1752,7 @@ function showWarningModal(calibrationTime, filterStatus) {
                 <button type="button" class="close" data-dismiss="modal">&times;</button>
             </div>
             <div class="modal-body">
-                ${!calibrationTime ? '<p>The device was not calibrated lastly. Please calibrate it with new filter.</p>' : ''}
+                ${!calibrationTime ? '<p>The device was not calibrated recently. Please calibrate it with new filter.</p>' : ''}
                 ${filterStatus < 3 ? `
                     <div class="filter-warning">
                         <p>Filter Status: ${filterStatus}/5</p>
@@ -2577,7 +2577,7 @@ $tabs = [
 				      </div-->
 				      
 						<div class="input-group">
-						    <input type="password" id="pass_log_id" name="wifi_pwd" class="form-control">
+						    <input type="password" id="pass_log_id" name="wifi_pwd" class="form-control" placeholder="Password">
 						    <button type="button" class="btn btn-outline-secondary toggle-password px-3">
 						        <i class="far fa-eye"></i>
 						    </button>
@@ -2586,7 +2586,64 @@ $tabs = [
 
 				    <!-- Action Buttons -->
 					  <div >
-					    <button type="submit" name="conn_submit" class="btn btn-primary" onclick="showReconnectModal()">Save & Connect</button>
+					    <form id="connectionForm">
+						    <button type="submit" name="conn_submit" class="btn btn-primary">Save & Connect</button>
+						</form>
+
+						<div id="progressContainer" class="mt-4" style="display: none;">
+						    <div class="alert alert-info">
+						        Attempting to connect to WiFi network...
+						    </div>
+						    <div class="progress">
+						        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+						             role="progressbar" 
+						             aria-valuenow="0" 
+						             aria-valuemin="0" 
+						             aria-valuemax="100">
+						            0%
+						        </div>
+						    </div>
+						</div>
+
+						<!-- JavaScript -->
+						<script>
+						$(document).ready(function() {
+						    $('#connectionForm').on('submit', function(e) {
+						        e.preventDefault();
+						        
+						        // Show progress container
+						        $('#progressContainer').show();
+						        
+						        // Reset progress bar
+						        var $progressBar = $('.progress-bar');
+						        $progressBar.css('width', '0%').attr('aria-valuenow', 0).text('0%');
+						        
+						        // Variables for progress animation
+						        var duration = 30000; // 30 seconds
+						        var interval = 300; // Update every 300ms
+						        var steps = duration / interval;
+						        var increment = 100 / steps;
+						        var currentProgress = 0;
+						        
+						        // Start progress animation
+						        var timer = setInterval(function() {
+						            currentProgress += increment;
+						            
+						            if (currentProgress >= 100) {
+						                clearInterval(timer);
+						                currentProgress = 100;
+						            }
+						            
+						            // Update progress bar
+						            var progress = Math.round(currentProgress);
+						            $progressBar.css('width', progress + '%')
+						                       .attr('aria-valuenow', progress)
+						                       .text(progress + '%');
+						                       
+						        }, interval);
+						    });
+						});
+						</script>
 
 					    <button type="submit" name="cancel" 	 class="btn btn-secondary" data-dismiss="modal">Cancel</button>
 					     <button type="button" class="btn btn-danger" data-toggle="modal" data-target="#deleteWifiModal">Delete Wifi</button>

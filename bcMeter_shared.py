@@ -93,8 +93,7 @@ def run_command(command):
 	try:
 		result = subprocess.run(command.split(), capture_output=True, text=True)
 		if result.returncode != 0:
-			logger.error(f"Command failed: {command}")
-			logger.error(f"Error: {result.stderr}")
+			logger.error(f"Error in {command}: {result.stderr}")
 			return None
 		return result.stdout.strip()
 	except Exception as e:
@@ -459,7 +458,6 @@ def get_bcmeter_start_time():
 	except (subprocess.CalledProcessError, ValueError):
 		return None
 
-		
 def manage_bcmeter_status(
     parameter=None,
     action='get',
@@ -482,7 +480,7 @@ def manage_bcmeter_status(
         log_creation_time (str, optional): Log creation timestamp
         hostname (str, optional): Deprecated - hostname is now automatically set
         filter_status (int, optional): Filter status code (0-5)
-        in_hotspot (boolean, optionak):  true or false
+        in_hotspot (boolean, optional): true or false
     
     Returns:
         dict or any: Retrieved parameter(s) for 'get', None for 'set'
@@ -491,59 +489,95 @@ def manage_bcmeter_status(
         ValueError: If invalid parameter requested or invalid action specified
     """
     import socket
+    import os
+    import json
+    from datetime import datetime
     
     if_status_folder = base_dir + "/tmp/"
     file_path = if_status_folder + 'BCMETER_WEB_STATUS'
     log_file_path = base_dir + "/logs/log_current.csv"
     
+    # Create directory if it doesn't exist
+    os.makedirs(if_status_folder, exist_ok=True)
+    
+    # Load current parameters or initialize empty dict
     try:
         with open(file_path, 'r') as file:
-            parameters = json.load(file)
+            current_params = json.load(file)
+            print(f"Loaded existing parameters: {current_params}")
     except (FileNotFoundError, json.JSONDecodeError):
-        parameters = {}
-        
+        current_params = {}
+        print(f"No valid parameters file found, starting with empty parameters")
+    
     valid_params = ['bcMeter_status', 'log_creation_time', 'hostname', 
                     'calibration_time', 'filter_status', 'in_hotspot']
     
     if action == 'get':
         if parameter and parameter not in valid_params:
             raise ValueError(f"Invalid parameter. Choose from: {valid_params}")
-        parameters['hostname'] = socket.gethostname()
-        return parameters if parameter is None else parameters.get(parameter)
         
+        # Always set hostname for get operations
+        current_params['hostname'] = socket.gethostname()
+        
+        if parameter:
+            return current_params.get(parameter)
+        else:
+            return current_params
+    
     elif action == 'set':
-        if log_creation_time is None:
+        print("Setting parameters...")
+        
+        # Special handling for log_creation_time if not provided
+        if log_creation_time is None and 'log_creation_time' not in current_params:
             log_creation_time = get_bcmeter_start_time()
             if log_creation_time is None:
                 try:
                     file_stat = os.stat(log_file_path)
                     log_creation_time = datetime.fromtimestamp(file_stat.st_ctime).strftime("%y%m%d_%H%M%S")
                 except FileNotFoundError:
-                    log_creation_time = None
+                    pass
         
-        # Handle filter status
+        # Apply bounds to filter_status if provided
         if filter_status is not None:
             filter_status = min(max(0, filter_status), 5)
         
-        update_dict = {
-            k: v for k, v in {
-                'bcMeter_status': bcMeter_status,
-                'calibration_time': calibration_time,
-                'log_creation_time': log_creation_time,
-                'hostname': socket.gethostname(), 
-                'filter_status': filter_status,
-                'in_hotspot': in_hotspot
-            }.items() if v is not None
-        }
+        # Update parameters with any non-None values provided
+        if bcMeter_status is not None:
+            current_params['bcMeter_status'] = bcMeter_status
+            
+        if calibration_time is not None:
+            current_params['calibration_time'] = calibration_time
+            
+        if log_creation_time is not None:
+            current_params['log_creation_time'] = log_creation_time
+            
+        # Always update hostname
+        current_params['hostname'] = socket.gethostname()
         
-        parameters.update(update_dict)
+        if filter_status is not None:
+            current_params['filter_status'] = filter_status
+            
+        if in_hotspot is not None:
+            current_params['in_hotspot'] = in_hotspot
         
-        os.makedirs(if_status_folder, exist_ok=True)
-        with open(file_path, 'w') as file:
-            json.dump(parameters, file)
+        print(f"Final parameters to save: {current_params}")
+        
+        # Write the complete parameters dict back to file
+        try:
+            with open(file_path, 'w') as file:
+                json.dump(current_params, file)
+            print(f"Parameters saved to {file_path}")
+            
+            # Verify the file was written correctly
+            with open(file_path, 'r') as file:
+                verification = json.load(file)
+                print(f"Verification - file contains: {verification}")
+                
+        except Exception as e:
+            print(f"Error writing parameters: {str(e)}")
+            raise
     else:
         raise ValueError("Invalid action. Use 'get' or 'set'")
-
 		
 use_display = config.get('use_display', False)
 
@@ -697,90 +731,70 @@ def button_thread():
 if int(airflow_type) == 9:
 	from smbus2 import SMBus
 	print("initializing honeywell")
-	SUPPORTED_FLOW_RANGE = [50.0, 100.0, 200.0, 400.0, 750.0]
-	SUPPORTED_SENSOR_ADDRESS = [0x49, 0x59, 0x69, 0x79]
 
-	class SensorNotSupported(Exception):
-		def __init__(self, flow_range, sensor_address):
-			message = (
-				f"Device with flow range {flow_range} and address {hex(sensor_address)} supported\n"
-				f"Supported flow range: {SUPPORTED_FLOW_RANGE}\n"
-				f"Supported address: {SUPPORTED_SENSOR_ADDRESS}"
-			)
-			super().__init__(message)
+	def read_airflow_ml(flow_range=750.0, sensor_address=0x49, smbus_ch=1, env_temp_c=20.0, env_pressure=1024.0, samples=200):
+		"""
+		Read airflow from Honeywell Zephyr sensor and return flow rate in ml/min.
+		
+		Args:
+			flow_range (float): Sensor's full scale flow range in SCCM (default 750.0)
+			sensor_address (int): I2C address of sensor (default 0x49)
+			smbus_ch (int): I2C bus channel (default 1)
+			env_temp_c (float): Environmental temperature in Celsius (default 20.0)
+			env_pressure (float): Environmental pressure in hPa (default 1024.0)
+			samples (int): Number of samples to average (default 500)
+		
+		Returns:
+			float: Compensated flow rate in ml/min
+			
+		Raises:
+			ValueError: If sensor not supported or invalid data received
+		"""
+		# Constants
+		STD_TEMP_K = 273.15    # Standard temperature in Kelvin
+		STD_PRESSURE = 1023.38 # Standard pressure in hPa
+		
+		# Validate sensor configuration
+		supported_ranges = [50.0, 100.0, 200.0, 400.0, 750.0]
+		supported_addresses = [0x49, 0x59, 0x69, 0x79]
+		
+		if flow_range not in supported_ranges or sensor_address not in supported_addresses:
+			raise ValueError(f"Unsupported sensor configuration. Valid ranges: {supported_ranges}, "f"Valid addresses: [0x{x:02x} for x in {supported_addresses}]")
 
-	class InvalidSensorData(Exception):
-		def __init__(self, data, max_retry=1):
-			message = f"Invalid data received after {max_retry} retries, last data received {hex(data)}."
-			super().__init__(message)
+		# Initialize sensor
+		with SMBus(smbus_ch) as bus:
+			time.sleep(0.02)  # Startup time + safety
+			bus.read_byte(sensor_address)
+			time.sleep(0.035)  # Warm-up time + safety
+			bus.read_byte(sensor_address)
 
-	STANDARD_TEMPERATURE = 273.15
-	STANDARD_PRESSURE = 1023.38
+		# Read and average flow measurements
+		flow_sum = 0
+		with SMBus(smbus_ch) as bus:
+			for _ in range(samples):
+				# Read 2 bytes of data
+				raw_data = bus.read_i2c_block_data(sensor_address, 0, 2)
+				digital_output = (raw_data[0] << 8) | raw_data[1]
+				
+				# Validate data (check if first two bits are 00)
+				if digital_output & 0xc000:
+					raise ValueError(f"Invalid sensor data: {hex(digital_output)}")
+				
+				# Convert to flow rate: Flow = FS_Flow * ((Digital_Output/16384) - 0.5)/0.4
+				flow_rate = flow_range * ((digital_output/16384) - 0.5) / 0.4
+				flow_sum += flow_rate
+				time.sleep(0.001)  # Sensor update period
 
-	def c_to_kelvin(temp_c):
-		return 273.15 + temp_c
-
-	def compensated_reading(flow_at_stp, temperature, pressure):
-		qx = flow_at_stp * (STANDARD_PRESSURE * temperature) / (pressure * STANDARD_TEMPERATURE)
-		return qx
-
-	class Zephyr:
-		def __init__(self, flow_range=50.0, sensor_address=0x49, smbus_ch=1):
-			if flow_range not in SUPPORTED_FLOW_RANGE or sensor_address not in SUPPORTED_SENSOR_ADDRESS:
-				raise SensorNotSupported(flow_range, sensor_address)
-
-			self._smbus_ch = smbus_ch
-			self._FS_flow_rate = flow_range
-			self._sensor_address = sensor_address
-			self._last_flow_rate = 0.0
-
-			self._initialize_sensor()
-
-		def _initialize_sensor(self):
-			start_up_time = 0.017
-			warm_up_time = 0.030
-
-			with SMBus(self._smbus_ch) as bus:
-				time.sleep(start_up_time)
-				bus.read_byte(self._sensor_address)
-				time.sleep(warm_up_time)
-				bus.read_byte(self._sensor_address)
-
-		def _convert_to_digital_output(self, flow_rate):
-			digital_output_code = int(16384 * (0.5 + 0.4 * (flow_rate / self._FS_flow_rate)))
-			return digital_output_code
-
-		def _convert_to_flow_rate(self, digital_output):
-			flow_rate = self._FS_flow_rate * ((digital_output / 16384) - 0.5) / 0.4
-			return flow_rate
-
-		@staticmethod
-		def _validate_data(data):
-			return (data & 0xc000) == 0
-
-		def _read_digital_output(self):
-			with SMBus(self._smbus_ch) as bus:
-				raw_data_block = bus.read_i2c_block_data(self._sensor_address, 0, 2)
-				digital_output = raw_data_block[0] << 8 | raw_data_block[1]
-
-				if self._validate_data(digital_output):
-					return digital_output
-
-			raise InvalidSensorData(digital_output)
-
-		def read(self):
-			flow_rate = self._convert_to_flow_rate(self._read_digital_output())
-			self._last_flow_rate = flow_rate
-			return flow_rate
-
-		def read_average(self, n_data=100):
-			data = [self.read() for _ in range(n_data)]
-			return sum(data) / n_data
+		# Calculate average flow rate
+		avg_flow_sccm = flow_sum / samples / 1000
+		
+		# Temperature compensation
+		env_temp_k = 273.15 + env_temp_c
+		compensated_flow = avg_flow_sccm * (STD_PRESSURE * env_temp_k) / (env_pressure * STD_TEMP_K)
+		
+		# Convert SCCM to ml/min (they are equivalent units)
+		return compensated_flow
 
 
 
 
-
-
-if __name__ == '__main__':
-	manage_bcmeter_status()

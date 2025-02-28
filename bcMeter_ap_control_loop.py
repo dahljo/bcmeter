@@ -23,7 +23,7 @@ from threading import Thread, Event
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.9.52 2025-02-04"
+ctrl_lp_ver="0.9.53 2025-02-24"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 devicename = socket.gethostname()
 
@@ -81,144 +81,116 @@ HOSTAPD_CONF, WPA_CONF = "/etc/hostapd/hostapd.conf", "/etc/wpa_supplicant/wpa_s
 keep_hotspot_alive_without_successful_connection = 3600
 
 
-def check_service_running(service_name):
-	try:
-		result = subprocess.run(['systemctl', 'is-active', service_name], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-		return result.stdout.decode().strip() == 'active'
-	except subprocess.CalledProcessError:
-		return False
+def check_service_running(service_name, wait_for_state=None, timeout=10):
+   """Check systemd service state with optional wait for target state."""
+   if wait_for_state is None:
+	   try:
+		   result = subprocess.run(['systemctl', 'is-active', service_name], 
+								check=True, stdout=subprocess.PIPE)
+		   return result.stdout.decode().strip() == 'active'
+	   except subprocess.CalledProcessError:
+		   return False
+
+   start = time.time()
+   while time.time() - start < timeout:
+	   try:
+		   current = subprocess.run(['systemctl', 'is-active', service_name], 
+								 capture_output=True, text=True).stdout.strip()
+		   if (wait_for_state == 'active' and current == 'active') or \
+			  (wait_for_state == 'inactive' and current != 'active'):
+			   logger.debug(f"{service_name} now {wait_for_state}")
+			   return True
+	   except subprocess.CalledProcessError:
+		   if wait_for_state == 'inactive':
+			   return True
+	   time.sleep(0.5)
+   return False
 
 def activate_dnsmasq_service():
 	try:
 		if check_service_running("dnsmasq"):
 			run_command("sudo systemctl stop dnsmasq")
+			if not check_service_running("dnsmasq", wait_for_state="inactive"):
+				logger.error("Failed to stop dnsmasq service before restart")
+				return False
+				
 		run_command("sudo systemctl start dnsmasq")
+		if not check_service_running("dnsmasq", wait_for_state="active"):
+			logger.error("Failed to start dnsmasq service")
+			return False
+			
 		logger.debug("Dnsmasq service started successfully")
 		return True
+		
 	except Exception as e:
 		logger.error(f"Error activating dnsmasq: {e}")
 		return False
 
-
-
 def deactivate_dnsmasq_service():
 	if check_service_running("dnsmasq"):
-		p = subprocess.Popen(["sudo", "systemctl", "stop", "dnsmasq"]).communicate()
-		p = subprocess.Popen(["sudo", "systemctl", "disable", "dnsmasq"]).communicate()
-		logger.debug("Dnsmasq service stopped/deactivated.")
-
+		run_command("sudo systemctl stop dnsmasq")
+		if not check_service_running("dnsmasq", wait_for_state="inactive"):
+			logger.error("Failed to stop dnsmasq service")
+			return False
+			
+		run_command("sudo systemctl disable dnsmasq")
+		logger.debug("Dnsmasq service stopped/deactivated")
+		return True
+	return True
+	
 def stop_access_point(checkpoint = None):
+	force_wlan0_reset(checkpoint)
 	logger.debug(f"Stopping Hotspot ({checkpoint})")
-	deactivate_dnsmasq_service()
 	prepare_dhcpcd_conf(0)
-	if check_service_running("hostapd"):
-		run_command("sudo systemctl stop hostapd")
+	for service in ["dnsmasq", "hostapd"]:
+		if check_service_running(service):
+			run_command(f"sudo systemctl stop {service}")
+			if not check_service_running(service, wait_for_state="inactive"):
+				logger.error(f"Failed to stop {service}")
+				return False
+	return True
 
 
 def stop_bcMeter_service(checkpoint = None):
-
 	if check_service_running("bcMeter"):
 		manage_bcmeter_status(action='set', bcMeter_status=5)
-		subprocess.run(["sudo", "systemctl", "start", "bcMeter"])
-		logger.debug("bcMeter service disabled.")
-
-
+		run_command("sudo systemctl stop bcMeter")
+		if not check_service_running("bcMeter", wait_for_state="inactive"):
+			logger.error(f"Failed to stop bcMeter service ({checkpoint})")
+			return False
+		logger.debug(f"bcMeter service stopped ({checkpoint})")
+		return True
+	return True
 
 def run_bcMeter_service(checkpoint = None):
 	logger.debug(f"Starting bcMeter ({checkpoint})")
-	if check_service_running("bcMeter") is False:
-		subprocess.run(["sudo", "systemctl", "start", "bcMeter"])
-		logger.debug("bcMeter service started.")
-		time.sleep(5)
+	if not check_service_running("bcMeter"):
+		run_command("sudo systemctl start bcMeter")
+		if not check_service_running("bcMeter", wait_for_state="active"):
+			logger.error(f"Failed to start bcMeter service ({checkpoint})")
+			return False
+		logger.debug(f"bcMeter service started ({checkpoint})")
+		return True
+	return True
 
 def force_wlan0_reset(checkpoint=None):
-	"""
-	Force reset the WLAN interface with comprehensive hardware checks and logging.
-	Returns:
-		bool: True if reset was successful, False otherwise
-	"""
 	try:
 		logger.debug(f"Starting WLAN reset procedure {checkpoint}")
-		# Check if WiFi hardware is blocked
-		rfkill_output = subprocess.run(['rfkill', 'list', 'wifi'], 
-												capture_output=True, 
-												text=True)
-		if "blocked: yes" in rfkill_output.stdout:
-			logger.warning("WiFi is blocked by rfkill - attempting to unblock")
-			subprocess.run(["sudo", "rfkill", "unblock", "wifi"], check=True)
-			time.sleep(1)
-		
-		# Check for hardware presence
-		if not os.path.exists('/sys/class/net/wlan0'):
-			logger.error("WLAN interface not found in system")
-			return False
-				
-		# Get initial device state
-		iwconfig_output = subprocess.run(['iwconfig', 'wlan0'], 
-													capture_output=True, 
-													text=True)
-		logger.debug(f"Initial WLAN state: {iwconfig_output.stdout.strip()}")
-		
-		# Check driver status
-		driver_check = subprocess.run(['lsmod'], capture_output=True, text=True)
-		if 'brcmfmac' not in driver_check.stdout:
-			logger.error("WiFi driver not loaded - attempting to load")
-			try:
-				subprocess.run(["sudo", "modprobe", "brcmfmac"], check=True)
-				time.sleep(2)
-			except subprocess.CalledProcessError as e:
-				logger.error(f"Failed to load WiFi driver: {e}")
+		for service in ["wpa_supplicant", "dhcpcd"]:
+			run_command(f"sudo systemctl stop {service}")
+			if not check_service_running(service, wait_for_state="inactive"):
+				logger.error(f"Failed to stop {service}")
 				return False
-		
-		# Perform the reset sequence
-		reset_sequence = [
-				["sudo", "ip", "link", "set", "wlan0", "down"],
-				["sudo", "ip", "addr", "flush", "dev", "wlan0"],
-				["sudo", "systemctl", "restart", "wpa_supplicant"],
-				["sudo", "ip", "link", "set", "wlan0", "up"]
-		]
-		
-		for cmd in reset_sequence:
-			try:
-				result = subprocess.run(cmd, 
-											capture_output=True, 
-											text=True, 
-											check=True)
-				logger.debug(f"Executed {' '.join(cmd)}: {result.stdout.strip()}")
-				time.sleep(1)  # Give system time to process each step
-			except subprocess.CalledProcessError as e:
-				logger.error(f"Command failed {' '.join(cmd)}: {e}")
-				return False
-		
-		# Verify interface is up
-		post_reset_check = subprocess.run(['ip', 'link', 'show', 'wlan0'], 
-													capture_output=True, 
-													text=True)
-		if "state UP" not in post_reset_check.stdout:
-			logger.error("WLAN interface failed to come up after reset")
-			return False
-			
-		# Check for firmware errors
-		dmesg_output = subprocess.run(['dmesg', '|', 'grep', 'brcmfmac'], 
-												shell=True, 
-												capture_output=True, 
-												text=True)
-		if "firmware error" in dmesg_output.stdout:
-			logger.error("Firmware errors detected in system log")
-			return False
-			
-		# Final connectivity check
-		time.sleep(2)  # Wait for interface to fully initialize
-		final_state = subprocess.run(['iwconfig', 'wlan0'], 
-											capture_output=True, 
-											text=True)
-		logger.debug(f"Final WLAN state: {final_state.stdout.strip()}")
-		
+
+		run_command("sudo ifconfig wlan0 down")
+		time.sleep(1)
+
+		run_command("sudo ifconfig wlan0 up")
+		time.sleep(1)
 		return True
-		
+
 	except Exception as e:
-		logger.error(f"Critical error during WLAN reset: {str(e)}")
-		logger.debug("Error details:", exc_info=True)  # Log full traceback
+		logger.error(f"WLAN reset failed: {str(e)}")
 		return False
 
 def get_uptime():
@@ -234,83 +206,46 @@ def delete_wifi_credentials():
 	logger.debug("Reset WiFi Configs")
 
 
-def debug_dhcp_status():
-	logger.debug("=== DHCP Debug Info ===")
-	debug_commands = [
-		["systemctl", "status", "dnsmasq"],
-		"ps aux | grep dnsmasq",  # Shell command
-		["ip", "addr", "show", "wlan0"],
-		["cat", "/var/lib/misc/dnsmasq.leases"],
-		["cat", "/etc/dnsmasq.conf"],
-		["iptables", "-L", "-n", "-t", "nat"],
-		["route", "-n"],
-		["cat", "/proc/sys/net/ipv4/ip_forward"]
-	]
-	
-	for cmd in debug_commands:
-		try:
-			if isinstance(cmd, str):  # Shell command with pipes
-				output = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-			else:  # List of command arguments
-				output = subprocess.run(cmd, capture_output=True, text=True)
-			logger.debug(f"\n=== {cmd if isinstance(cmd, str) else ' '.join(cmd)} ===\n{output.stdout}")
-			if output.stderr:
-				logger.error(f"Error in {cmd}: {output.stderr}")
-		except Exception as e:
-				logger.error(f"Failed to run {cmd}: {e}")
-
 def setup_access_point():
-	stop_access_point(1)
-	time.sleep(1)
-	force_wlan0_reset(1)
-	time.sleep(1)
-	restart_ap_loop = False
+	if not stop_access_point("setup AP"):
+		logger.error("Failed to stop existing AP")
+		return False
+
+	device_name = socket.gethostname()
 	try:
-		# Configure hostapd
-		device_name = socket.gethostname()
-		try:
-			with open(HOSTAPD_CONF, 'r') as f:
-				config = f.read()
-			ssid_match = re.search(r'^ssid=(.*)$', config, flags=re.MULTILINE)
-			current_ssid = ssid_match.group(1) if ssid_match else None
-			
-			if current_ssid != device_name:
-				new_config = re.sub(r'^ssid=.*$', f'ssid={device_name}', config, flags=re.MULTILINE)
-				with open(HOSTAPD_CONF, 'w') as f:
-					f.write(new_config)
-				os.chmod(HOSTAPD_CONF, 0o600)
-				restart_ap_loop = True
-		except PermissionError:
-				logger.debug("Permission denied to change SSID")
-		except Exception as e:
-				logger.debug(f"Error: {e}")
-		# Configure wpa_supplicant
-		with open(WPA_CONF, 'w') as f:
-			f.write('\n'.join([
-				"ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev",
-				"update_config=1",
-				"country=DE"
-			]))
-
-		# Configure dhcpcd and services
-		prepare_dhcpcd_conf(1)
-		run_command("sudo systemctl daemon-reload")
-		run_command("sudo service dhcpcd restart")
-		time.sleep(2)
-		
-		if activate_dnsmasq_service():
-			time.sleep(1)
-			run_command("sudo systemctl restart hostapd")
-			logger.debug(f"AP setup complete with SSID: {device_name}")
-			show_display("Hotspot", False, 0)
-			show_display("Go to Interface", False, 1)
-			#debug_dhcp_status()
-			return True
-		return False
-
+		with open(HOSTAPD_CONF, 'r') as f:
+			config_data = f.read()
+		# Replace existing 'ssid=...' line with 'ssid=<device_name>'
+		new_data = re.sub(r'^ssid=.*$', f'ssid={device_name}', config_data, flags=re.M)
+		if new_data != config_data:
+			with open(HOSTAPD_CONF, 'w') as f:
+				f.write(new_data)
+			os.chmod(HOSTAPD_CONF, 0o600)
 	except Exception as e:
-		logger.error(f"Error in setup_access_point: {e}")
+		logger.error(f"SSID update failed: {e}")
+
+	prepare_dhcpcd_conf(1)
+	run_command("sudo systemctl daemon-reload")
+	run_command("sudo systemctl restart dhcpcd")
+	if not check_service_running("dhcpcd", wait_for_state="active"):
+		logger.error("Failed to start dhcpcd service")
 		return False
+
+	run_command("sudo systemctl enable dnsmasq")  # optional if you want it enabled on boot
+	run_command("sudo systemctl start dnsmasq")
+	if not check_service_running("dnsmasq", wait_for_state="active"):
+		logger.error("Failed to start dnsmasq service")
+		return False
+	run_command("sudo systemctl start hostapd")
+	if not check_service_running("hostapd", wait_for_state="active"):
+		logger.error("Failed to start hostapd service")
+		return False
+
+	logger.debug(f"AP setup complete with SSID: {device_name}")
+	show_display("Hotspot", False, 0)
+	show_display("Go to Interface", False, 1)
+	return True
+
 
 
 def validate_wifi_credentials(ssid, pwd):
@@ -491,72 +426,138 @@ def time_sync_check_loop(stop_event):
 wifi_connection_retries = 0
 
 
-def manage_wifi(checkpoint = None):
+def wait_for_wifi_connection(timeout):  
+	start_time = time.time()
+	while time.time() - start_time < timeout:
+		if check_connection():
+			return True
+		time.sleep(2)
+	return False
+
+
+def manage_wifi(checkpoint=None):
 	global wifi_connection_retries
 	wifi_ssid, wifi_pwd = get_wifi_credentials()
 	bcMeter_running = check_service_running("bcMeter")
+	
 	if (not wifi_ssid or not wifi_pwd) or run_hotspot:
 		if not check_service_running("hostapd"):
 			logger.debug("Setting up Hotspot - no credentials or forced mode")
-			subprocess.Popen(["sudo", "systemctl", "daemon-reload"]).communicate()
+			run_command("sudo systemctl daemon-reload")
 			setup_access_point()
 		return
-
+	
 	current_network = get_wifi_network()
 	if current_network == wifi_ssid and check_connection():
 		wifi_connection_retries = 0
 		if check_service_running("hostapd"):
-			stop_access_point(2)
-		if not check_service_running('bcMeter') and manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6):
+			stop_access_point("already connected -> stop AP")
+		if not bcMeter_running and manage_bcmeter_status(action='get', parameter='bcMeter_status') not in (5, 6):
 			if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
-
-				run_bcMeter_service("1")
+				run_bcMeter_service("Already online -> bcMeter start")
 				show_display("Conn OK", False, 0)
 				show_display("Starting up", False, 1)
-
 		return
-
-	# Not connected to desired network
+	
 	logger.debug(f"Not connected to desired network. Current: {current_network}")
+	
 	if is_wifi_in_range(wifi_ssid):
 		logger.debug(f"WiFi {wifi_ssid} in range, attempting connection")
 		show_display("Connecting to WiFi", False, 0)
 		show_display(f"{wifi_ssid}", False, 1)
+
 		create_wpa_supplicant(wifi_ssid, wifi_pwd)
+
 		if check_service_running("hostapd"):
-			stop_access_point(3)
-		subprocess.Popen(["sudo", "systemctl", "daemon-reload"]).communicate()
-		subprocess.Popen(["sudo", "service", "dhcpcd", "restart"]).communicate()
+			stop_access_point("stop AP -> station mode")
 		
-		for attempt in range(2):
-			if check_connection():
-				wifi_connection_retries = 0
-				if not check_service_running('bcMeter') and manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6):
-					if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
-						run_bcMeter_service("2")
-						show_display("Conn OK", False, 0)
-						show_display("Starting up", False, 1)
-				return
-			force_wlan0_reset()
-			time.sleep(2)
+		run_command("sudo systemctl daemon-reload")
+		run_command("sudo systemctl restart dhcpcd")
+		if not check_service_running("dhcpcd", wait_for_state="active"):
+			logger.error("dhcpcd failed to become active for station mode")
+			return
 		
-		wifi_connection_retries += 1
-		if wifi_connection_retries >= 5:
-			logger.error(f"Cannot connect to {wifi_ssid}")
+		run_command("sudo systemctl start wpa_supplicant")
+		if not check_service_running("wpa_supplicant", wait_for_state="active"):
+			logger.error("wpa_supplicant failed to become active for station mode")
+			return
+		
+		if wait_for_wifi_connection(15):
 			wifi_connection_retries = 0
-			delete_wifi_credentials()
-			if not check_service_running("hostapd"):
-				setup_access_point()
+			if not check_service_running('bcMeter') and \
+			   manage_bcmeter_status(action='get', parameter='bcMeter_status') not in (5, 6):
+				if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
+					run_bcMeter_service("Connected after wait")
+					show_display("Conn OK", False, 0)
+					show_display("Starting up", False, 1)
+		else:
+			logger.error(f"Failed to connect to {wifi_ssid} within 15s.")
+			wifi_connection_retries += 1
+
+			if wifi_connection_retries >= 3:
+				logger.error(f"Cannot connect to {wifi_ssid} after multiple tries.")
+				wifi_connection_retries = 0
+				delete_wifi_credentials()
+				if not check_service_running("hostapd"):
+					setup_access_point()
 	else:
-		#logger.debug(f"WiFi {wifi_ssid} not in range. Retry: {wifi_connection_retries}")
 		wifi_connection_retries += 1
+		logger.debug(f"WiFi {wifi_ssid} not in range. Retry count: {wifi_connection_retries}")
 		if wifi_connection_retries >= 3 and not check_service_running("hostapd"):
-			logger.debug("Starting hotspot after failed attempts")
+			logger.debug("Starting hotspot after repeated failure to see SSID")
 			setup_access_point()
+
+
+
+def check_wifi_errors_in_syslog(last_seen_errors=set()):
+	"""
+	Check syslog for specific WiFi-related errors.
+	Returns a list of new detected error messages.
+	
+	Args:
+		last_seen_errors (set): Set of previously detected error messages
+	
+	Returns:
+		tuple: (new_errors list, updated_seen_errors set)
+	"""
+	try:
+		result = subprocess.run(['tail', '-n', '100', '/var/log/syslog'], capture_output=True, text=True)
+		log_entries = result.stdout.split('\n')
+		
+		error_patterns = [
+			r'brcmf_cfg80211_stop_ap:.*failed.*-\d+',
+			r'ieee80211 phy0:.*failed',
+			r'brcmfmac:.*error',
+			r'wlan0:.*error'
+		]
+		
+		new_errors = []
+		current_errors = set()
+		
+		for line in log_entries:
+			for pattern in error_patterns:
+				if re.search(pattern, line, re.IGNORECASE):
+					try:
+						timestamp = line.split()[0]
+						error_msg = line.split('] ')[-1].strip() if ']' in line else line.strip()
+						full_error = f"{timestamp} - {error_msg}"
+						current_errors.add(full_error)
+						if full_error not in last_seen_errors:
+							new_errors.append(full_error)
+					except IndexError:
+						continue
+						
+		return new_errors, current_errors
+		
+	except Exception as e:
+		logger.error(f"Error checking syslog: {e}")
+		return [], last_seen_errors
+
 
 
 def ap_control_loop():
 	global time_synced
+	seen_wifi_errors = set()
 	if (manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6)):
 		manage_bcmeter_status(action='set', bcMeter_status=4)
 	config = config_json_handler()
@@ -632,8 +633,12 @@ def ap_control_loop():
 				if not (is_ebcMeter or bcMeter_running or keep_running):
 					logger.debug("Still No Configuration")                            
 					show_display("No Config", False, 0)
-					#run_commmand("sudo shotdown now")
+					#run_command("sudo shutdown now")
 					keep_running = True 
+		new_wifi_errors, seen_wifi_errors = check_wifi_errors_in_syslog(seen_wifi_errors)
+		if new_wifi_errors:
+			for error in new_wifi_errors:
+				logger.debug(f"WiFi Message: {error}")
 					
 		time.sleep(scan_interval)
 

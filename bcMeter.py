@@ -11,7 +11,7 @@ from collections import deque
 from bcMeter_shared import config_json_handler, check_connection, manage_bcmeter_status, show_display, config, i2c, setup_logging, run_command, send_email, update_config
 import pigpio
 #os.system('clear')
-bcMeter_version = "0.9.938 2025-02-18"
+bcMeter_version = "0.9.938 2025-02-28"
 
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
@@ -45,7 +45,7 @@ TWELVEVOLT_ENABLE = config.get('TWELVEVOLT_ENABLE', False)
 
 if airflow_type == 9:
 	print("configuring for honeywell airflow sensor")
-	from bcMeter_shared import Zephyr, InvalidSensorData, SensorNotSupported, compensated_reading, c_to_kelvin
+	from bcMeter_shared import read_airflow_ml
 
 cooling = False
 temperature_to_keep = 35 if cooling is False else 0
@@ -246,9 +246,20 @@ def initialize_pwm_control():
 				print("pigpiod up and running")
 				break
 			except subprocess.CalledProcessError as e:
-				if attempt < retries - 1:
-					sleep(1)
+				if attempt < 5:
+					sleep(3)
 					continue
+				elif attempt < 8:
+					logger.debug(f"Trying pigpiod fallback procedure")
+					pigpiod_running = subprocess.run(["pgrep", "-x", "pigpiod"], 
+									   stdout=subprocess.PIPE).returncode == 0
+					if pigpiod_running:
+						subprocess.run(["sudo", "killall", "pigpiod"], check=True)
+						sleep(5)
+						os.system("sudo pigpiod")
+						sleep(5)
+						result = subprocess.run(["pigs", "t"], check=True, capture_output=True, text=True)
+						print("pigpiod up and running")
 				else:
 					logger.error("Failed to setup pigpio")
 					print("Failed to setup pigpiod.")
@@ -310,25 +321,7 @@ except Exception as e:
 	logger.error("Error: %s", e)
 
 
-
-def enable_onewire():
-	try:
-		with open('/boot/config.txt', 'r') as config_file:
-			if any("dtoverlay=w1-gpio" in line and not line.startswith("#") for line in config_file):
-				return True
-		
-		subprocess.run(['sudo', 'raspi-config', 'nonint', 'do_onewire', '0'], check=True)
-		subprocess.run(['sudo', 'modprobe', 'w1-gpio'], check=True)
-		subprocess.run(['sudo', 'modprobe', 'w1-therm'], check=True)
-		with open('/boot/config.txt', 'r') as config_file:
-			return any("dtoverlay=w1-gpio" in line and not line.startswith("#") for line in config_file)
-	
-	except Exception:
-		return False
-
 if sht40_i2c is False:
-	enable_onewire()
-
 	class TemperatureSensor:
 		RETRY_INTERVAL = 0.5
 		RETRY_COUNT = 10
@@ -343,7 +336,7 @@ if sht40_i2c is False:
 			try:
 				device_file_name = glob.glob('/sys/bus/w1/devices/28*')[0] + '/w1_slave'
 			except Exception as e:
-				logger.error(f"Temperature Sensor Error {e}")
+				logger.error(f"Temperature Sensor DS18b20 Error {e}")
 			if device_file_name is not None:
 				with open(device_file_name, 'r') as fp:
 					return [line.strip() for line in fp.readlines()]
@@ -526,22 +519,6 @@ def getconvert(channel, rate):
 	voltage = (2 * VRef * voltage) / (2 ** N)
 	return round(voltage,5)
 
-def read_honeywell_airflow():
-	env_temperature = c_to_kelvin(20.0)
-	env_pressure = 1024.0  # hPa
-	try:
-		sensor = Zephyr()
-		samples_to_take=100
-		qs = sensor.read_average(samples_to_take)
-		current_airflow = round(compensated_reading(qs, env_temperature, env_pressure)/samples_to_take,4)
-		#print(current_airflow, qs)
-		return current_airflow
-	except Exception as e:
-		return -1
-		logger.error(f"Honeywell Error {e}")
-		#shutdown(f"Honeywell Error {e}")
-
-
 def read_adc(mcp_i2c_address, sample_time):
 	global MCP342X_DEFAULT_ADDRESS, airflow_only, airflow_sensor, airflow_channel, airflow_sensor_bias, calibration
 	MCP342X_DEFAULT_ADDRESS = mcp_i2c_address
@@ -584,11 +561,9 @@ def read_adc(mcp_i2c_address, sample_time):
 			initialise(channel1, rate)
 			voltage_channel1 = getconvert(channel1, rate)
 			sum_channel1 += voltage_channel1
-			x=time()
 			initialise(channel2, rate)
 			voltage_channel2 = getconvert(channel2, rate)
 			sum_channel2 += voltage_channel2
-			x=time()
 		if (debug):
 			try:
 				atn_current=round((numpy.log(voltage_channel1/voltage_channel2)*-100),5)
@@ -611,7 +586,7 @@ def read_adc(mcp_i2c_address, sample_time):
 				sum_channel3+=average_channel3
 				current_airflow=round(airflow_by_voltage(average_channel3, af_sensor_type),4)
 			if airflow_type==9:
-				current_airflow = read_honeywell_airflow()
+				current_airflow = read_airflow_ml()
 				if current_airflow == -1:
 					continue
 				#blink_led(235)
@@ -1004,7 +979,7 @@ def bcmeter_main(stop_event):
 
 				#logger.debug("measurement took ", delay)
 			else:
-				airflow_per_minute = read_honeywell_airflow()
+				airflow_per_minute = read_airflow_ml()
 			delay = time() - start
 			volume_air_per_sample=(delay/60)*airflow_per_minute #liters of air between samples	
 		else:
@@ -1022,10 +997,10 @@ def bcmeter_main(stop_event):
 		filter_status = (
 			5 if filter_status_quotient > 0.8 else
 			4 if filter_status_quotient > 0.7 else
-			3 if filter_status_quotient > 0.55 else
-			2 if filter_status_quotient > 0.45 else
-			1 if filter_status_quotient > 0.3 else
-			0 if filter_status_quotient <= 0.3 else
+			3 if filter_status_quotient > 0.6 else
+			2 if filter_status_quotient > 0.4 else
+			1 if filter_status_quotient > 0.2 else
+			0 if filter_status_quotient <= 0.2 else
 			-1
 		)
 

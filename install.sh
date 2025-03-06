@@ -229,18 +229,16 @@ append_config "dtoverlay=disable-bt"
 if ls /sys/bus/w1/devices/ | grep -q "28"; then
     echo "temperature sensor on onewire bus found."
     # Enable OneWire interface if not already enabled
-    if ! raspi-config nonint get_onewire | grep -q "1"; then
-        raspi-config nonint do_onewire 1
-        # Ensure the dtoverlay line is in config.txt
-        append_config "dtoverlay=w1-gpio,gpiopin=5"
+    if raspi-config nonint get_onewire | grep -q "1"; then
+        raspi-config nonint do_onewire 0
+
     fi
 else
     echo "No temperature sensor on onewire bus found."
     # Disable OneWire interface if enabled
-    if raspi-config nonint get_onewire | grep -q "1"; then
-        raspi-config nonint do_onewire 0
-        # Remove the dtoverlay line from config.txt
-        sed -i '/dtoverlay=w1-gpio,gpiopin=5/d' /boot/config.txt
+    if raspi-config nonint get_onewire | grep -q "0"; then
+        raspi-config nonint do_onewire 1
+        echo "disabled onewire"
     fi
 fi
 

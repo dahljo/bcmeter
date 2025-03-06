@@ -23,7 +23,7 @@ from threading import Thread, Event
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.9.53 2025-02-24"
+ctrl_lp_ver="0.9.53 2025-03-06"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 devicename = socket.gethostname()
 
@@ -82,29 +82,29 @@ keep_hotspot_alive_without_successful_connection = 3600
 
 
 def check_service_running(service_name, wait_for_state=None, timeout=10):
-   """Check systemd service state with optional wait for target state."""
-   if wait_for_state is None:
-	   try:
-		   result = subprocess.run(['systemctl', 'is-active', service_name], 
+	"""Check systemd service state with optional wait for target state."""
+	if wait_for_state is None:
+		try:
+			result = subprocess.run(['systemctl', 'is-active', service_name], 
 								check=True, stdout=subprocess.PIPE)
-		   return result.stdout.decode().strip() == 'active'
-	   except subprocess.CalledProcessError:
-		   return False
+			return result.stdout.decode().strip() == 'active'
+		except subprocess.CalledProcessError:
+			return False
 
-   start = time.time()
-   while time.time() - start < timeout:
-	   try:
-		   current = subprocess.run(['systemctl', 'is-active', service_name], 
+	start = time.time()
+	while time.time() - start < timeout:
+		try:
+			current = subprocess.run(['systemctl', 'is-active', service_name], 
 								 capture_output=True, text=True).stdout.strip()
-		   if (wait_for_state == 'active' and current == 'active') or \
+			if (wait_for_state == 'active' and current == 'active') or \
 			  (wait_for_state == 'inactive' and current != 'active'):
-			   logger.debug(f"{service_name} now {wait_for_state}")
-			   return True
-	   except subprocess.CalledProcessError:
-		   if wait_for_state == 'inactive':
-			   return True
-	   time.sleep(0.5)
-   return False
+				logger.debug(f"{service_name} now {wait_for_state}")
+				return True
+		except subprocess.CalledProcessError:
+			if wait_for_state == 'inactive':
+				return True
+		time.sleep(0.5)
+	return False
 
 def activate_dnsmasq_service():
 	try:
@@ -482,10 +482,10 @@ def manage_wifi(checkpoint=None):
 			logger.error("wpa_supplicant failed to become active for station mode")
 			return
 		
-		if wait_for_wifi_connection(15):
+		if wait_for_wifi_connection(20):
 			wifi_connection_retries = 0
 			if not check_service_running('bcMeter') and \
-			   manage_bcmeter_status(action='get', parameter='bcMeter_status') not in (5, 6):
+				manage_bcmeter_status(action='get', parameter='bcMeter_status') not in (5, 6):
 				if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
 					run_bcMeter_service("Connected after wait")
 					show_display("Conn OK", False, 0)
@@ -567,7 +567,7 @@ def ap_control_loop():
 	is_ebcMeter = config.get('is_ebcMeter', False)
 	prev_log_creation_time = None
 	was_offline = True
-
+	in_hotspot = False
 	wifi_ssid, _ = get_wifi_credentials()
 	if not wifi_ssid or not is_wifi_in_range(wifi_ssid):
 		logger.debug("Initial check: No WiFi available, starting hotspot")
@@ -587,31 +587,32 @@ def ap_control_loop():
 		# Check network state
 		current_network = get_wifi_network()
 		wifi_ssid, _ = get_wifi_credentials()
-		
 		if current_network != wifi_ssid:
 			manage_wifi(2)
 
-
+		current_status = manage_bcmeter_status(action='get',parameter='bcMeter_status')
+		if (current_status not in (5, 6)):
+			if run_hotspot or check_service_running("hostapd"):
+				current_status = 3 if bcMeter_running else 4
+			elif is_online:
+				current_status = 2
+				if not bcMeter_running:
+					run_bcMeter_service("3")
+			elif not is_online and check_service_running("hostapd"):
+				current_status = 4
+			else:
+				current_status = 0
 
 		if run_hotspot or check_service_running("hostapd"):
-			current_status = 3 if bcMeter_running else 4
-		elif is_online:
-			current_status = 2
-		elif not is_online and check_service_running("hostapd"):
-			current_status = 4
+			in_hotspot = True
 		else:
-			current_status = 0
-
-		if (current_status in (3,4)):
-			manage_bcmeter_status(action='set',in_hotspot=True)
-		else:
-			manage_bcmeter_status(action='set',in_hotspot=False)
-
-		if (manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6)):
-			if is_online and not bcMeter_running:
-				run_bcMeter_service("3")
-			prev_log_creation_time = manage_bcmeter_status(action='set', bcMeter_status=current_status, log_creation_time=prev_log_creation_time)
-
+			in_hotspot = False
+		manage_bcmeter_status(
+			 action='set',
+			 bcMeter_status=current_status,
+			 in_hotspot=in_hotspot,
+			 log_creation_time=prev_log_creation_time
+		)
 
 
 		if is_online:

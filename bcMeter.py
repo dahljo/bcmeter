@@ -11,7 +11,7 @@ from collections import deque
 from bcMeter_shared import config_json_handler, check_connection, manage_bcmeter_status, show_display, config, i2c, setup_logging, run_command, send_email, update_config
 import pigpio
 #os.system('clear')
-bcMeter_version = "0.9.938 2025-02-28"
+bcMeter_version = "0.9.938 2025-03-06"
 
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
@@ -150,49 +150,69 @@ LED_PWM_FREQ = 1000
 
 TWELVEVOLT_ENABLE = False
 
+
 def shutdown(reason, shutdown_code=None):
-	global reverse_dutycycle, housekeeping_thread, set_PWM_dutycycle_thread
+	global reverse_dutycycle, housekeeping_thread, set_PWM_dutycycle_thread, sampling_thread
+	stop_event.set()
+	change_blinking_pattern.set()
+	
 	if shutdown_code is None:
-		shutdown_code=5
+		shutdown_code = 5
+	
 	manage_bcmeter_status(action='set', bcMeter_status=shutdown_code)
 	print(f"Quitting: {reason}")
-	show_display("Goodbye",0,True)
-	if reason == "SIGINT":
-		show_display("Turn off bcMeter",1,True)
+	show_display("Goodbye", 0, True)
+	
+	if reason == "SIGINT" or reason == "SIGTERM":
+		show_display("Turn off bcMeter", 1, True)
 	else:
-		show_display(f"{reason}",1,True)
+		show_display(f"{reason}", 1, True)
 
-	show_display("",2,True)
+	show_display("", 2, True)
 	logger.debug(reason)
+	
+	# Wait for threads to terminate with reasonable timeouts
+	threads_to_join = []
+	if sampling_thread and sampling_thread.is_alive():
+		threads_to_join.append(sampling_thread)
+	if housekeeping_thread and housekeeping_thread.is_alive():
+		threads_to_join.append(housekeeping_thread)
+	if set_PWM_dutycycle_thread and set_PWM_dutycycle_thread.is_alive():
+		threads_to_join.append(set_PWM_dutycycle_thread)
+	
+	# Join all threads with timeout to prevent blocking
+	for thread in threads_to_join:
+		thread.join(timeout=2)
+	
 	try:
-		if (reverse_dutycycle is False):
+		if reverse_dutycycle is False:
 			set_pwm_duty_cycle('pump', 0)
-			sleep(0.5)
 		else:
 			set_pwm_duty_cycle('pump', PUMP_PWM_RANGE)
-			sleep(0.5)
-		if (airflow_only is False):
-			#subprocess.Popen(["sudo", "killall", "pigpiod"]).communicate
+		
+		# Turn off other pins
+		if airflow_only is False:
 			GPIO.output(INFRARED_LED_PIN, False)
-			GPIO.output(1,False)
-			GPIO.output(23,False)
-			#pump_duty.ChangeDutyCycle(0) 
-			if (use_rgb_led == 1):
-				# Turn off the LED
+			GPIO.output(1, False)
+			GPIO.output(23, False)
+			if use_rgb_led == 1:
 				GPIO.output(R_PIN, 1)
 				GPIO.output(G_PIN, 1)
 				GPIO.output(B_PIN, 1)
-				GPIO.cleanup()
-	except:
-		pass
-	stop_event.set()
-	change_blinking_pattern.set()
+		
+		# Clean up pigpio connection
+		if 'pi' in globals() and pi.connected:
+			pi.stop()
+			
+		# Clean up GPIO
+		GPIO.cleanup()
+	except Exception as e:
+		logger.error(f"Error during hardware shutdown: {e}")
+	if reason == "SIGINT" or reason == "SIGTERM":
+		os._exit(1)
+	else:
+		sys.exit(1)
 
-	run_command("sudo killall pigpio")
-
-	sleep(0.5)
-	os.kill(os.getpid(), 15)
-	sys.exit(1)
 
 
 cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3']
@@ -229,46 +249,37 @@ def initialize_pwm_control():
 	try:
 		# Check if pigpiod is already running
 		pigpiod_running = subprocess.run(["pgrep", "-x", "pigpiod"], 
-									   stdout=subprocess.PIPE).returncode == 0
+									 stdout=subprocess.PIPE).returncode == 0
+		
+		# Only try to kill it if it's running
 		if pigpiod_running:
-			subprocess.run(["sudo", "killall", "pigpiod"], check=True)
+			try:
+				subprocess.run(["sudo", "killall", "pigpiod"], check=False)
+				sleep(2)  # Give it time to fully stop
+			except:
+				pass
 			
-		# Start pigpiod
-		os.system("sudo pigpiod")
+		# Start pigpiod with additional options for stability
+		os.system("sudo pigpiod -l -m")  # Add logging and minimize CPU usage
+		
+		# Give it time to start
+		sleep(3)
 		
 		# Verify daemon is responsive
-		delay = 1
-		retries = 10
-		for attempt in range(retries):
+		retry_count = 0
+		while retry_count < 5:
 			try:
-				result = subprocess.run(["pigs", "t"], check=True, 
-									  capture_output=True, text=True)
-				print("pigpiod up and running")
-				break
-			except subprocess.CalledProcessError as e:
-				if attempt < 5:
-					sleep(3)
-					continue
-				elif attempt < 8:
-					logger.debug(f"Trying pigpiod fallback procedure")
-					pigpiod_running = subprocess.run(["pgrep", "-x", "pigpiod"], 
-									   stdout=subprocess.PIPE).returncode == 0
-					if pigpiod_running:
-						subprocess.run(["sudo", "killall", "pigpiod"], check=True)
-						sleep(5)
-						os.system("sudo pigpiod")
-						sleep(5)
-						result = subprocess.run(["pigs", "t"], check=True, capture_output=True, text=True)
-						print("pigpiod up and running")
-				else:
-					logger.error("Failed to setup pigpio")
-					print("Failed to setup pigpiod.")
-					shutdown("Pigpiod Error. Reboot and retry.", 6)
+				pi = pigpio.pi()
+				if pi.connected:
+					break
+				retry_count += 1
+				sleep(2)
+			except:
+				retry_count += 1
+				sleep(2)
 		
-		# Initialize connection
-		pi = pigpio.pi()
 		if not pi.connected:
-			raise Exception("Failed to connect to pigpiod")
+			raise Exception("Failed to connect to pigpiod after multiple attempts")
 			
 		# Configure PWM pins
 		pi.set_mode(PUMP_PIN, pigpio.OUTPUT)
@@ -278,12 +289,12 @@ def initialize_pwm_control():
 		pi.set_PWM_range(INFRARED_LED_PIN, LED_PWM_RANGE)
 		pi.set_PWM_frequency(INFRARED_LED_PIN, LED_PWM_FREQ)
 		
-		sleep(0.1)  # Short delay to ensure settings are applied
-					
+		sleep(0.5)  # Longer delay to ensure settings are applied
+				
 		return True
 		
 	except Exception as e:
-		logger.error("Error initializing PWM control: %s", e)
+		logger.error(f"Error initializing PWM control: {e}")
 		return False
 
 
@@ -372,10 +383,13 @@ def handle_signal(signum, frame):
 		signal_handler()
 	elif signum == signal.SIGINT:
 		shutdown("SIGINT")
+	elif signum == signal.SIGTERM:
+		shutdown("SIGTERM")  # Handle systemctl stop		
 
 #Signalhandler
 signal.signal(signal.SIGUSR1, handle_signal)
 signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
 
 def signal_handler():
 	file_path = '/tmp/bcMeter_signalhandler'
@@ -749,7 +763,7 @@ def check_airflow(current_mlpm):
 	if disable_pump_control is False:
 		if current_mlpm < 0.005 and desired_airflow_in_lpm > 0:
 			zero_airflow += 1
-			if zero_airflow == 5:
+			if zero_airflow == 5 and not stop_event.is_set():
 				print("resetting pump; no airflow?!")
 				logger.debug("resetting pump... no airflow measured")
 				pump_test()
@@ -902,7 +916,7 @@ def bcmeter_main(stop_event):
 		return
 	last_email_time = time()
 	first_value = True
-	reference_sensor_value_last_run=filter_status = samples_taken = sht_humidity=delay=airflow_sensor_value=reference_sensor_value=reference_sensor_bias=main_sensor_bias=bcmRefFallback=bcmSenRef=reference_sensor_value_current=main_sensor_value_current=main_sensor_value_last_run=attenuation_last_run=BCngm3_unfiltered=BCngm3_unfilteredpos=carbonRollAvg01=carbonRollAvg02=carbonRollAvg03=temperature_current=bcm_temperature_last_run=attenuation_coeff=absorption_coeff=0
+	reference_sensor_value_last_run=filter_status = samples_taken = sht_humidity=delay=airflow_sensor_value=reference_sensor_value=reference_sensor_bias=main_sensor_bias=bcmRefFallback=bcmSenRef=reference_sensor_value_current=main_sensor_value_current=main_sensor_value_last_run=attenuation_last_run=BCngm3=BCngm3_unfiltered=temperature_current=bcm_temperature_last_run=attenuation_coeff=absorption_coeff=0
 	notice = devicename
 	volume_air_per_sample = absorb = main_sensor_value = attenuation = attenuation_current = 0.0000
 	today = str(datetime.now().strftime("%y-%m-%d"))
@@ -910,14 +924,17 @@ def bcmeter_main(stop_event):
 	now = str(datetime.now().strftime("%H:%M:%S"))
 	if debug == False:
 		logFileName =(str(today) + "_" + str(now) + ".csv").replace(':','')
-		header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3_unfiltered;BCngm3;Temperature;notice;main_sensor_bias;reference_sensor_bias;sampleDuration;sht_humidity;airflow"
+		if is_ebcMeter:
+			header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCugm3_unfiltered;BCugm3;Temperature;notice;main_sensor_bias;reference_sensor_bias;sampleDuration;sht_humidity;airflow"
+		else:
+			header="bcmDate;bcmTime;bcmRef;bcmSen;bcmATN;relativeLoad;BCngm3_unfiltered;BCngm3;Temperature;notice;main_sensor_bias;reference_sensor_bias;sampleDuration;sht_humidity;airflow"
 		compair_offline_log_header="timestamp,bcngm3,atn,bcmsen,bcmref,bcmtemperature, location, filter_status"
 		new_log_message="Started log " + str(today) + " " + str(now) + " " + str(bcMeter_version) + " " + str(logFileName)
 		print(new_log_message)
 		logger.debug(new_log_message)
 		createLog(logFileName,header)
 		manage_bcmeter_status(action='set', bcMeter_status=1)
-		logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";"+ str(BCngm3_unfiltered) + ";" + str(temperature_current) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(sht_humidity) + ";" + str(volume_air_per_sample) 
+		logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";"+ str(BCngm3) + ";" + str(temperature_current) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(sht_humidity) + ";" + str(volume_air_per_sample) 
 		online = check_connection()
 
 	if (compair_upload is True):
@@ -932,6 +949,12 @@ def bcmeter_main(stop_event):
 
 	y = 0
 	while(True):
+		if stop_event.is_set():
+			logger.debug("Main sampling thread received stop signal")
+			return
+
+
+
 		if (TWELVEVOLT_ENABLE is True) and (TWELVEVOLT_IS_ENABLED is False):
 			GPIO.setup(TWELVEVOLT_PIN, GPIO.OUT)
 			GPIO.output(TWELVEVOLT_PIN, 1)
@@ -1050,6 +1073,8 @@ def bcmeter_main(stop_event):
 		device_specific_correction_factor = device_specific_correction_factor/1000 if is_ebcMeter else device_specific_correction_factor
 		try:
 			BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
+			if is_ebcMeter:
+				BCngm3_unfiltered = BCngm3_unfiltered / 1000
 		except Exception as e:
 			BCngm3_unfiltered = 0
 			logger.error("invalid value of BC: ",e)
@@ -1059,7 +1084,12 @@ def bcmeter_main(stop_event):
 		#logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";" + str(round(temperature_current,1)) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(round(sht_humidity,1))
 		if (samples_taken>3) and (airflow_only is False) and (debug is False):
 			with open(base_dir+"/logs/" + logFileName, "a") as log:
-				logString = f"{datetime.now().strftime('%d-%m-%y')};{datetime.now().strftime('%H:%M:%S')};{reference_sensor_value_current};{main_sensor_value_current};{attenuation_current};{attenuation_coeff};{BCngm3_unfiltered};{BCngm3_unfiltered};{round(temperature_current, 1)};{notice};{main_sensor_bias};{reference_sensor_bias};{round(delay, 1)};{round(sht_humidity, 1)};{round(airflow_per_minute,3)}"
+				if is_ebcMeter:
+					BCugm3 = BCngm3_unfiltered / 1000
+					logString = f"{datetime.now().strftime('%d-%m-%y')};{datetime.now().strftime('%H:%M:%S')};{reference_sensor_value_current};{main_sensor_value_current};{attenuation_current};{attenuation_coeff};{BCngm3_unfiltered};{BCugm3};{round(temperature_current, 1)};{notice};{main_sensor_bias};{reference_sensor_bias};{round(delay, 1)};{round(sht_humidity, 1)};{round(airflow_per_minute,3)}"
+				else:
+					logString = f"{datetime.now().strftime('%d-%m-%y')};{datetime.now().strftime('%H:%M:%S')};{reference_sensor_value_current};{main_sensor_value_current};{attenuation_current};{attenuation_coeff};{BCngm3_unfiltered};{BCngm3_unfiltered};{round(temperature_current, 1)};{notice};{main_sensor_bias};{reference_sensor_bias};{round(delay, 1)};{round(sht_humidity, 1)};{round(airflow_per_minute,3)}"
+
 				log.write(logString+"\n")
 			kernel = 5 if not is_ebcMeter else 3
 			if (samples_taken<kernel):
@@ -1128,6 +1158,11 @@ def bcmeter_main(stop_event):
 					print("Exit script with ctrl+c")
 		delay = time() - start
 		y = time()
+		if stop_event.is_set():
+			logger.debug("Main sampling thread received stop signal")
+			return
+
+
 		if (debug is True):
 			print("main loop took ",delay)
 		if (sample_time-delay>=0):
@@ -1239,74 +1274,18 @@ def housekeeping(stop_event):
 		sleep(5)
 
 
+
 def blink_led(pattern, change_blinking_pattern):
+  
 	if debug:
-		#print(f"blinking pattern = {pattern}")
 		pass
 	while not change_blinking_pattern.is_set():
-		R_PIN=G_PIN=B_PIN=1#remove for RGB Led; valid for mono LED
+		blink_duration = 0.5 if pattern != 555 else 3
+		GPIO.output(MONOLED_PIN, GPIO.HIGH)
+		sleep(blink_duration)
+		GPIO.output(MONOLED_PIN, GPIO.LOW)
+		sleep(blink_duration*2)
 
-		red_blinks = pattern // 100
-		green_blinks = (pattern - (red_blinks * 100)) // 10
-		blue_blinks = pattern - red_blinks * 100 - green_blinks * 10
-
-		blink_duration = 0.5 if pattern != 555 else 0.1
-
-		for _ in range(red_blinks):
-			GPIO.output(R_PIN, GPIO.HIGH)  # Change LOW to HIGH
-			sleep(blink_duration)
-			GPIO.output(R_PIN, GPIO.LOW)  # Change HIGH to LOW
-
-
-		sleep(blink_duration * 2)
-
-		for _ in range(green_blinks):
-			GPIO.output(G_PIN, GPIO.HIGH)  # Change LOW to HIGH
-			sleep(blink_duration)
-			GPIO.output(G_PIN, GPIO.LOW)  # Change HIGH to LOW
-
-
-		sleep(blink_duration * 2)
-
-		for _ in range(blue_blinks):
-			GPIO.output(B_PIN, GPIO.HIGH)  # Change LOW to HIGH
-			sleep(blink_duration)
-			GPIO.output(B_PIN, GPIO.LOW)  # Change HIGH to LOW
-
-		sleep(blink_duration * 2)
-
-
-
-def led_communication():
-
-	# Blink each color
-	for pin in [R_PIN, G_PIN, B_PIN]:
-		GPIO.output(pin, GPIO.HIGH)  # Turn on the LED
-		sleep(1)  # Wait for 1 second
-		GPIO.output(pin, GPIO.LOW)  # Turn off the LED
-
-	# Rainbow gradient
-	colors = [[255, 0, 0], [255, 127, 0], [255, 255, 0], [0, 255, 0], [0, 0, 255], [75, 0, 130], [148, 0, 211]]
-	duration = 5  # Total duration in seconds
-	interval = 0.5  # Interval between colors in seconds
-	steps = int(duration / (interval * len(colors)))
-
-	for _ in range(steps):
-		for color in colors:
-			r, g, b = color
-			GPIO.output(R_PIN, GPIO.HIGH if r > 0 else GPIO.LOW)
-			GPIO.output(G_PIN, GPIO.HIGH if g > 0 else GPIO.LOW)
-			GPIO.output(B_PIN, GPIO.HIGH if b > 0 else GPIO.LOW)
-			sleep(interval)
-			r = max(0, r - 5)
-			g = max(0, g - 5)
-			b = max(0, b - 5)
-			color = [r, g, b]
-
-	# Turn off the LED
-	GPIO.output(R_PIN, 0)
-	GPIO.output(G_PIN, 0)
-	GPIO.output(B_PIN, 0)
 
 
 if __name__ == '__main__':

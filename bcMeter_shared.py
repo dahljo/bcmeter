@@ -458,6 +458,8 @@ def get_bcmeter_start_time():
 	except (subprocess.CalledProcessError, ValueError):
 		return None
 
+
+
 def manage_bcmeter_status(
     parameter=None,
     action='get',
@@ -480,7 +482,7 @@ def manage_bcmeter_status(
         log_creation_time (str, optional): Log creation timestamp
         hostname (str, optional): Deprecated - hostname is now automatically set
         filter_status (int, optional): Filter status code (0-5)
-        in_hotspot (boolean, optional): true or false
+        in_hotspot (boolean, optional):  true or false
     
     Returns:
         dict or any: Retrieved parameter(s) for 'get', None for 'set'
@@ -488,96 +490,75 @@ def manage_bcmeter_status(
     Raises:
         ValueError: If invalid parameter requested or invalid action specified
     """
-    import socket
-    import os
-    import json
-    from datetime import datetime
-    
     if_status_folder = base_dir + "/tmp/"
     file_path = if_status_folder + 'BCMETER_WEB_STATUS'
     log_file_path = base_dir + "/logs/log_current.csv"
     
-    # Create directory if it doesn't exist
-    os.makedirs(if_status_folder, exist_ok=True)
+    # Ensure default structure exists
+    default_parameters = {
+        'bcMeter_status': 0,
+        'calibration_time': None,
+        'log_creation_time': None,
+        'hostname': socket.gethostname(),
+        'filter_status': 0,
+        'in_hotspot': False
+    }
     
-    # Load current parameters or initialize empty dict
     try:
-        with open(file_path, 'r') as file:
-            current_params = json.load(file)
-            print(f"Loaded existing parameters: {current_params}")
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            with open(file_path, 'r') as file:
+                parameters = json.load(file)
+        else:
+            parameters = {}
     except (FileNotFoundError, json.JSONDecodeError):
-        current_params = {}
-        print(f"No valid parameters file found, starting with empty parameters")
+        parameters = {}
     
-    valid_params = ['bcMeter_status', 'log_creation_time', 'hostname', 
-                    'calibration_time', 'filter_status', 'in_hotspot']
+    # Ensure all default keys exist
+    for key, value in default_parameters.items():
+        if key not in parameters or parameters[key] is None:
+            parameters[key] = value
+    
+    valid_params = list(default_parameters.keys())
     
     if action == 'get':
         if parameter and parameter not in valid_params:
             raise ValueError(f"Invalid parameter. Choose from: {valid_params}")
+        parameters['hostname'] = socket.gethostname()
+        return parameters if parameter is None else parameters.get(parameter, default_parameters.get(parameter))
         
-        # Always set hostname for get operations
-        current_params['hostname'] = socket.gethostname()
-        
-        if parameter:
-            return current_params.get(parameter)
-        else:
-            return current_params
-    
     elif action == 'set':
-        print("Setting parameters...")
-        
-        # Special handling for log_creation_time if not provided
-        if log_creation_time is None and 'log_creation_time' not in current_params:
-            log_creation_time = get_bcmeter_start_time()
+        if log_creation_time is None:
+            log_creation_time = get_bcmeter_start_time() if 'get_bcmeter_start_time' in globals() else None
             if log_creation_time is None:
                 try:
                     file_stat = os.stat(log_file_path)
                     log_creation_time = datetime.fromtimestamp(file_stat.st_ctime).strftime("%y%m%d_%H%M%S")
                 except FileNotFoundError:
-                    pass
+                    log_creation_time = None
         
-        # Apply bounds to filter_status if provided
+        # Handle filter status
         if filter_status is not None:
             filter_status = min(max(0, filter_status), 5)
         
-        # Update parameters with any non-None values provided
-        if bcMeter_status is not None:
-            current_params['bcMeter_status'] = bcMeter_status
-            
-        if calibration_time is not None:
-            current_params['calibration_time'] = calibration_time
-            
-        if log_creation_time is not None:
-            current_params['log_creation_time'] = log_creation_time
-            
-        # Always update hostname
-        current_params['hostname'] = socket.gethostname()
+        update_dict = {
+            k: v for k, v in {
+                'bcMeter_status': bcMeter_status,
+                'calibration_time': calibration_time,
+                'log_creation_time': log_creation_time,
+                'hostname': socket.gethostname(), 
+                'filter_status': filter_status,
+                'in_hotspot': in_hotspot
+            }.items() if v is not None
+        }
         
-        if filter_status is not None:
-            current_params['filter_status'] = filter_status
-            
-        if in_hotspot is not None:
-            current_params['in_hotspot'] = in_hotspot
+        parameters.update(update_dict)
         
-        print(f"Final parameters to save: {current_params}")
-        
-        # Write the complete parameters dict back to file
-        try:
-            with open(file_path, 'w') as file:
-                json.dump(current_params, file)
-            print(f"Parameters saved to {file_path}")
-            
-            # Verify the file was written correctly
-            with open(file_path, 'r') as file:
-                verification = json.load(file)
-                print(f"Verification - file contains: {verification}")
-                
-        except Exception as e:
-            print(f"Error writing parameters: {str(e)}")
-            raise
+        os.makedirs(if_status_folder, exist_ok=True)
+        with open(file_path, 'w') as file:
+            json.dump(parameters, file)
     else:
         raise ValueError("Invalid action. Use 'get' or 'set'")
+
 		
 use_display = config.get('use_display', False)
 

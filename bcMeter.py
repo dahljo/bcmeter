@@ -47,6 +47,8 @@ if airflow_type == 9:
 	print("configuring for honeywell airflow sensor")
 	from bcMeter_shared import read_airflow_ml
 
+
+
 cooling = False
 temperature_to_keep = 35 if cooling is False else 0
 override_airflow = False
@@ -93,7 +95,8 @@ TWELVEVOLT_PIN = 27
 INFRARED_LED_PIN = 26
 GPIO.setup(MONOLED_PIN, GPIO.OUT)
 
-
+if TWELVEVOLT_ENABLE:
+	GPIO.setup(TWELVEVOLT_PIN, GPIO.OUT)
 #update_config(variable='TWELVEVOLT_ENABLE', value=False)
 # /RDY bit definition
 MCP342X_CONF_RDY = 0x80
@@ -148,72 +151,96 @@ PUMP_PWM_FREQ = int(config.get('pwm_freq', 20))  # Configured pump PWM frequency
 LED_PWM_RANGE = 255
 LED_PWM_FREQ = 1000  
 
-TWELVEVOLT_ENABLE = False
 
 
 def shutdown(reason, shutdown_code=None):
 	global reverse_dutycycle, housekeeping_thread, set_PWM_dutycycle_thread, sampling_thread
+	
+	# Set stop event to signal all threads to exit
 	stop_event.set()
 	change_blinking_pattern.set()
+	
+	# Log the shutdown reason
+	print(f"Quitting: {reason}")
+	logger.debug(f"Shutdown initiated: {reason}")
 	
 	if shutdown_code is None:
 		shutdown_code = 5
 	
-	manage_bcmeter_status(action='set', bcMeter_status=shutdown_code)
-	print(f"Quitting: {reason}")
-	show_display("Goodbye", 0, True)
+	# Turn off 12V if configured
+	if GPIO.gpio_function(TWELVEVOLT_PIN) == GPIO.OUT:
+		GPIO.output(TWELVEVOLT_PIN, 0)
 	
+	# Update status
+	manage_bcmeter_status(action='set', bcMeter_status=shutdown_code)
+	
+	# Update display
+	show_display("Goodbye", 0, True)
 	if reason == "SIGINT" or reason == "SIGTERM":
 		show_display("Turn off bcMeter", 1, True)
 	else:
 		show_display(f"{reason}", 1, True)
-
 	show_display("", 2, True)
-	logger.debug(reason)
 	
-	# Wait for threads to terminate with reasonable timeouts
+	# Stop pigpio cleanly if it's running
+	if reason != "Already running":
+		try:
+			# Only stop pigpio if it's connected
+			if 'pi' in globals() and pi.connected:
+				# Set pump to safe state before stopping
+				if reverse_dutycycle is False:
+					try:
+						pi.set_PWM_dutycycle(PUMP_PIN, 0)
+					except:
+						pass
+				else:
+					try:
+						pi.set_PWM_dutycycle(PUMP_PIN, PUMP_PWM_RANGE)
+					except:
+						pass
+				
+				# Stop pigpio connection
+				pi.stop()
+				logger.debug("pigpio connection stopped")
+				
+				# Kill the daemon with a timeout
+				try:
+					subprocess.run(["sudo", "killall", "pigpiod"], 
+								 check=False, timeout=2)
+					logger.debug("pigpiod process terminated")
+				except subprocess.TimeoutExpired:
+					logger.warning("Timeout while trying to kill pigpiod")
+		except Exception as e:
+			logger.error(f"Error stopping pigpio: {e}")
+	
+	# Get current thread ID to avoid joining the thread that's executing this function
+	from threading import current_thread
+	current_thread_id = current_thread().ident
+	
+	# Prepare list of threads to join
 	threads_to_join = []
-	if sampling_thread and sampling_thread.is_alive():
+	if sampling_thread and sampling_thread.is_alive() and sampling_thread.ident != current_thread_id:
 		threads_to_join.append(sampling_thread)
-	if housekeeping_thread and housekeeping_thread.is_alive():
+	if housekeeping_thread and housekeeping_thread.is_alive() and housekeeping_thread.ident != current_thread_id:
 		threads_to_join.append(housekeeping_thread)
-	if set_PWM_dutycycle_thread and set_PWM_dutycycle_thread.is_alive():
+	if set_PWM_dutycycle_thread and set_PWM_dutycycle_thread.is_alive() and set_PWM_dutycycle_thread.ident != current_thread_id:
 		threads_to_join.append(set_PWM_dutycycle_thread)
 	
-	# Join all threads with timeout to prevent blocking
+	# Join threads with timeout
 	for thread in threads_to_join:
-		thread.join(timeout=2)
+		thread.join(timeout=1)
+		if thread.is_alive():
+			logger.warning(f"Thread {thread.name} didn't terminate within timeout")
 	
+	# Clean up GPIO resources
 	try:
-		if reverse_dutycycle is False:
-			set_pwm_duty_cycle('pump', 0)
-		else:
-			set_pwm_duty_cycle('pump', PUMP_PWM_RANGE)
-		
-		# Turn off other pins
-		if airflow_only is False:
-			GPIO.output(INFRARED_LED_PIN, False)
-			GPIO.output(1, False)
-			GPIO.output(23, False)
-			if use_rgb_led == 1:
-				GPIO.output(R_PIN, 1)
-				GPIO.output(G_PIN, 1)
-				GPIO.output(B_PIN, 1)
-		
-		# Clean up pigpio connection
-		if 'pi' in globals() and pi.connected:
-			pi.stop()
-			
-		# Clean up GPIO
 		GPIO.cleanup()
+		logger.debug("GPIO cleanup completed")
 	except Exception as e:
-		logger.error(f"Error during hardware shutdown: {e}")
-	if reason == "SIGINT" or reason == "SIGTERM":
-		os._exit(1)
-	else:
-		sys.exit(1)
-
-
+		logger.error(f"Error during GPIO cleanup: {e}")
+	
+	# Exit the program
+	sys.exit(1)
 
 cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3']
 process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -405,13 +432,53 @@ def signal_handler():
 			file.truncate()
 
 
-def initialise(channel, rate):
+def initialise(channel, rate, max_retries=3):
+	global bus
 	config = (ready|channel|mode|rate|gain)
-	try:
-		bus.write_byte(MCP342X_DEFAULT_ADDRESS, config)
-	except Exception as e:
-		logger.error(e)
-		shutdown(e,6)
+	retry_count = 0
+	backoff_time = 0.1
+	while retry_count < max_retries:
+		try:
+			bus.write_byte(MCP342X_DEFAULT_ADDRESS, config)
+			return True  # Successfully initialized
+		except OSError as e:
+			# Specific handling for I/O errors like [Errno 5]
+			retry_count += 1
+			error_msg = f"I2C error during initialization (attempt {retry_count}/{max_retries}): {e}"
+			print(error_msg)
+			logger.warning(error_msg)
+			
+			if retry_count < max_retries:
+				# Try resetting the I2C bus
+				try:
+					bus.close()
+					sleep(backoff_time)
+					bus = smbus.SMBus(1)
+				except:
+					pass
+				
+				sleep(backoff_time)
+				backoff_time *= 2  # Exponential backoff
+			else:
+				logger.error(f"Failed to initialize ADC after {max_retries} attempts: {e}")
+				# Don't shut down immediately, return failure instead
+				return False
+		except Exception as e:
+			# Handle other exceptions
+			retry_count += 1
+			error_msg = f"Error during initialization (attempt {retry_count}/{max_retries}): {e}"
+			print(error_msg)
+			logger.warning(error_msg)
+			
+			if retry_count < max_retries:
+				sleep(backoff_time)
+				backoff_time *= 2
+			else:
+				logger.error(f"Failed to initialize ADC: {e}")
+				# Don't shut down immediately, return failure instead
+				return False
+	
+	return False  # Failed to initialize
 
 def update_config_entry(config, key, value, description, value_type, parameter):
 	if key not in config:
@@ -478,33 +545,39 @@ def calibrate_sens_ref():
 
 def find_mcp_adress():
 	global MCP342X_DEFAULT_ADDRESS
-	for device in range(128):
-		try:
-			adc = bus.read_byte(device)
-			if (hex(device) == "0x68"):
-				MCP342X_DEFAULT_ADDRESS = 0x68
-			elif (hex(device) == "0x6a"):
-				MCP342X_DEFAULT_ADDRESS = 0x6a			
-			elif (hex(device) == "0x6b"):
-				MCP342X_DEFAULT_ADDRESS = 0x6b
-			elif (hex(device) == "0x6c"):
-				MCP342X_DEFAULT_ADDRESS = 0x6c
-			elif (hex(device) == "0x6d"):
-				MCP342X_DEFAULT_ADDRESS = 0x6d
-
-		except: 
-			pass
 	try:
-		logger.debug("ADC found at Address: %s", hex(MCP342X_DEFAULT_ADDRESS))
-		return(MCP342X_DEFAULT_ADDRESS)
-	except:
-		shutdown("NO ADC",6)
-
+		for device in range(128):
+			try:
+				adc = bus.read_byte(device)
+				if (hex(device) == "0x68"):
+					MCP342X_DEFAULT_ADDRESS = 0x68
+				elif (hex(device) == "0x6a"):
+					MCP342X_DEFAULT_ADDRESS = 0x6a            
+				elif (hex(device) == "0x6b"):
+					MCP342X_DEFAULT_ADDRESS = 0x6b
+				elif (hex(device) == "0x6c"):
+					MCP342X_DEFAULT_ADDRESS = 0x6c
+				elif (hex(device) == "0x6d"):
+					MCP342X_DEFAULT_ADDRESS = 0x6d
+			except: 
+				pass
+		
+		if 'MCP342X_DEFAULT_ADDRESS' in globals():
+			logger.debug("ADC found at Address: %s", hex(MCP342X_DEFAULT_ADDRESS))
+			return(MCP342X_DEFAULT_ADDRESS)
+		else:
+			raise Exception("No ADC found on I2C bus")
+	except Exception as e:
+		logger.error(f"I2C bus error while scanning for ADC: {e}")
+		shutdown(f"I2C bus error: {e}", 6)
 
 exception_timestamps = deque(maxlen=10)  # Keep track of the last 10 errors
 shutdown_threshold = 2  # Number of errors allowed per minute
 
+
 def getconvert(channel, rate):
+	global bus
+	"""Get ADC conversion with improved error handling and retries"""
 	if rate == rate_12bit:
 		N = 12
 		mcp_sps = 1 / 240
@@ -516,35 +589,72 @@ def getconvert(channel, rate):
 		mcp_sps = 1 / 15
 	
 	sleep(mcp_sps * 1.4)
-	try:
-		data = bus.read_i2c_block_data(MCP342X_DEFAULT_ADDRESS, channel, 2)
-	except Exception as e:
-		logger.error(f"Error reading ADC: {e}")
-		print("Error reading ADC")
-		current_time = time()
-		exception_timestamps.append(current_time)
-		recent_errors = [t for t in exception_timestamps if current_time - t < 60]
-		if len(recent_errors) > shutdown_threshold:
-			shutdown(f"Frequent ADC errors detected: {e}",6)
-
-	voltage = ((data[0] << 8) | data[1])
-	if voltage >= 32768:
-		voltage = 65536 - voltage
-	voltage = (2 * VRef * voltage) / (2 ** N)
-	return round(voltage,5)
+	
+	max_retries = 5  # Increased from 3
+	retry_count = 0
+	backoff_time = 0.1
+	
+	while retry_count < max_retries:
+		try:
+			data = bus.read_i2c_block_data(MCP342X_DEFAULT_ADDRESS, channel, 2)
+			voltage = ((data[0] << 8) | data[1])
+			if voltage >= 32768:
+				voltage = 65536 - voltage
+			voltage = (2 * VRef * voltage) / (2 ** N)
+			return round(voltage, 5)
+			
+		except OSError as e:
+			# Specific handling for I/O errors
+			retry_count += 1
+			error_msg = f"I2C error (attempt {retry_count}/{max_retries}): {e}"
+			print(error_msg)
+			logger.warning(error_msg)
+			
+			if retry_count < max_retries:
+				# Try resetting the I2C bus
+				if retry_count > 1:
+					try:
+						bus.close()
+						sleep(backoff_time * 2)
+						bus = smbus.SMBus(1)
+					except:
+						pass
+				sleep(backoff_time)
+				backoff_time *= 2
+			else:
+				logger.error(f"Failed to read ADC after {max_retries} attempts")
+				return -1  # Return error value instead of raising exception
+		except Exception as e:
+			# Handle other exceptions
+			retry_count += 1
+			error_msg = f"ADC error (attempt {retry_count}/{max_retries}): {e}"
+			print(error_msg)
+			logger.warning(error_msg)
+			
+			if retry_count < max_retries:
+				sleep(backoff_time)
+				backoff_time *= 2
+			else:
+				logger.error(f"Failed to read ADC: {e}")
+				return -1  # Return error value instead of raising exception
+				
+	return -1 
 
 def read_adc(mcp_i2c_address, sample_time):
 	global MCP342X_DEFAULT_ADDRESS, airflow_only, airflow_sensor, airflow_channel, airflow_sensor_bias, calibration
 	MCP342X_DEFAULT_ADDRESS = mcp_i2c_address
+	
 	airflow_sample_voltage = voltage_channel1 = voltage_channel3 = voltage_channel2 = sum_channel1 = sum_channel2 = sum_channel3 = 0
 	average_channel1 = average_channel2 = average_channel3 = airflow_avg = 0
 	airflow_sample_index = 1
 	skipsampling = False
-	i=j=0
+	i = j = 0
+	error_count = 0
+	max_errors = 5  # Maximum consecutive errors before giving up
 
 	start = time()
 	last_check_time = time()
-	airflow_samples_to_take = 5	if sample_time < 20 else 20
+	airflow_samples_to_take = 5 if sample_time < 20 else 20
 	airflow_samples_to_take = 200 if airflow_only is True else airflow_samples_to_take
 	check_interval = 1
 	if airflow_type != 9:
@@ -553,30 +663,58 @@ def read_adc(mcp_i2c_address, sample_time):
 				sens_bias_samples_to_take = 100
 				initialise(airflow_channel, rate_12bit)
 				airflow_sample_sum = 0
-				while airflow_sample_index<=sens_bias_samples_to_take:
-					airflow_sample_voltage = getconvert(airflow_channel, rate_12bit)
-					airflow_sample_sum += airflow_sample_voltage
-					airflow_sample_index+=1
-				average_channel3 = airflow_sample_sum / sens_bias_samples_to_take
-				airflow_sensor_bias = 0.5-average_channel3
-				#airflow_sensor_bias=0
-				if (airflow_sensor_bias > abs(0.05)):
-					logger.error(f"Airflow Sensor Bias is to high ({airflow_sensor_bias}). Check Sensor")
-					shutdown(f"Airflow Sensor Bias is to high ({airflow_sensor_bias}). Check Sensor.",6)
-				print(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
-				logger.debug(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
+				try:
+					while airflow_sample_index<=sens_bias_samples_to_take:
+						airflow_sample_voltage = getconvert(airflow_channel, rate_12bit)
+						airflow_sample_sum += airflow_sample_voltage
+						airflow_sample_index+=1
+					average_channel3 = airflow_sample_sum / sens_bias_samples_to_take
+					airflow_sensor_bias = 0.5-average_channel3
+					
+					# Print debug info
+					print(f"DEBUG: Raw airflow sum: {airflow_sample_sum}")
+					print(f"DEBUG: Samples: {sens_bias_samples_to_take}")
+					print(f"DEBUG: Avg: {average_channel3}")
+					print(f"DEBUG: Calculated bias: {airflow_sensor_bias}")
+					
+					if (airflow_sensor_bias > abs(0.05)):
+						logger.error(f"Airflow Sensor Bias is to high ({airflow_sensor_bias}). Check Sensor")
+						shutdown(f"Airflow Sensor Bias is to high ({airflow_sensor_bias}). Check Sensor.",6)
+					print(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
+					logger.debug(f"airflow_sensor_bias is set to {airflow_sensor_bias}")
+				except Exception as e:
+					# If there's an error, reset the bias to a default value
+					print(f"Error calculating airflow sensor bias: {e}")
+					airflow_sensor_bias = 0
 				skipsampling = True
 		except NameError:
 			pass
 
 
-	while ((time()-start)<sample_time-0.25) and (skipsampling is False):
+
+	while ((time()-start) < sample_time-0.25) and (skipsampling is False):
 		if (airflow_only is False):
 			initialise(channel1, rate)
 			voltage_channel1 = getconvert(channel1, rate)
+			if voltage_channel1 == -1:
+				error_count += 1
+				if error_count > max_errors:
+					logger.error(f"Too many consecutive ADC errors ({error_count})")
+					# Instead of shutdown, return sentinel values
+					return -1, -1, -1
+				continue  # Skip this iteration and try again
+			error_count = 0  # Reset error count on success
 			sum_channel1 += voltage_channel1
+			
 			initialise(channel2, rate)
 			voltage_channel2 = getconvert(channel2, rate)
+			if voltage_channel2 == -1:
+				error_count += 1
+				if error_count > max_errors:
+					logger.error(f"Too many consecutive ADC errors ({error_count})")
+					return -1, -1, -1
+				continue
+			error_count = 0
 			sum_channel2 += voltage_channel2
 		if (debug):
 			try:
@@ -703,57 +841,59 @@ def set_pwm_duty_cycle(component, duty_cycle, stop_event=None):
 	global config, pi
 	reverse_dutycycle = config.get('reverse_dutycycle', False)
 	
-	try:
-		duty_cycle = int(duty_cycle)
-		if component == 'pump':
-			if 0 <= duty_cycle <= PUMP_PWM_RANGE:
-				adjusted_duty = PUMP_PWM_RANGE - duty_cycle if reverse_dutycycle else duty_cycle
-				try:
-					pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
-				except Exception as e:
-					# If we lost connection, try to reinitialize
-					if initialize_pwm_control():
-						pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
-					else:
-						raise e
-						
-		elif component == 'infrared_led':
-			if 0 <= duty_cycle <= LED_PWM_RANGE:
-				try:
-					pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
-				except Exception as e:
-					# If we lost connection, try to reinitialize
-					if initialize_pwm_control():
-						pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
-					else:
-						raise e
-						
-	except Exception as e:
-		logger.error(f"PWM control failed for {component}: {e}")
-		# Safely shut down the pump on exception
-		if component == 'pump':
-			try:
-				safe_duty = PUMP_PWM_RANGE if reverse_dutycycle else 0
-				pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
-			except:
-				pass
-
-	# Handle stop_event for graceful thread exit
+	# First check if we should terminate early
 	if stop_event and stop_event.is_set():
 		if debug:
-			print(f"Exiting PWM thread for {component}")
+			print(f"Exiting PWM thread for {component} immediately")
+		return
+	
+	try:
+		duty_cycle = int(duty_cycle)
+		
+		if component == 'pump':
+			# Validate duty cycle range
+			if 0 <= duty_cycle <= PUMP_PWM_RANGE:
+				adjusted_duty = PUMP_PWM_RANGE - duty_cycle if reverse_dutycycle else duty_cycle
+				
+				# Set the PWM with proper error handling
+				try:
+					# Check if pi is defined and connected
+					if 'pi' in globals() and pi and hasattr(pi, 'connected') and pi.connected:
+						pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
+					else:
+						# Try to reinitialize if not connected
+						if initialize_pwm_control():
+							pi.set_PWM_dutycycle(PUMP_PIN, adjusted_duty)
+				except Exception as e:
+					logger.warning(f"PWM error for {component}: {e}")
+					
+		elif component == 'infrared_led':
+			# Similar logic for LED
+			if 0 <= duty_cycle <= LED_PWM_RANGE:
+				try:
+					if 'pi' in globals() and pi and hasattr(pi, 'connected') and pi.connected:
+						pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
+					else:
+						if initialize_pwm_control():
+							pi.set_PWM_dutycycle(INFRARED_LED_PIN, duty_cycle)
+				except Exception as e:
+					logger.warning(f"PWM error for {component}: {e}")
+					
+	except Exception as e:
+		logger.error(f"PWM control failed for {component}: {e}")
+		# Try to set a safe state
 		if component == 'pump':
 			try:
-				safe_duty = PUMP_PWM_RANGE if reverse_dutycycle else 0
-				pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
+				if 'pi' in globals() and pi and hasattr(pi, 'connected') and pi.connected:
+					safe_duty = PUMP_PWM_RANGE if reverse_dutycycle else 0
+					pi.set_PWM_dutycycle(PUMP_PIN, safe_duty)
 			except:
 				pass
 
-
-
 def check_airflow(current_mlpm):
-	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config, temperature_current, temperature_to_keep, disable_pump_control, override_airflow, desired_airflow_in_lpm
-	threshold_airflow = 0.005#liter per minute minumum; else pump might be defective
+	global pump_dutycycle, reverse_dutycycle, zero_airflow, airflow_only, airflow_debug, config, temperature_current, temperature_to_keep, disable_pump_control, override_airflow, desired_airflow_in_lpm, set_PWM_dutycycle_thread
+	
+	threshold_airflow = 0.005  # liter per minute minimum; else pump might be defective
 	if override_airflow is False:
 		desired_airflow_in_lpm = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
 	
@@ -775,14 +915,12 @@ def check_airflow(current_mlpm):
 		if current_mlpm < desired_airflow_in_lpm and airflow_debug is False:
 			if reverse_dutycycle is True:
 				if pump_dutycycle <= 0:
-					#logger.error("cannot reach desired airflow. please lower it")
 					adjust_airflow(current_mlpm)
-					pump_dutycycle=pump_pwm_freq
+					pump_dutycycle = pump_pwm_freq
 				else:
 					pump_dutycycle += 1
 			else:
 				if pump_dutycycle >= PUMP_PWM_RANGE:
-					#logger.error("cannot reach desired airflow. please lower it")
 					adjust_airflow(current_mlpm)
 					pump_dutycycle = 0
 				else:
@@ -795,17 +933,36 @@ def check_airflow(current_mlpm):
 				pump_dutycycle -= 1
 
 		pump_dutycycle = max(0, min(pump_dutycycle, PUMP_PWM_RANGE))
-		set_PWM_dutycycle_thread = Thread(target=set_pwm_duty_cycle, args=('pump', pump_dutycycle, stop_event,))
-		set_PWM_dutycycle_thread.start()
+		
+		# Make sure previous thread completed or is not running
+		if set_PWM_dutycycle_thread and set_PWM_dutycycle_thread.is_alive():
+			# Just wait a tiny bit for the previous thread to complete
+			set_PWM_dutycycle_thread.join(timeout=0.1)
+		
+		# Only start a new thread if not stopping
+		if not stop_event.is_set():
+			set_PWM_dutycycle_thread = Thread(
+				target=set_pwm_duty_cycle, 
+				args=('pump', pump_dutycycle, stop_event,),
+				name="PWM_Thread"
+			)
+			set_PWM_dutycycle_thread.daemon = True  # Make thread daemon so it won't block program exit
+			set_PWM_dutycycle_thread.start()
 
 		show_display(f"{round(current_mlpm*1000)} ml/min", 2, False)
 	else:
-		set_PWM_dutycycle_thread = Thread(target=set_pwm_duty_cycle, args=('pump', pump_dutycycle, stop_event,))
-		set_PWM_dutycycle_thread.start()
+		if not stop_event.is_set():
+			set_PWM_dutycycle_thread = Thread(
+				target=set_pwm_duty_cycle, 
+				args=('pump', pump_dutycycle, stop_event,),
+				name="PWM_Thread"
+			)
+			set_PWM_dutycycle_thread.daemon = True
+			set_PWM_dutycycle_thread.start()
 
 	if debug is True:
-		#os.system('clear')
 		print(f"{round(current_mlpm*1000, 2)} ml/min, desired: {round(desired_airflow_in_lpm*1000, 2)} ml/min, pump_dutycycle: {pump_dutycycle}")
+
 
 def adjust_airflow(current_mlpm):
 	global pump_dutycycle, override_airflow, desired_airflow_in_lpm
@@ -868,25 +1025,19 @@ def filter_values(log, kernel):
 	with open(file_path, 'r') as file:
 		reader = csv.DictReader(file, delimiter=delimiter)
 		data = list(reader)
-
-	# Extract 'BCngm3' values
-	bcngm3_values = []
+	bc_values = []
 	for row in data:
 		try:
-			value = float(row['BCngm3_unfiltered'])
+			value = float(row['BCngm3_unfiltered']) if not is_ebcMeter else float(row['BCugm3_unfiltered'])
 		except ValueError:
 			value = float('nan')
-		bcngm3_values.append(value)
-
-	# Apply median filter with a kernel size
-	filtered_bcngm3_values = median_filter(bcngm3_values, size=kernel)
-
-	# Update the 'BCngm3' values with the filtered values
+		bc_values.append(value)
+	filtered_bc_values = median_filter(bc_values, size=kernel)
 	for i, row in enumerate(data):
-		if not float('nan') == filtered_bcngm3_values[i]:
-			row['BCngm3'] = str(int(filtered_bcngm3_values[i]))  # Convert back to string for writing to CSV
+		if not float('nan') == filtered_bc_values[i]:
+			column_name = 'BCugm3' if is_ebcMeter else 'BCngm3'
+			row[column_name] = str(int(filtered_bc_values[i]))
 
-	# Write the modified data back to the CSV file
 	with open(output_file_path, 'w', newline='') as output_file:
 		fieldnames = reader.fieldnames
 		writer = csv.DictWriter(output_file, fieldnames=fieldnames, delimiter=delimiter)
@@ -907,7 +1058,7 @@ def apply_temperature_correction(BCngm3_unfiltered, temperature_current):
 
 
 def bcmeter_main(stop_event):
-	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password, ds18b20, config, temperature_current, TWELVEVOLT_ENABLE
+	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, session_running_since, sender_password, ds18b20, config, temperature_current, TWELVEVOLT_ENABLE, notice
 	TWELVEVOLT_IS_ENABLED = False
 	filter_status_threshold = 3
 	compair_offline_logging = False
@@ -952,11 +1103,7 @@ def bcmeter_main(stop_event):
 		if stop_event.is_set():
 			logger.debug("Main sampling thread received stop signal")
 			return
-
-
-
 		if (TWELVEVOLT_ENABLE is True) and (TWELVEVOLT_IS_ENABLED is False):
-			GPIO.setup(TWELVEVOLT_PIN, GPIO.OUT)
 			GPIO.output(TWELVEVOLT_PIN, 1)
 			TWELVEVOLT_IS_ENABLED = True
 			print("12V Power is on")
@@ -1073,16 +1220,16 @@ def bcmeter_main(stop_event):
 		device_specific_correction_factor = device_specific_correction_factor/1000 if is_ebcMeter else device_specific_correction_factor
 		try:
 			BCngm3_unfiltered = int((absorption_coeff / sigma_air_880nm)*device_specific_correction_factor) #bc nanograms per m3
-			if is_ebcMeter:
-				BCngm3_unfiltered = BCngm3_unfiltered / 1000
 		except Exception as e:
-			BCngm3_unfiltered = 0
+			BCngm3_unfiltered = 1 #fallback
 			logger.error("invalid value of BC: ",e)
 			print(e)
 		#if (temperature_current != 1.0000):
 		#	BCngm3_unfiltered = apply_temperature_correction(BCngm3_unfiltered, temperature_current)
 		#logString = str(datetime.now().strftime("%d-%m-%y")) + ";" + str(datetime.now().strftime("%H:%M:%S")) +";" +str(reference_sensor_value_current) +";"  +str(main_sensor_value_current) +";" +str(attenuation_current) + ";"+  str(attenuation_coeff) +";"+ str(BCngm3_unfiltered) + ";" + str(round(temperature_current,1)) + ";" + str(notice) + ";" + str(main_sensor_bias)  + ";" + str(reference_sensor_bias) + ";" + str(round(delay,1)) + ";" + str(round(sht_humidity,1))
-		if (samples_taken>3) and (airflow_only is False) and (debug is False):
+		sample_threshold_to_display = 4 if not is_ebcMeter else 6
+
+		if (samples_taken>sample_threshold_to_display) and (airflow_only is False) and (debug is False):
 			with open(base_dir+"/logs/" + logFileName, "a") as log:
 				if is_ebcMeter:
 					BCugm3 = BCngm3_unfiltered / 1000
@@ -1108,8 +1255,9 @@ def bcmeter_main(stop_event):
 						pass
 			average = sum(sum_for_avg[-12:]) / min(12, len(sum_for_avg))
 			if samples_taken > 15:
+				unit = "ng" if not is_ebcMeter else "ug"
 				if average > 0:
-					show_display(f"{int(average)} ngm3/hr", False, 0)
+					show_display(f"{int(average)} {unit}m3/hr", False, 0)
 				else:
 					show_display(f"Sampling...", False, 0)
 			else:
@@ -1178,13 +1326,12 @@ def check_service_running(service_name):
 		return False
 
 def get_temperature():
-	if (ds18b20 is True):
-		try:
-			temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000,2)
-		except:
-			pass
-	elif (sht40_i2c is True):
-		try:
+	global last_valid_temperature, temperature_error_count, notice
+	
+	try:
+		if ds18b20:
+			temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000, 2)
+		elif sht40_i2c:
 			sensor = adafruit_sht4x.SHT4x(i2c)
 			temperature_samples = []
 			humidity_samples = []
@@ -1192,18 +1339,36 @@ def get_temperature():
 				temperature_samples.append(sensor.temperature)
 				humidity_samples.append(sensor.relative_humidity)
 			temperature_current = sum(temperature_samples) / 20
-			sht_humidity = sum(humidity_samples) / 20		
-		except:
-			pass
-	
-	else:
-		logger.error("no temperature sensor detected")
-		temperature_current = 1
-	return temperature_current
+			sht_humidity = sum(humidity_samples) / 20
+		else:
+			logger.warning("No temperature sensor detected, using fallback value")
+			return last_valid_temperature if 'last_valid_temperature' in globals() else 1
+		
+		# If we got here, we have a valid reading
+		last_valid_temperature = temperature_current
+		temperature_error_count = 0
+		return temperature_current
+		
+	except Exception as e:
+		# Log specific error for debugging
+		error_message = f"Temperature sensor error: {str(e)}"
+		logger.warning(error_message)
+		
+		# Increment error counter
+		if 'temperature_error_count' not in globals():
+			temperature_error_count = 0
+		temperature_error_count += 1
+		
+		# Add to notice if there are repeated errors
+		if temperature_error_count > 3:
+			notice += f"TempErr({temperature_error_count})-"
+		
+		# Return last valid temperature if we have one, otherwise fallback value
+		return last_valid_temperature if 'last_valid_temperature' in globals() else 1
 
 
 def housekeeping(stop_event):
-	global temperature_to_keep, session_running_since, ds18b20, airflow_debug, config, temperature_current, TWELVEVOLT_ENABLE
+	global temperature_to_keep, session_running_since, ds18b20, airflow_debug, config, temperature_current, TWELVEVOLT_ENABLE, notice
 	while (True):
 		config = config_json_handler()
 		TWELVEVOLT_ENABLE = config.get('TWELVEVOLT_ENABLE')
@@ -1230,9 +1395,13 @@ def housekeeping(stop_event):
 				print(e)
 		#go on with temperature stabilization
 		try:
-			temperature_current = get_temperature()	
-		except:
-			temperature_current = 1
+			temperature_current = get_temperature()
+			# No need for an except block since get_temperature() handles errors internally
+		except Exception as e:
+			# This should rarely happen, but just in case
+			logger.error(f"Unexpected error in temperature handling: {str(e)}")
+			temperature_current = temperature_current if 'temperature_current' in locals() else 1
+			notice += "TempFail-"
 		skipheat = False
 		skipheat = True if temperature_current == 1 else skipheat
 		heating = config.get('heating', False)

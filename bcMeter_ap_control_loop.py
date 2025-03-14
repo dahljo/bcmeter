@@ -1,4 +1,3 @@
-
 #heavily adapted telraams work 
 
 import socket
@@ -95,9 +94,9 @@ def check_service_running(service_name, wait_for_state=None, timeout=10):
 	while time.time() - start < timeout:
 		try:
 			current = subprocess.run(['systemctl', 'is-active', service_name], 
-								 capture_output=True, text=True).stdout.strip()
+								capture_output=True, text=True).stdout.strip()
 			if (wait_for_state == 'active' and current == 'active') or \
-			  (wait_for_state == 'inactive' and current != 'active'):
+			 (wait_for_state == 'inactive' and current != 'active'):
 				logger.debug(f"{service_name} now {wait_for_state}")
 				return True
 		except subprocess.CalledProcessError:
@@ -139,15 +138,25 @@ def deactivate_dnsmasq_service():
 	return True
 	
 def stop_access_point(checkpoint = None):
-	force_wlan0_reset(checkpoint)
 	logger.debug(f"Stopping Hotspot ({checkpoint})")
+	if check_service_running("hostapd"):
+		run_command("sudo systemctl stop hostapd")
+		time.sleep(2)  # Add explicit delay
+		if not check_service_running("hostapd", wait_for_state="inactive"):
+				logger.error("Failed to stop hostapd")
+				run_command("sudo killall hostapd")
+				time.sleep(1)
+	
+	# Then continue with other services
 	prepare_dhcpcd_conf(0)
-	for service in ["dnsmasq", "hostapd"]:
-		if check_service_running(service):
-			run_command(f"sudo systemctl stop {service}")
-			if not check_service_running(service, wait_for_state="inactive"):
-				logger.error(f"Failed to stop {service}")
+	if check_service_running("dnsmasq"):
+		run_command("sudo systemctl stop dnsmasq")
+		if not check_service_running("dnsmasq", wait_for_state="inactive"):
+				logger.error("Failed to stop dnsmasq")
 				return False
+	
+	# Only reset wlan0 after all services are stopped
+	force_wlan0_reset(checkpoint)
 	return True
 
 
@@ -181,17 +190,22 @@ def force_wlan0_reset(checkpoint=None):
 			if not check_service_running(service, wait_for_state="inactive"):
 				logger.error(f"Failed to stop {service}")
 				return False
+		if check_service_running("hostapd"):
+			run_command("sudo systemctl stop hostapd")
+			# Wait longer for hostapd to fully release the hardware
+			time.sleep(2)
+			if not check_service_running("hostapd", wait_for_state="inactive"):
+				logger.error("Failed to stop hostapd")
+				return False
 
 		run_command("sudo ifconfig wlan0 down")
-		time.sleep(1)
-
 		run_command("sudo ifconfig wlan0 up")
-		time.sleep(1)
+		time.sleep(2)  # Longer delay after bringing interface up
 		return True
 
 	except Exception as e:
-		logger.error(f"WLAN reset failed: {str(e)}")
-		return False
+		 logger.error(f"WLAN reset failed: {str(e)}")
+		 return False
 
 def get_uptime():
 	uptime = time.time()-current_datetime_timestamp
@@ -608,10 +622,10 @@ def ap_control_loop():
 		else:
 			in_hotspot = False
 		manage_bcmeter_status(
-			 action='set',
-			 bcMeter_status=current_status,
-			 in_hotspot=in_hotspot,
-			 log_creation_time=prev_log_creation_time
+			action='set',
+			bcMeter_status=current_status,
+			in_hotspot=in_hotspot,
+			log_creation_time=prev_log_creation_time
 		)
 
 
@@ -650,4 +664,3 @@ else:
 	logger.debug("HAPPY DEBUGGING")
 	while True:
 		time.sleep(1)
-

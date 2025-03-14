@@ -11,7 +11,7 @@ from collections import deque
 from bcMeter_shared import config_json_handler, check_connection, manage_bcmeter_status, show_display, config, i2c, setup_logging, run_command, send_email, update_config
 import pigpio
 #os.system('clear')
-bcMeter_version = "0.9.938 2025-03-06"
+bcMeter_version = "0.9.938 2025-03-14"
 
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 

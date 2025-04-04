@@ -11,6 +11,12 @@
         "type": "boolean",
         "parameter": "session"
     },
+    "automatic_airflow_control": {
+        "value": true,
+        "description": "Adjust airflow depending on loading automatically",
+        "type": "boolean",
+        "parameter": "session"
+    },
     "show_undervoltage_warning": {
         "value": false,
         "description": "Display undervoltage warnings in the interface.",

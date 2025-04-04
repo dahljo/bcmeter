@@ -1,5 +1,3 @@
-#heavily adapted telraams work 
-
 import socket
 import subprocess
 import signal
@@ -22,7 +20,7 @@ from threading import Thread, Event
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1) # 1 indicates /dev/i2c-1
 
-ctrl_lp_ver="0.9.53 2025-03-06"
+ctrl_lp_ver="0.9.53 2025-03-24"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 devicename = socket.gethostname()
 
@@ -36,6 +34,38 @@ logger.debug(f"bcMeter Network Handler started for {devicename} (v{ctrl_lp_ver})
 logger.debug(get_pi_revision())
 
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+
+# Add signal handling for graceful shutdown
+def handle_exit_signal(signum, frame):
+	signal_name = {
+		signal.SIGINT: "SIGINT",
+		signal.SIGTERM: "SIGTERM",
+		signal.SIGHUP: "SIGHUP"
+	}.get(signum, f"Signal {signum}")
+	
+	logger.info(f"Received {signal_name} signal - shutting down bcMeter Network Handler")
+	show_display("Shutting down", True, 0)
+	show_display("Please wait...", False, 1)
+	
+	# Clean up resources and stop services
+	try:
+		stop_time_sync_thread.set()  # Signal the time sync thread to stop
+		if 'time_sync_thread' in globals() and time_sync_thread.is_alive():
+			time_sync_thread.join(timeout=2)  # Wait for thread to finish
+			
+		stop_access_point("shutdown")
+		deactivate_dnsmasq_service()
+		logger.info("bcMeter Network Handler shutdown complete")
+	except Exception as e:
+		logger.error(f"Error during shutdown: {e}")
+	
+	# Exit the program
+	os._exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, handle_exit_signal)  # Ctrl+C
+signal.signal(signal.SIGTERM, handle_exit_signal)  # Termination signal
+signal.signal(signal.SIGHUP, handle_exit_signal)   # Terminal closed
 
 try:
 	if os.path.exists(base_dir + '/bcMeter_config.json'):
@@ -403,10 +433,10 @@ def get_wifi_network():
 		if ssid:
 			return ssid
 		else:
-			return 0
-	except subprocess.CalledProcessError:
-		# Handle errors if the command fails
-		return -1
+			return None
+	except Exception as e:
+		#logger.error(f"Currently not connected to a WiFi#")
+		return None
 
 def check_time_sync():
 	try:
@@ -442,18 +472,70 @@ wifi_connection_retries = 0
 
 def wait_for_wifi_connection(timeout):  
 	start_time = time.time()
+	connect_tries = 0
 	while time.time() - start_time < timeout:
 		if check_connection():
 			return True
+		# Add logging to debug connection issue
+		if connect_tries % 5 == 0:  # Log every 5 attempts
+			logger.debug(f"Waiting for internet connection... ({connect_tries})")
+		connect_tries += 1
 		time.sleep(2)
 	return False
+
+def check_wifi_connection_quality(ssid=None):
+	try:
+		iwconfig = subprocess.run(
+			['iwconfig', 'wlan0'], 
+			capture_output=True, 
+			text=True
+		).stdout
+		if "Not-Associated" in iwconfig:
+			return None
+		connected_ssid = re.search(r'ESSID:"([^"]+)"', iwconfig)
+		signal_level = re.search(r'Signal level=(-\d+) dBm', iwconfig)
+		link_quality = re.search(r'Link Quality=(\d+/\d+)', iwconfig)
+		if ssid and (not connected_ssid or connected_ssid.group(1) != ssid):
+			return None
+		result = {
+			'ssid': connected_ssid.group(1) if connected_ssid else None,
+			'signal': int(signal_level.group(1)) if signal_level else None,
+			'quality': link_quality.group(1) if link_quality else None,
+			'is_stable': False  # Default value
+		}
+		quality_percent = (result['signal'] + 110) * 10 / 7
+		if result['signal'] and quality_percent > 30:
+			result['is_stable'] = True
+		return result
+	except Exception as e:
+		logger.error(f"Error checking WiFi quality: {e}")
+		return None
+		
+def verify_dhcp_lease():
+	"""Verify if the device has received an IP address via DHCP."""
+	try:
+		cmd_result = subprocess.run(
+			['ip', 'addr', 'show', 'wlan0'], 
+			capture_output=True, 
+			text=True
+		).stdout
+		ip_matches = re.findall(r'inet (\d+\.\d+\.\d+\.\d+)', cmd_result)
+		for ip in ip_matches:
+			if not ip.startswith('169.254.'):
+				logger.debug(f"Valid DHCP lease found: {ip}")
+				return True
+		logger.debug("No valid DHCP lease found")
+		return False
+	except Exception as e:
+		logger.error(f"Error checking DHCP lease: {e}")
+		return False
 
 
 def manage_wifi(checkpoint=None):
 	global wifi_connection_retries
 	wifi_ssid, wifi_pwd = get_wifi_credentials()
 	bcMeter_running = check_service_running("bcMeter")
-	
+	logger.debug(f"manage_wifi checkpoint {checkpoint}")
 	if (not wifi_ssid or not wifi_pwd) or run_hotspot:
 		if not check_service_running("hostapd"):
 			logger.debug("Setting up Hotspot - no credentials or forced mode")
@@ -471,6 +553,7 @@ def manage_wifi(checkpoint=None):
 				run_bcMeter_service("Already online -> bcMeter start")
 				show_display("Conn OK", False, 0)
 				show_display("Starting up", False, 1)
+		logger.debug("Happy state")
 		return
 	
 	logger.debug(f"Not connected to desired network. Current: {current_network}")
@@ -486,34 +569,48 @@ def manage_wifi(checkpoint=None):
 			stop_access_point("stop AP -> station mode")
 		
 		run_command("sudo systemctl daemon-reload")
+		time.sleep(2)
 		run_command("sudo systemctl restart dhcpcd")
+		time.sleep(2)
 		if not check_service_running("dhcpcd", wait_for_state="active"):
 			logger.error("dhcpcd failed to become active for station mode")
 			return
 		
 		run_command("sudo systemctl start wpa_supplicant")
+		time.sleep(5)
 		if not check_service_running("wpa_supplicant", wait_for_state="active"):
 			logger.error("wpa_supplicant failed to become active for station mode")
 			return
-		
-		if wait_for_wifi_connection(20):
-			wifi_connection_retries = 0
-			if not check_service_running('bcMeter') and \
-				manage_bcmeter_status(action='get', parameter='bcMeter_status') not in (5, 6):
-				if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
-					run_bcMeter_service("Connected after wait")
-					show_display("Conn OK", False, 0)
-					show_display("Starting up", False, 1)
-		else:
-			logger.error(f"Failed to connect to {wifi_ssid} within 15s.")
-			wifi_connection_retries += 1
+		connected = False
+		for attempt in range(5):  # Try a few times
+			if get_wifi_network() == wifi_ssid:
+				connected = True
+				break
+			time.sleep(3)
 
-			if wifi_connection_retries >= 3:
-				logger.error(f"Cannot connect to {wifi_ssid} after multiple tries.")
-				wifi_connection_retries = 0
-				delete_wifi_credentials()
-				if not check_service_running("hostapd"):
-					setup_access_point()
+		if connected is True and verify_dhcp_lease():
+			wifi_quality = check_wifi_connection_quality(wifi_ssid)
+			if wifi_quality and wifi_quality['is_stable']:
+				logger.debug(f"Connected to {wifi_ssid} with signal strength {wifi_quality['signal']}!")
+				if wait_for_wifi_connection(20):
+					wifi_connection_retries = 0
+					if not check_service_running('bcMeter') and \
+						manage_bcmeter_status(action='get', parameter='bcMeter_status') not in (5, 6):
+						if manage_bcmeter_status(action='get', parameter='filter_status') > 3:
+							run_bcMeter_service("Connected after wait")
+							show_display("Conn OK", False, 0)
+							show_display("Starting up", False, 1)
+			else:
+				logger.error(f"Connected to {wifi_ssid} but signal quality is poor: {wifi_quality}. Consider repositioning the bcMeter or attaching a WiFi antenna")
+		else:
+			logger.error(f"Failed to connect to {wifi_ssid}")
+			wifi_connection_retries += 1
+		if wifi_connection_retries >= 3:
+			logger.error(f"Cannot connect to {wifi_ssid} after multiple tries. Opening hotspot again. ")
+			wifi_connection_retries = 0
+			delete_wifi_credentials()
+			if not check_service_running("hostapd"):
+				setup_access_point()
 	else:
 		wifi_connection_retries += 1
 		logger.debug(f"WiFi {wifi_ssid} not in range. Retry count: {wifi_connection_retries}")
@@ -570,7 +667,7 @@ def check_wifi_errors_in_syslog(last_seen_errors=set()):
 
 
 def ap_control_loop():
-	global time_synced
+	global time_synced, stop_time_sync_thread
 	seen_wifi_errors = set()
 	if (manage_bcmeter_status(action='get',parameter='bcMeter_status') not in (5, 6)):
 		manage_bcmeter_status(action='set', bcMeter_status=4)
@@ -591,72 +688,76 @@ def ap_control_loop():
 	stop_time_sync_thread = Event()
 	time_sync_thread = Thread(target=time_sync_check_loop, args=(stop_time_sync_thread,))
 	time_sync_thread.start()
-
-	while True:
-		config = config_json_handler()
-		run_hotspot = config.get('run_hotspot', False)
-		is_online = check_connection()
-		bcMeter_running = check_service_running("bcMeter")
-
-		# Check network state
-		current_network = get_wifi_network()
-		wifi_ssid, _ = get_wifi_credentials()
-		if current_network != wifi_ssid:
-			manage_wifi(2)
-
-		current_status = manage_bcmeter_status(action='get',parameter='bcMeter_status')
-		if (current_status not in (5, 6)):
-			if run_hotspot or check_service_running("hostapd"):
-				current_status = 3 if bcMeter_running else 4
-			elif is_online:
-				current_status = 2
-				if not bcMeter_running:
-					run_bcMeter_service("3")
-			elif not is_online and check_service_running("hostapd"):
-				current_status = 4
+	calibration_time= manage_bcmeter_status(action='get',parameter='calibration_time')
+	#logger.debug(f"calibration_time = {calibration_time}")
+	try:
+		while True:
+			config = config_json_handler()
+			run_hotspot = config.get('run_hotspot', False)
+			is_online = check_connection()
+			bcMeter_running = check_service_running("bcMeter")
+			hostapd_running = check_service_running("hostapd")
+			# Check network state
+			current_network = get_wifi_network()
+			wifi_ssid, _ = get_wifi_credentials()
+			if current_network != wifi_ssid:
+				manage_wifi(2)
+			current_status = manage_bcmeter_status(action='get',parameter='bcMeter_status')
+			if (current_status not in (5, 6)):
+				if run_hotspot or check_service_running("hostapd"):
+					current_status = 3 if bcMeter_running else 4
+				elif is_online:
+					if bcMeter_running:
+						current_status = 2
+					else:
+						if (manage_bcmeter_status(action='get',parameter='filter_status') > 3) and calibration_time != None:
+							run_bcMeter_service()
+							current_status = 2
+						else:
+							current_status = 0
+				elif not is_online and hostapd_running:
+					current_status = 4
+				else:
+					current_status = 0
+			if run_hotspot or hostapd_running:
+				in_hotspot = True
 			else:
-				current_status = 0
-
-		if run_hotspot or check_service_running("hostapd"):
-			in_hotspot = True
-		else:
-			in_hotspot = False
-		manage_bcmeter_status(
-			action='set',
-			bcMeter_status=current_status,
-			in_hotspot=in_hotspot,
-			log_creation_time=prev_log_creation_time
-		)
-
-
-		if is_online:
-			if was_offline:
-				try:
-					logger.debug("Device connected, sending onboarding email")
-					send_email("Onboarding")
-				except Exception as e:
-					logger.error(f"Failed to send onboarding email: {e}")
-				was_offline = False
-			if time_synced and not we_got_correct_time:
-				uptime = get_uptime()
-				we_got_correct_time = True
-		else:
-			was_offline = True
-		if not is_online and not run_hotspot:
-			uptime = get_uptime() if time_synced else keep_hotspot_alive_without_successful_connection-1
-			if uptime >= keep_hotspot_alive_without_successful_connection:
-				if not (is_ebcMeter or bcMeter_running or keep_running):
-					logger.debug("Still No Configuration")                            
-					show_display("No Config", False, 0)
-					#run_command("sudo shutdown now")
-					keep_running = True 
-		new_wifi_errors, seen_wifi_errors = check_wifi_errors_in_syslog(seen_wifi_errors)
-		if new_wifi_errors:
-			for error in new_wifi_errors:
-				logger.debug(f"WiFi Message: {error}")
-					
-		time.sleep(scan_interval)
-
+				in_hotspot = False
+			manage_bcmeter_status(
+				action='set',
+				bcMeter_status=current_status,
+				in_hotspot=in_hotspot,
+				log_creation_time=prev_log_creation_time
+			)
+			if is_online:
+				if was_offline:
+					try:
+						send_email("Onboarding")
+					except Exception as e:
+						logger.error(f"Failed to send onboarding email: {e}")
+					was_offline = False
+				if time_synced and not we_got_correct_time:
+					uptime = get_uptime()
+					we_got_correct_time = True
+			else:
+				was_offline = True
+			if not is_online and not run_hotspot:
+				uptime = get_uptime() if time_synced else keep_hotspot_alive_without_successful_connection-1
+				if uptime >= keep_hotspot_alive_without_successful_connection:
+					if not (is_ebcMeter or bcMeter_running or keep_running):
+						logger.debug("Still No Configuration")                            
+						show_display("No Config", False, 0)
+						#run_command("sudo shutdown now")
+						keep_running = True 
+			new_wifi_errors, seen_wifi_errors = check_wifi_errors_in_syslog(seen_wifi_errors)
+			if new_wifi_errors:
+				for error in new_wifi_errors:
+					logger.debug(f"WiFi Message: {error}")
+						
+			time.sleep(scan_interval)
+	except Exception as e:
+		logger.error(f"Control loop exception: {e}")
+		handle_exit_signal(signal.SIGTERM, None)  
 
 if not debug:
 	ap_control_loop()

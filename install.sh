@@ -1,4 +1,5 @@
 #!/bin/bash
+INSTALLER_VERSION="0.90 2025-03-21"
 
 # Check if /home/bcMeter exists, otherwise default to /home/pi
 BASE_DIR="/home/pi"
@@ -10,6 +11,8 @@ if (( $EUID != 0 )); then
     echo "Exiting: Re-Run with sudo!"
     exit 1
 fi
+
+
 
 export DEBIAN_FRONTEND=noninteractive
 APT_PACKAGES="\
@@ -46,15 +49,15 @@ PYTHON_PACKAGES="\
     adafruit-circuitpython-sht4x \
     oled-text \
     requests \
-    flask-cors"
+    flask-cors \
+    pandas"
 
-INSTALLER_VERSION="0.90 2025-02-18"
 
 BCMINSTALLLOG="$BASE_DIR/maintenance_logs/bcMeter_install.log"
 BCMINSTALLED=/tmp/bcmeter_installed
 UPDATING=/tmp/bcmeter_updating
 
-mkdir -p "$(dirname "$BCMINSTALLLOG")"
+mkdir -p "$(dirname "$BCMINSTALLLOG")"wpa_passphrase
 touch "$BCMINSTALLLOG"
 echo "$(date) installation/update log" >> "$BCMINSTALLLOG"
 
@@ -76,6 +79,7 @@ fi
 
 echo "Checking if the base system is up to date..."
 
+apt --fix-broken install
 apt update
 
 if [ "$1" == "noupgrade" ]; then

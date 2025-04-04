@@ -1,29 +1,68 @@
 <?php
-//interface version 0.95 2025-03-14
+//interface version 0.95 2025-04-04
 // Start the PHP session
 session_start();
 $_SESSION['valid_session'] = 1;
 header('X-Accel-Buffering: no');
 
-// Configuration and device detection
-$macAddr = exec("/sbin/ifconfig wlan0 | grep 'ether' | awk '{print $2}'");
-$macAddr = str_replace(':', '', $macAddr);
+if (isset($_GET['action']) && $_GET['action'] === 'get_log_files') {
+    header('Content-Type: application/json');
+    $logsPath = '../logs/';
+    $files = scandir($logsPath);
+    $logFiles = array_filter($files, function($file) use ($logsPath) { 
+      return !is_dir($logsPath . $file) && 
+             $file !== '.' && 
+             $file !== '..' && 
+             pathinfo($file, PATHINFO_EXTENSION) === 'csv' &&
+             preg_match('/^\d{2}-\d{2}-\d{2}_\d{6}\.csv$/', $file);
+    });
+    echo json_encode(array_values($logFiles));
+    exit;
+}
+
+
+function getMacAddress($interface = 'wlan0') {
+    $sysPath = "/sys/class/net/$interface/address";
+    if (file_exists($sysPath)) {
+        $macAddr = trim(file_get_contents($sysPath));
+        if ($macAddr) {
+            return str_replace(':', '', $macAddr);
+        }
+    }
+    $output = [];
+    $exitCode = 0;
+    exec("timeout 2 /sbin/ifconfig $interface 2>/dev/null | grep -o -E '([0-9a-f]{2}:){5}[0-9a-f]{2}'", $output, $exitCode);
+    if ($exitCode === 0 && !empty($output[0])) {
+        return str_replace(':', '', $output[0]);
+    }
+    return '000000000000';
+}
+
+$macAddr = getMacAddress();
 
 $baseDir = file_exists('/home/bcMeter') ? '/home/bcMeter' : '/home/pi';
 
-// Load configuration from JSON
-function getBcMeterConfigValue($bcMeter_variable) {
+function getBcMeterConfigValue($bcMeter_variable, $default = null) {
     global $baseDir;
     $jsonFilePath = $baseDir . '/bcMeter_config.json';
-    
-    if (file_exists($jsonFilePath)) {
-        $jsonData = file_get_contents($jsonFilePath);
-        $configData = json_decode($jsonData, true);
-        
-        return $configData[$bcMeter_variable]['value'] ?? null;
+    if (!file_exists($jsonFilePath)) {
+        error_log("Config file not found: $jsonFilePath");
+        return $default;
     }
-    
-    return null;
+    $jsonData = @file_get_contents($jsonFilePath);
+    if ($jsonData === false) {
+        error_log("Error reading config file: $jsonFilePath");
+        return $default;
+    }
+    $configData = json_decode($jsonData, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        error_log("JSON parsing error in config file: " . json_last_error_msg());
+        return $default;
+    }
+    if (isset($configData[$bcMeter_variable]['value'])) {
+        return $configData[$bcMeter_variable]['value'];
+    }
+    return $default;
 }
 
 // Get configuration values
@@ -36,43 +75,45 @@ $show_undervoltage_warning = getBcMeterConfigValue('show_undervoltage_warning');
 $version = '';
 $localfile = $baseDir . '/bcMeter.py';
 
-for ($i = 1; $i <= 50; $i++) {
-    $line = trim(exec("head -$i $localfile | tail -1"));
-    if (strpos($line, 'bcMeter_version') === 0) {
-        $version = explode('"', $line)[1];
-        break;
+if (file_exists($localfile)) {
+    $file = fopen($localfile, 'r');
+    if ($file) {
+        $lineCount = 0;
+        while (($line = fgets($file)) !== false && $lineCount < 50) {
+            $lineCount++;
+            $line = trim($line);
+            if (strpos($line, 'bcMeter_version') === 0) {
+                $parts = explode('"', $line);
+                if (isset($parts[1])) {
+                    $version = $parts[1];
+                    break;
+                }
+            }
+        }
+        fclose($file);
     }
 }
 
 $version_parts = explode('.', $version);
 $VERSION = implode('.', array_slice($version_parts, 0, 3));
 
-/**
- * Check for bcMeter updates
- */
+
 function checkUpdate() {
     global $VERSION;
     $local = $VERSION ?: '0.9.20';  // default for old versions
     $remote = '0.9.19'; // default if not found online
-    
-    // Get remote version
     if ($content = @file_get_contents('https://raw.githubusercontent.com/dahljo/bcmeter/main/bcMeter.py')) {
         preg_match('/bcMeter_version\s*=\s*"([0-9.]+)"/', $content, $m);
         if ($m) $remote = $m[1];
     }
-    
-    // Split versions
     $l = explode('.', $local);
     $r = explode('.', $remote);
-    
-    // Compare versions
     $update = false;
     if ($r[0] > $l[0]) $update = true;
     elseif ($r[0] == $l[0]) {
         if ($r[1] > $l[1]) $update = true;
         elseif ($r[1] == $l[1] && $r[2] > $l[2]) $update = true;
     }
-    
     return [
         'update' => $update,
         'current' => $local,
@@ -80,48 +121,25 @@ function checkUpdate() {
     ];
 }
 
-// Check for running bcMeter process and updates
+
 $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
 $check = checkUpdate();
 
-// Execute post requests
-if (isset($_POST["deleteOld"])) {
-    showConfirmDialog('delete-old-logs');
+foreach ($_POST as $action => $value) {
+    switch ($action) {
+        case 'deleteOld': showConfirmDialog('delete-old-logs'); break;
+        case 'syslog': showConfirmDialog('download-syslog'); break;
+        case 'shutdown': showConfirmDialog('shutdown-device'); break;
+        case 'set_time':
+            header("Location: includes/status.php?status=timestamp&timestamp=$value");
+            exit;
+        case 'force_wifi': exec('sudo systemctl restart bcMeter_ap_control_loop > /dev/null 2>&1 &'); break;
+        case 'exec_stop': exec('sudo systemctl stop bcMeter > /dev/null 2>&1 &'); break;
+        case 'exec_debug': exec("sudo kill -SIGINT $PID > /dev/null 2>&1 &"); break;
+        case 'exec_new_log': exec('sudo systemctl restart bcMeter > /dev/null 2>&1 &'); break;
+    }
 }
 
-if (isset($_POST["set_time"])) {
-    $set_timestamp_to = $_POST['set_time'];
-    header("Location: includes/status.php?status=timestamp&timestamp=$set_timestamp_to");
-    exit;
-}
-
-if (isset($_POST["syslog"])) {
-    showConfirmDialog('download-syslog');
-}
-
-if (isset($_POST["shutdown"])) {
-    showConfirmDialog('shutdown-device');
-}
-
-if (isset($_POST["force_wifi"])) {
-    shell_exec("sudo systemctl restart bcMeter_ap_control_loop");
-}
-
-if (isset($_POST["exec_stop"])) {
-    shell_exec("sudo systemctl stop bcMeter");
-}
-
-if (isset($_POST["exec_debug"])) {
-    shell_exec("sudo kill -SIGINT $PID");
-}
-
-if (isset($_POST["exec_new_log"])) {
-    shell_exec("sudo systemctl restart bcMeter");
-}
-
-/**
- * Show confirmation dialog with JavaScript
- */
 function showConfirmDialog($action) {
     $dialogs = [
         'delete-old-logs' => [
@@ -142,48 +160,56 @@ function showConfirmDialog($action) {
     ];
     
     if (isset($dialogs[$action])) {
-        $dialog = $dialogs[$action];
-        echo <<< JAVASCRIPT
-<script>
-bootbox.dialog({
-    title: '{$dialog['title']}',
-    message: "<p>{$dialog['message']}</p>",
-    size: 'small',
-    buttons: {
-        cancel: {
-            label: "No",
-            className: 'btn-success'
-        },
-        ok: {
-            label: "Yes",
-            className: 'btn-danger',
-            callback: function() {
-                window.location.href = '{$dialog['url']}';
-            }
-        }
-    }
-});
-</script>
-JAVASCRIPT;
+        echo '<script>var bootboxAction = "' . $action . '";</script>';
     }
 }
 
-// Show update notification if available
 if ($check['update']) {
     echo "<div style='text-align:center';'><strong>bcMeter Software Update available!</strong></div>";
 }
 
-// Get the list of log files
+
+function filterLogsByPattern($files) {
+    $pattern = '/^\d{2}-\d{2}-\d{2}_\d{6}\.csv$/';
+    return array_filter($files, function($file) use ($pattern) {
+        return preg_match($pattern, $file);
+    });
+}
+
+function getMostRecentLogFile($files) {
+    if (empty($files)) return null;
+    usort($files, function($a, $b) {
+        $dateTimeA = str_replace('.csv', '', $a);
+        $dateTimeB = str_replace('.csv', '', $b);
+        return strcmp($dateTimeB, $dateTimeA);
+    });
+    
+    return $files[0];
+}
+
 $folder_path = '../logs';
-$logFiles = scandir($folder_path);
+$allLogFiles = array_diff(scandir($folder_path), ['.', '..']);
+$filteredLogFiles = filterLogsByPattern($allLogFiles);
+$mostRecentLogFile = getMostRecentLogFile($filteredLogFiles);
+
 $logString = "<select id='logs_select'>";
-foreach ($logFiles as $key => $value) {
-    if ($key > 1) {
-        $logString .= "<option value='{$value}'>{$value}</option>"; 
+
+if ($mostRecentLogFile) {
+    $logString .= "<option value='{$mostRecentLogFile}' selected>{$mostRecentLogFile}</option>";
+}
+
+foreach ($filteredLogFiles as $file) {
+    if ($file !== $mostRecentLogFile) {
+        $logString .= "<option value='{$file}'>{$file}</option>"; 
     }
 }
+
 $logString .= "<option value='combine_logs'>Combine Logs</option></select>";
-?>
+
+echo "<script>
+    var filteredLogFiles = " . json_encode(array_values($filteredLogFiles)) . ";
+    var mostRecentLogFile = " . json_encode($mostRecentLogFile) . ";
+</script>";?>
 
 <!DOCTYPE html>
 <html lang="en">
@@ -195,8 +221,20 @@ $logString .= "<option value='combine_logs'>Combine Logs</option></select>";
     <link rel="stylesheet" type="text/css" href="css/bootstrap4-toggle.min.css">
     <link rel="stylesheet" type="text/css" href="css/bcmeter.css">
     <link href="css/all.min.css" rel="stylesheet">
+    <script src="js/jquery-3.6.0.min.js"></script>
+    <script src="js/bootstrap.min.js"></script>
+    <script src="js/bootbox.min.js"></script>
+    <script src="js/bootstrap4-toggle.min.js"></script>
+
+
+
 </head>
 <body>
+
+
+
+
+
     <a href="" id="download" style="display: none;"></a>
     <br />
     <a href="http://<?php echo $_SERVER['HTTP_HOST']; ?>">
@@ -322,7 +360,7 @@ $logString .= "<option value='combine_logs'>Combine Logs</option></select>";
                     echo "<div id='calibrationTime'></div><div id='filterStatusDiv'></div>";
                 ?>
                 
-                <script>
+                <!--script>
                     function updateUptime() {
                         var xhttp = new XMLHttpRequest();
                         xhttp.onreadystatechange = function() {
@@ -335,7 +373,7 @@ $logString .= "<option value='combine_logs'>Combine Logs</option></select>";
                     }
                     
                     setInterval(updateUptime, 300000); // Update every 5 minutes
-                </script>
+                </script-->
             </form>
             
             <!-- Modal for Downloading Old Logs -->
@@ -542,6 +580,22 @@ $logString .= "<option value='combine_logs'>Combine Logs</option></select>";
                                 </div>
                             </div>
                             <?php endif; ?>
+                            <div class="card">
+                                <div class="card-header" id="headingFour">
+                                    <h2 class="mb-0">
+                                        <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#collapseFour" aria-expanded="false" aria-controls="collapseFour">
+                                            bcMeter_shared.log
+                                        </button>
+                                    </h2>
+                                </div>
+                                <div id="collapseFour" class="collapse" aria-labelledby="headingFour" data-parent="#accordionExample">
+                                    <div class="card-body">
+                                        <div class="log-box" id="logBcMeterShared">
+                                            <!-- Log content will be injected here -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         
                         <br />
@@ -810,18 +864,61 @@ $logString .= "<option value='combine_logs'>Combine Logs</option></select>";
 
     <!-- JavaScript Libraries -->
     <script src="js/d3.min.js"></script>
-    <script src="js/jquery-3.6.0.min.js"></script>
-    <script src="js/bootstrap.min.js"></script>
-    <script src="js/bootbox.min.js"></script>
-    <script src="js/bootstrap4-toggle.min.js"></script>
-    <script>
-        // Pass PHP variables to JavaScript
-        var is_hotspot = <?php echo json_encode($is_hotspot); ?>;
-        var logFiles = <?php echo json_encode($logFiles); ?>;
-    </script>
+<script src="js/d3.min.js"></script>
+<script>
+    var is_hotspot = <?php echo json_encode($is_hotspot); ?>;
+    window.logFiles = <?php echo json_encode(array_values($allLogFiles)); ?>;
+    var is_ebcMeter = <?php echo json_encode($is_ebcMeter); ?>; // Add this line to expose is_ebcMeter to JavaScript
+</script>
+
     
     <!-- Our Custom JavaScript -->
     <script src="js/d3plotting.js"></script>
     <script src="js/interface.js"></script>
+    <script>
+$(document).ready(function() {
+    // Define all possible dialogs
+    var dialogConfigs = {
+        'delete-old-logs': {
+            title: 'Delete old logs from device?',
+            message: '<p>This cannot be undone.</p>',
+            url: 'includes/status.php?status=deleteOld'
+        },
+        'download-syslog': {
+            title: 'Download Syslog?',
+            message: '<p>Do you want to download the syslog for debugging?</p>',
+            url: 'includes/status.php?status=syslog'
+        },
+        'shutdown-device': {
+            title: 'Turn off bcMeter?',
+            message: '<p>Do you want to shutdown the device?</p>',
+            url: 'includes/status.php?status=shutdown'
+        }
+    };
+    
+    // Check if we need to show a dialog (set by the showConfirmDialog PHP function)
+    if (typeof bootboxAction !== 'undefined' && bootboxAction in dialogConfigs) {
+        var dialog = dialogConfigs[bootboxAction];
+        bootbox.dialog({
+            title: dialog.title,
+            message: dialog.message,
+            size: 'small',
+            buttons: {
+                cancel: {
+                    label: "No",
+                    className: 'btn-success'
+                },
+                ok: {
+                    label: "Yes",
+                    className: 'btn-danger',
+                    callback: function() {
+                        window.location.href = dialog.url;
+                    }
+                }
+            }
+        });
+    }
+});
+</script>
 </body>
 </html>

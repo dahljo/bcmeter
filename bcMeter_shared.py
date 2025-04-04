@@ -11,31 +11,35 @@ import platform
 import os
 import shutil
 
-bcMeter_shared_version = "0.1 2025-02-01"
+bcMeter_shared_version = "0.1 2025-04-04"
 
 i2c = busio.I2C(SCL, SDA)
 base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
-
-CONNECTION_TEST_HOST = "www.google.com" 
-CONNECTION_TEST_PORT = 80
-CONNECTION_TEST_TIMEOUT = 3	  # socket timeout
-CONNECTION_TEST_TRIES = 3		 # number of attemps
-CONNECTION_TEST_RETRY_SLEEP = 2 # in seconds
-
 hostname = socket.gethostname()
+
+CONNECTION_PRIMARY = {"host": "www.google.com", "port": 80}
+CONNECTION_TIMEOUT = 3
+CONNECTION_TRIES = 3
+CONNECTION_RETRY_SLEEP = 2
 
 def check_connection():
 	result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
 	if "default" not in result.stdout:
 		return False
-	# Attempt socket connection multiple times if necessary
-	for _ in range(CONNECTION_TEST_TRIES):
+	for attempt in range(CONNECTION_TRIES):
 		try:
-			s = socket.create_connection((CONNECTION_TEST_HOST, CONNECTION_TEST_PORT), timeout=CONNECTION_TEST_TIMEOUT)
+			start_time = time.time()
+			s = socket.create_connection((CONNECTION_PRIMARY["host"], CONNECTION_PRIMARY["port"]), 
+										timeout=CONNECTION_TIMEOUT)
+			response_time = (time.time() - start_time) * 1000  # Convert to ms
 			s.close()
+			#logger.debug(f"{CONNECTION_PRIMARY['host']} pinged in {response_time:.2f} ms")
 			return True
-		except Exception as e:  
-			time.sleep(CONNECTION_TEST_RETRY_SLEEP)
+		except Exception:
+			if attempt < CONNECTION_TRIES - 1:
+				time.sleep(CONNECTION_RETRY_SLEEP)
+
+			
 	return False
 
 
@@ -86,7 +90,7 @@ def setup_logging(log_entity):
 
 	return logger
 
-logger = setup_logging('shared_functions')
+logger = setup_logging('bcMeter_shared')
 
 
 def run_command(command):
@@ -461,103 +465,103 @@ def get_bcmeter_start_time():
 
 
 def manage_bcmeter_status(
-    parameter=None,
-    action='get',
-    bcMeter_status=None,
-    calibration_time=None,
-    log_creation_time=None,
-    hostname=None,  
-    filter_status=None,
-    in_hotspot=None
+	parameter=None,
+	action='get',
+	bcMeter_status=None,
+	calibration_time=None,
+	log_creation_time=None,
+	hostname=None,  
+	filter_status=None,
+	in_hotspot=None
 ):
-    """
-    Manage BCMeter status parameters including calibration time.
-    
-    Args:
-        parameter (str, optional): Specific parameter to get. If None, returns full status.
-        action (str): 'get' or 'set' to retrieve or update status.
-        bcMeter_status (int, optional): Status code (0=stopped, 1=initializing, 2=running/online,
-            3=running in hotspot, 4=hotspot only, 5=stopped by user, 6=stopped by script because of error)
-        calibration_time (str, optional): Timestamp of last calibration in format "YYMMDD_HHMMSS"
-        log_creation_time (str, optional): Log creation timestamp
-        hostname (str, optional): Deprecated - hostname is now automatically set
-        filter_status (int, optional): Filter status code (0-5)
-        in_hotspot (boolean, optional):  true or false
-    
-    Returns:
-        dict or any: Retrieved parameter(s) for 'get', None for 'set'
-    
-    Raises:
-        ValueError: If invalid parameter requested or invalid action specified
-    """
-    if_status_folder = base_dir + "/tmp/"
-    file_path = if_status_folder + 'BCMETER_WEB_STATUS'
-    log_file_path = base_dir + "/logs/log_current.csv"
-    
-    # Ensure default structure exists
-    default_parameters = {
-        'bcMeter_status': 0,
-        'calibration_time': None,
-        'log_creation_time': None,
-        'hostname': socket.gethostname(),
-        'filter_status': 0,
-        'in_hotspot': False
-    }
-    
-    try:
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            with open(file_path, 'r') as file:
-                parameters = json.load(file)
-        else:
-            parameters = {}
-    except (FileNotFoundError, json.JSONDecodeError):
-        parameters = {}
-    
-    # Ensure all default keys exist
-    for key, value in default_parameters.items():
-        if key not in parameters or parameters[key] is None:
-            parameters[key] = value
-    
-    valid_params = list(default_parameters.keys())
-    
-    if action == 'get':
-        if parameter and parameter not in valid_params:
-            raise ValueError(f"Invalid parameter. Choose from: {valid_params}")
-        parameters['hostname'] = socket.gethostname()
-        return parameters if parameter is None else parameters.get(parameter, default_parameters.get(parameter))
-        
-    elif action == 'set':
-        if log_creation_time is None:
-            log_creation_time = get_bcmeter_start_time() if 'get_bcmeter_start_time' in globals() else None
-            if log_creation_time is None:
-                try:
-                    file_stat = os.stat(log_file_path)
-                    log_creation_time = datetime.fromtimestamp(file_stat.st_ctime).strftime("%y%m%d_%H%M%S")
-                except FileNotFoundError:
-                    log_creation_time = None
-        
-        # Handle filter status
-        if filter_status is not None:
-            filter_status = min(max(0, filter_status), 5)
-        
-        update_dict = {
-            k: v for k, v in {
-                'bcMeter_status': bcMeter_status,
-                'calibration_time': calibration_time,
-                'log_creation_time': log_creation_time,
-                'hostname': socket.gethostname(), 
-                'filter_status': filter_status,
-                'in_hotspot': in_hotspot
-            }.items() if v is not None
-        }
-        
-        parameters.update(update_dict)
-        
-        os.makedirs(if_status_folder, exist_ok=True)
-        with open(file_path, 'w') as file:
-            json.dump(parameters, file)
-    else:
-        raise ValueError("Invalid action. Use 'get' or 'set'")
+	"""
+	Manage BCMeter status parameters including calibration time.
+	
+	Args:
+		parameter (str, optional): Specific parameter to get. If None, returns full status.
+		action (str): 'get' or 'set' to retrieve or update status.
+		bcMeter_status (int, optional): Status code (0=stopped, 1=initializing, 2=running/online,
+			3=running in hotspot, 4=hotspot only, 5=stopped by user, 6=stopped by script because of error)
+		calibration_time (str, optional): Timestamp of last calibration in format "YYMMDD_HHMMSS"
+		log_creation_time (str, optional): Log creation timestamp
+		hostname (str, optional): Deprecated - hostname is now automatically set
+		filter_status (int, optional): Filter status code (0-5)
+		in_hotspot (boolean, optional):  true or false
+	
+	Returns:
+		dict or any: Retrieved parameter(s) for 'get', None for 'set'
+	
+	Raises:
+		ValueError: If invalid parameter requested or invalid action specified
+	"""
+	if_status_folder = base_dir + "/tmp/"
+	file_path = if_status_folder + 'BCMETER_WEB_STATUS'
+	log_file_path = base_dir + "/logs/log_current.csv"
+	
+	# Ensure default structure exists
+	default_parameters = {
+		'bcMeter_status': 0,
+		'calibration_time': None,
+		'log_creation_time': None,
+		'hostname': socket.gethostname(),
+		'filter_status': 0,
+		'in_hotspot': False
+	}
+	
+	try:
+		if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+			with open(file_path, 'r') as file:
+				parameters = json.load(file)
+		else:
+			parameters = {}
+	except (FileNotFoundError, json.JSONDecodeError):
+		parameters = {}
+	
+	# Ensure all default keys exist
+	for key, value in default_parameters.items():
+		if key not in parameters or parameters[key] is None:
+			parameters[key] = value
+	
+	valid_params = list(default_parameters.keys())
+	
+	if action == 'get':
+		if parameter and parameter not in valid_params:
+			raise ValueError(f"Invalid parameter. Choose from: {valid_params}")
+		parameters['hostname'] = socket.gethostname()
+		return parameters if parameter is None else parameters.get(parameter, default_parameters.get(parameter))
+		
+	elif action == 'set':
+		if log_creation_time is None:
+			log_creation_time = get_bcmeter_start_time() if 'get_bcmeter_start_time' in globals() else None
+			if log_creation_time is None:
+				try:
+					file_stat = os.stat(log_file_path)
+					log_creation_time = datetime.fromtimestamp(file_stat.st_ctime).strftime("%y%m%d_%H%M%S")
+				except FileNotFoundError:
+					log_creation_time = None
+		
+		# Handle filter status
+		if filter_status is not None:
+			filter_status = min(max(0, filter_status), 5)
+		
+		update_dict = {
+			k: v for k, v in {
+				'bcMeter_status': bcMeter_status,
+				'calibration_time': calibration_time,
+				'log_creation_time': log_creation_time,
+				'hostname': socket.gethostname(), 
+				'filter_status': filter_status,
+				'in_hotspot': in_hotspot
+			}.items() if v is not None
+		}
+		
+		parameters.update(update_dict)
+		
+		os.makedirs(if_status_folder, exist_ok=True)
+		with open(file_path, 'w') as file:
+			json.dump(parameters, file)
+	else:
+		raise ValueError("Invalid action. Use 'get' or 'set'")
 
 		
 use_display = config.get('use_display', False)
@@ -779,3 +783,161 @@ if int(airflow_type) == 9:
 
 
 
+import numpy as np
+try:
+	import pandas as pd
+except:
+	pass
+
+def ona_filter(data_path, delta_atn_min=0.05, delimiter=';'):
+	"""
+	Implements the Optimized Noise-reduction Averaging (ONA) algorithm for reducing noise
+	in Aethalometer black carbon data while preserving time resolution.
+	
+	This algorithm is based on the work by Hagler et al. (2011), which showed that
+	using a minimum attenuation change (ΔATNmin) of 0.05 provided optimal noise reduction
+	while preserving significant trends in the data.
+	
+	Simplified implementation for single-spot devices.
+	
+	Parameters:
+	-----------
+	data_path : str
+		Path to the CSV file containing the data
+	delta_atn_min : float, optional
+		Minimum change in attenuation (ATN) required for averaging (default: 0.05)
+	delimiter : str, optional
+		Delimiter used in the CSV file (default: ';')
+		
+	Returns:
+	--------
+	None - File is processed in place with added ONA-filtered BC values
+	"""
+	# Load data
+	try:
+		df = pd.read_csv(data_path, delimiter=delimiter)
+	except Exception as e:
+		print(f"Error reading file: {e}")
+		return
+	
+	df_original = df.copy()
+	required_columns = ['bcmTime', 'bcmATN']
+	
+	bc_column = None
+	for col_name in ['BCngm3_unfiltered', 'BCugm3_unfiltered']:
+		if col_name in df.columns:
+			bc_column = col_name
+			break
+			
+	if bc_column is None:
+		print("No BC concentration column found in the data")
+		return
+		
+	if bc_column == 'BCngm3_unfiltered':
+		output_column = 'BCngm3_ona'
+	else:
+		output_column = 'BCugm3_ona'
+		
+	for col in required_columns:
+		if col not in df.columns:
+			print(f"Required column '{col}' not found in the data")
+			return
+	
+	n_rows = len(df)
+	processed_values = np.zeros(n_rows)
+	window_sizes = np.zeros(n_rows)
+	
+	if n_rows < 2:
+		df[output_column] = df[bc_column].values
+		df['ONA_window_size'] = 1
+		df.to_csv(data_path, sep=delimiter, index=False)
+		return
+	
+	i = 0
+	while i < n_rows:
+		start_idx = i
+		start_atn = df['bcmATN'].iloc[i]
+		end_idx = i + 1
+		while end_idx < n_rows and df['bcmATN'].iloc[end_idx] - start_atn < delta_atn_min:
+			end_idx += 1
+		if end_idx >= n_rows:
+			end_idx = n_rows - 1
+		end_atn = df['bcmATN'].iloc[end_idx]
+		last_valid_idx = end_idx
+		for j in range(end_idx + 1, n_rows):
+			if df['bcmATN'].iloc[j] <= end_atn:
+				last_valid_idx = j
+		window = df.iloc[start_idx:last_valid_idx + 1]
+		avg_bc = window[bc_column].mean()
+		window_size = len(window)
+		for j in range(start_idx, last_valid_idx + 1):
+			processed_values[j] = avg_bc
+			window_sizes[j] = window_size
+		
+		i = last_valid_idx + 1
+	
+	df[output_column] = processed_values
+	df['ONA_window_size'] = window_sizes
+	df.to_csv(data_path, sep=delimiter, index=False)
+'''	
+	original_noise = calculate_noise(df_original[bc_column])
+	processed_noise = calculate_noise(df[output_column])
+
+	print(f"ONA Processing Summary:")
+	print(f"  Original noise: {original_noise:.2f}")
+	print(f"  Processed noise: {processed_noise:.2f}")
+	print(f"  Noise reduction: {original_noise/processed_noise:.1f}x")
+	print(f"  Avg window size: {window_sizes.mean():.1f} samples")
+	print(f"  Max window size: {window_sizes.max():.0f} samples")
+
+	neg_before = 100 * (df_original[bc_column] < 0).sum() / len(df_original)
+	neg_after = 100 * (df[output_column] < 0).sum() / len(df)
+'''	
+def calculate_noise(data):
+	return np.abs(np.diff(data)).mean()
+
+def filter_values_ona(log, delta_atn_min=0.05):
+	ona_filter(log, delta_atn_min=delta_atn_min, delimiter=';')
+
+
+
+def adjust_airflow_dynamically(bc_concentration, af_sensor_type):
+	if af_sensor_type == 0:
+		MIN_AIRFLOW, MAX_AIRFLOW = 0.07, 0.075
+	else:
+		MIN_AIRFLOW, MAX_AIRFLOW = 0.1, 0.42
+
+	if bc_concentration >= 2000:
+		target_airflow = MIN_AIRFLOW
+	elif bc_concentration >= 1000:
+		target_airflow = MIN_AIRFLOW + (MAX_AIRFLOW - MIN_AIRFLOW) * 0.25
+	elif bc_concentration >= 600:
+		target_airflow = MIN_AIRFLOW + (MAX_AIRFLOW - MIN_AIRFLOW) * 0.5
+	elif bc_concentration >= 200:
+		target_airflow = MIN_AIRFLOW + (MAX_AIRFLOW - MIN_AIRFLOW) * 0.75
+	else:
+		target_airflow = MAX_AIRFLOW
+	print(f"{target_airflow} target airflow")
+	return round(target_airflow, 3)
+
+
+def apply_dynamic_airflow(bc_concentration, config, override_airflow_flag, logger, af_sensor_type=1):
+
+	if bc_concentration <= 0:
+		return override_airflow_flag, None
+	is_ebcMeter = config.get('is_ebcMeter', False)
+	if is_ebcMeter:
+		return override_airflow_flag, None
+	if not hasattr(apply_dynamic_airflow, 'samples'):
+		apply_dynamic_airflow.samples = []
+	apply_dynamic_airflow.samples.append(bc_concentration)
+	apply_dynamic_airflow.samples = apply_dynamic_airflow.samples[-4:]  # Keep last 4 samples
+	avg_bc = sum(apply_dynamic_airflow.samples) / len(apply_dynamic_airflow.samples)
+	try:
+		current_airflow = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
+	except (ValueError, TypeError):
+		logger.warning("Invalid airflow_per_minute value in config")
+		current_airflow = 0.25
+	target_airflow = adjust_airflow_dynamically(avg_bc, af_sensor_type)
+	logger.info(f"Airflow adjusted: {current_airflow:.3f} → {target_airflow:.3f} L/min (BC={avg_bc} ng/m³)")
+	return True, target_airflow

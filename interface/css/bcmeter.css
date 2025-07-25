@@ -1,192 +1,315 @@
-html, body{
-		font-family: sans-serif;
-		margin: 0px;
-		padding: 0px
-	}
-	svg,
-	.menu {
-		padding: 0 20px;
-		display: inline-block;
-		margin: 0px auto;
-	}
-
-	.menu select {
-		height: 35px;
-		margin: 0px 5px;
-		border-radius: 3px;
-		outline: none;
-		font-size: 15px;
-	}
-
-
-
-	.btn:hover, a:hover {
-		color: #000;
-	}
-
-
-	.menu span a {
-		text-decoration: none !important;
-		color: #000;
-	}
-
-	.y-menu select, #y-menu-min, #y-menu-max{
-		border: solid 2px #1f77b4 !important;;
-	}
-
-	 #logs select{
-		border: solid 2px #ccc !important;;
-	}
-
-	.y-menu2 select, #y-menu2-min, #y-menu2-max {
-		border: solid 2px #ff7f0e !important;
-	}
-	#y-menu-min, #y-menu-max, #y-menu2-min, #y-menu2-max{
-		position: absolute;
-		width: 80px;
-		font-size: 15px;
-		height: 28px;
-		text-align: center;
-	}
-
-	#y-menu-max{
-		 margin-left: 0px;
-		 margin-top: 10px
-	}
-
-	#y-menu-min{
-		 margin-left: 0px;
-		 margin-top: 395px
-	}
-
-	#y-menu2-max{
-		 margin-left: 1070px;
-		 margin-top: 10px
-	}
-
-	#y-menu2-min{
-		margin-left: 1070px;
-		 margin-top: 395px
-	}
-
-
-
-	#resetZoom {
-		padding: 5px 15px;
-		margin: 0px 10px;
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.3);
-		border: 2px solid #ccc;
-		cursor: pointer;
-		color: #000;
-		height: 35px;
-		background-color: #eeebeb;
-		cursor: pointer;
-		border: none!important;
-	}
-	#svg-container{
-		width: 1140px;
-		margin: 0px auto;
-		display: block;
-	}
-		#setRange:hover, #resetZoom:hover {
-
-		border: 1px solid #cfffff !important;
-	}
-
-
-	h3 {
-		text-align: center;
-	}
-
-	path {
-
-		stroke-width: 2;
-		fill: none;
-	}
-
-	.tooltip {
-		padding: 3px;
-		background-color: #ccc;
-		border: 1px solid rgb(175, 175, 175);
-		width: auto;
-		border-radius: 3px;
-		position: absolute;
-		left: 0px;
-		font-size: 11px;
-		display: inline-block;
-		opacity: 0;
-	}
-
-	.selected-time-line {
-		stroke-width: 2;
-		stroke: rgb(168, 167, 167);
-		stroke-linecap: round;
-	}
-
-.nav-pills .nav-link {
-border-radius: .25rem;
-background-color: #eee;
+/* === General & Typography === */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f8f9fa;
+    color: #212529;
+    margin: 0;
+    padding: 0;
 }
 
-
-text {
-	font-size: 11px;
-	font-weight: bold;
+h6 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #495057;
 }
 
-#line-chart .tick line,
-#line-chart .domain {
-	stroke: #eeebeb
+/* === Main Layout & Navigation === */
+.top-nav {
+    background-color: #ffffff;
+    border-bottom: 1px solid #dee2e6;
+    padding: 0.5rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.top-nav .nav-buttons .btn {
+    margin-right: 5px;
+}
+
+.page-container {
+    padding: 15px;
+    max-width: 1140px;
+    margin: 0 auto;
+}
+
+/* === Dashboard Components === */
+#averages-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 15px;
+    text-align: center;
+    margin-bottom: 20px;
+    background-color: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.stat-card h6 {
+    margin-bottom: 0.5rem;
+    color: #6c757d;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+.stat-card p {
+    margin-bottom: 0;
+    font-size: 1.75rem;
+    font-weight: 300;
+    line-height: 1.2;
+}
+
+.stat-card p small {
+    font-size: 0.8rem;
+    color: #6c757d;
+    display: block;
+}
+
+.control-box {
+    background-color: #ffffff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.control-box h5 {
+    margin-top: 0;
+    border-bottom: 1px solid #f0f0f0;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+.control-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px 15px;
+    align-items: center;
+}
+
+.control-grid label {
+    margin-bottom: 0;
+    text-align: right;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+/* === D3.js Chart Styles === */
+#svg-container {
+    width: 100%;
+    margin: 0 auto;
+    display: block;
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 10px;
+    border: 1px solid #dee2e6;
+}
+
+svg#line-chart {
+    width: 100%;
+    height: auto;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+#line-chart .tick line {
+	stroke: #f0f0f0;
 }
 
 #line-chart .domain {
-	stroke: #ddd
+	stroke: transparent;
 }
 
 #line-chart .x-axis-label,
 #line-chart .y-axis-label,
 #line-chart .y-axis-label2 {
 	font-size: 12px;
-	color: #ccc;
-	font-weight: 200;
-
+	fill: #6c757d;
+    font-weight: normal;
 }
 
-table td, .table th {
- padding: 0!important;
+/* === Sliders & Form Elements === */
+#medianFilter1 + .slider .slider-selection,
+#medianFilter1 + .slider .slider-handle {
+  background-color: #1f77b4 !important;
+  background-image: none !important;
+  border: 1px solid #1f77b4 !important;
 }
 
-.status-div {
-	max-width: 30%;
-      height: auto;
-      display: block;
-      margin: 0 auto;
-      text-align: center;
-      border-radius: 5px;
-    }
+#medianFilter2 + .slider .slider-selection,
+#medianFilter2 + .slider .slider-handle {
+  background-color: #ff7f0e !important;
+  background-image: none !important;
+  border: 1px solid #ff7f0e !important;
+}
 
-.log-container {
-display: flex;
-justify-content: space-between;
-font-size: 12px;
+/* === Modal Styles === */
+.modal-content {
+    background-color: #f8f9fa;
+    border-radius: 8px;
 }
 
 .log-box {
-flex-basis: 30%;
-padding: 10px;
-border: 1px solid #ccc;
+    flex-basis: 30%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    background-color: #fff;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: monospace;
 }
 
-        .modal-content {
-            background-color: #f8f9fa;
-            border-radius: 5px;
-            padding: 20px;
-        }
-        .table {
-            margin-top: 20px;
-        }
+#scale-control-table {
+    width: 100%;
+    margin-top: 1rem;
+    font-size: 0.95rem;
+}
 
-        /* Additional styles for your switch */
-        .bootstrap-switch .bootstrap-switch-handle-on, .bootstrap-switch .bootstrap-switch-handle-off {
-            white-space: nowrap; /* Ensures text doesn't wrap */
-        }
+#scale-control-table thead th {
+    background-color: #e9ecef;
+    font-weight: 600;
+}
+
+#scale-control-table td,
+#scale-control-table th {
+    padding: 12px;
+    vertical-align: middle;
+    border-bottom: 1px solid #dee2e6;
+}
+
+#scale-control-table .form-control:disabled {
+    background-color: #e9ecef;
+    cursor: not-allowed;
+    font-style: italic;
+}
+
+.auto-scale-toggle {
+    transform: scale(1.5);
+    cursor: pointer;
+}
+
+/* === Status & Utility === */
+.status-div {
+    font-weight: bold;
+    border-radius: 5px;
+    padding: 0.375rem 0.75rem;
+    min-width: 150px;
+    text-align: center;
+}
+
+#hotspotwarning {
+    margin: 15px 0;
+    padding: 15px;
+    border-radius: 5px;
+}
+
+
+/* === Dashboard Components (Updated) === */
+#averages-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 15px;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.stat-card {
+    background-color: #ffffff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+}
+
+.stat-card h6 {
+    margin-bottom: 0.5rem;
+    color: #6c757d;
+    font-weight: bold;
+    font-size: 1rem;
+    text-transform: uppercase;
+}
+
+.stat-card p {
+    margin-bottom: 0;
+    font-size: 2.25rem; /* Larger font size for prominence */
+    font-weight: 600; /* Bolder font weight */
+    line-height: 1.2;
+    color: #212529;
+}
+
+.stat-card p small {
+    font-size: 0.85rem;
+    font-weight: normal;
+    color: #6c757d;
+    display: block;
+}
+
+
+/* === D3.js Chart Styles (Updated) === */
+#svg-container {
+    width: 100%;
+    margin: 0 auto;
+    display: block;
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 10px;
+    border: 1px solid #dee2e6;
+}
+
+svg#line-chart {
+    width: 100%;
+    height: auto;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+/* This is the new, lighter grid line color */
+#line-chart .tick line {
+	stroke: #f0f0f0;
+}
+
+#line-chart .domain {
+	stroke: transparent; /* Hides the outer axis box for a cleaner look */
+}
+
+#line-chart .x-axis-label,
+#line-chart .y-axis-label,
+#line-chart .y-axis-label2 {
+	font-size: 12px;
+	fill: #6c757d;
+    font-weight: normal;
+}
+
+
+/* === Responsive Design === */
+@media (max-width: 576px) {
+    /* Adjust top navigation for smaller screens to prevent overflow */
+    .top-nav {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 0.75rem 1rem;
+    }
+
+    .top-nav .nav-buttons {
+        margin-bottom: 0.75rem;
+    }
+
+    .top-nav .status-div {
+        width: 100%;
+        text-align: center;
+    }
+
+    /* Key fix: Stack control grid items on mobile */
+    .control-grid {
+        grid-template-columns: 1fr; /* Switch to a single column layout */
+    }
+
+    .control-grid label {
+        text-align: left; /* Align labels to the left above the input */
+        margin-bottom: 3px; /* Add a small space below the label */
+    }
+}
+

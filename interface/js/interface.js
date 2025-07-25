@@ -1,52 +1,105 @@
-/**
- * bcMeter Interface JavaScript
- * UI, modals, and system interactions for the bcMeter interface
- */
-
+// interface.js
 document.addEventListener('DOMContentLoaded', () => {
-  // Global variables
   let isDirty = false;
   let hasShownWarningModal = false;
   let lastErrorTimestamp = 0;
-  
-  // Tab configuration
-  const tabsConfig = [
-    { tabId: 'session-tab', configType: 'session' },
-    { tabId: 'device-tab', configType: 'device' },
-    { tabId: 'administration-tab', configType: 'administration' },
-    { tabId: 'email-tab', configType: 'email' },
-    { tabId: 'compair-tab', configType: 'compair' }
-  ];
-
-  // Initialize the interface
+  let configSampleTime = 300;
+  const tabsConfig = [{
+    tabId: 'session-tab',
+    configType: 'session'
+  }, {
+    tabId: 'device-tab',
+    configType: 'device'
+  }, {
+    tabId: 'administration-tab',
+    configType: 'administration'
+  }, {
+    tabId: 'email-tab',
+    configType: 'email'
+  }];
   initInterface();
   fetchStatus();
-  setInterval(fetchStatus, 5000);
+
+  let statusIntervalId = setInterval(fetchStatus, 5000);
+
+  function updateStatusInterval() {
+    const statusInterval = Math.max(5000, Math.min(configSampleTime * 1000, 60000));
+    if (statusIntervalId) {
+      clearInterval(statusIntervalId);
+    }
+    statusIntervalId = setInterval(fetchStatus, statusInterval);
+  }
+
   syncDeviceTime();
-  /**
-   * Initialize the interface
-   */
+
   function initInterface() {
-    // Initialize event listeners
     setupDeviceControlListeners();
     setupTabSwitching();
     setupWifiControls();
     setupModalEvents();
-    
-    // Initialize the initial tab
-    const initialTab = $('#configTabs a.active');
-    if (initialTab.length) {
-      activateAndLoadConfig(initialTab);
-    } else {
-      activateAndLoadConfig($('#configTabs a').first());
+    loadSampleTimeConfig();
+  }
+
+  function loadSampleTimeConfig() {
+    fetch(`${getBaseUrl()}/load-config`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.sample_time && data.sample_time.value) {
+          configSampleTime = Number(data.sample_time.value);
+          window.configSampleTime = configSampleTime;
+          updateStatusInterval();
+          const configEvent = new CustomEvent('bcmeter-config-loaded', {
+            detail: {
+              sampleTime: configSampleTime
+            }
+          });
+          document.dispatchEvent(configEvent);
+        }
+      })
+      .catch(error => console.error('Failed to load sample time configuration:', error));
+  }
+
+  async function getLogDuration(filename) {
+    try {
+      const response = await fetch(`../../logs/${filename}`);
+      const text = await response.text();
+      const lines = text.trim().split('\n').filter(line => line.trim());
+
+      if (lines.length < 2) return '';
+
+      const firstDataLine = lines[1];
+      const lastDataLine = lines[lines.length - 1];
+
+      const firstCols = firstDataLine.split(';');
+      const lastCols = lastDataLine.split(';');
+
+      if (firstCols.length < 2 || lastCols.length < 2) return '';
+
+      const startDate = firstCols[0] + ' ' + firstCols[1];
+      const endDate = lastCols[0] + ' ' + lastCols[1];
+
+      const start = new Date(startDate.replace(/(\d{2})-(\d{2})-(\d{2})/, '20$3-$2-$1'));
+      const end = new Date(endDate.replace(/(\d{2})-(\d{2})-(\d{2})/, '20$3-$2-$1'));
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return '';
+
+      const diffMs = end - start;
+      const hours = Math.floor(diffMs / (1000 * 60 * 60));
+      const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      if (hours > 0) {
+        return ` (${hours}h ${minutes}m)`;
+      } else if (minutes > 0) {
+        return ` (${minutes}m)`;
+      } else {
+        return ' (<1m)';
+      }
+    } catch (error) {
+      return '';
     }
   }
 
-  /**
-   * Setup event listeners for device control buttons
-   */
   function setupDeviceControlListeners() {
-    // Device control buttons
     $('#bcMeter_reboot').click(confirmReboot);
     $('#bcMeter_stop').click(confirmStop);
     $('#bcMeter_debug').click(confirmDebugMode);
@@ -55,45 +108,68 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#bcMeter_update, #bcMeter_update2').click(confirmUpdate);
     $('#saveGraph').click(confirmSaveGraph);
     $('#startNewLog').click(confirmStartNewLog);
-    
-    // Options button toggle
     const optionsButton = document.querySelector('[data-target="#pills-devicecontrol"]');
     if (optionsButton) {
       optionsButton.addEventListener('click', function() {
         const target = document.querySelector(this.getAttribute('data-target'));
-        target.style.display = target.style.display === "none" ? "block" : "none";
+        const isCurrentlyHidden = target.style.display === "none" || target.style.display === "";
+        target.style.display = isCurrentlyHidden ? "block" : "none";
+        if (isCurrentlyHidden) {
+          setTimeout(() => {
+            target.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          }, 0);
+        }
       });
     }
-
-    // Password visibility toggle
     $(".toggle-password").click(function() {
       $(this).find('i').toggleClass('fa-eye fa-eye-slash');
       const input = $("#pass_log_id");
       input.attr("type", input.attr("type") === "password" ? "text" : "password");
     });
-
-    // Edit password button
     $(".js-edit-password").click(function() {
       $('.wifi-pwd-field-exist').hide();
       $('.wifi-pwd-field').show();
     });
+    $('#saveWifiSettings').click(function(e) {
+        e.preventDefault();
 
-    // Hide/show y-menu2
-    document.getElementById("hide-y-menu2")?.addEventListener("click", function() {
-      toggleYMenu2();
+        const ssid = $('#js-wifi-dropdown').val();
+        let finalSsid = ssid;
+        if (ssid === 'custom-network-selection') {
+            finalSsid = $('#custom_ssid').val();
+        }
+
+        const password = $('#pass_log_id').val();
+
+        const postData = {
+            conn_submit: true,
+            wifi_ssid: finalSsid,
+            custom_wifi_name: (ssid === 'custom-network-selection') ? finalSsid : '',
+            wifi_pwd: password
+        };
+
+        $.ajax({
+            type: 'POST',
+            url: 'index.php',
+            data: postData,
+            success: function(response) {
+                bootbox.alert("WiFi settings saved. The device will now attempt to connect.", function() {
+                    $('#wifisetup').modal('hide');
+                    setTimeout(fetchStatus, 5000);
+                });
+            },
+            error: function() {
+                bootbox.alert("An error occurred while saving WiFi settings.");
+            }
+        });
     });
   }
 
-  /**
-   * Setup tab switching functionality
-   */
   function setupTabSwitching() {
     $('#configTabs a').on('click', function(e) {
       e.preventDefault();
       handleTabSwitch($(this));
     });
-
-    // Handle form submissions and save actions
     tabsConfig.forEach(tab => {
       const saveButton = document.getElementById(`save${tab.configType.charAt(0).toUpperCase() + tab.configType.slice(1)}Settings`);
       if (saveButton) {
@@ -104,12 +180,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     });
-
-    // Handle enter key in forms
     document.addEventListener("keydown", function(event) {
       if (event.key === "Enter" || event.keyCode === 13) {
         let activeTabId = null;
-        
+
         tabsConfig.forEach(tab => {
           if ($(`#${tab.tabId}`).hasClass('active')) {
             activeTabId = tab.tabId;
@@ -119,57 +193,39 @@ document.addEventListener('DOMContentLoaded', () => {
         if (activeTabId) {
           saveConfigurationBasedOnTab(activeTabId);
         }
-        
+
         $('#device-parameters').modal('hide');
       }
     });
   }
 
-  /**
-   * Setup WiFi control functionality
-   */
   function setupWifiControls() {
     const wifiDropdown = document.getElementById('js-wifi-dropdown');
     const customNetworkInput = document.getElementById('custom-network-input');
-    
+
     if (wifiDropdown && customNetworkInput) {
-      // Show/hide custom network input based on selection
       wifiDropdown.addEventListener('change', function() {
         customNetworkInput.style.display = this.value === 'custom-network-selection' ? 'block' : 'none';
-        
+
         if (this.value !== "custom-network-selection") {
           updatePasswordFieldVisibility(this.value);
         }
       });
-      
-      // If custom-network-selection is selected on page load
       if (wifiDropdown.value === 'custom-network-selection') {
         customNetworkInput.style.display = 'block';
       }
-      
-      // Refresh WiFi networks button
       $('#refreshWifi').click(fetchWifiNetworks);
-      
-      // Initial fetch of available networks
       fetchWifiNetworks();
     }
   }
 
-  /**
-   * Setup modal event handlers
-   */
-  function setupModalEvents() {
-    // Track modal state
+function setupModalEvents() {
     $('#pills-devicecontrol').on('hidden.bs.collapse', function() {
       $('#statusDiv').empty();
     });
-    
-    // Reset modal state on page reload
     window.addEventListener('load', function() {
       hasShownWarningModal = false;
     });
-    
-    // Handle WiFi modal close
     const deleteWifiModal = document.getElementById('deleteWifiModal');
     if (deleteWifiModal) {
       deleteWifiModal.addEventListener('hidden.bs.modal', function() {
@@ -179,96 +235,99 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
     }
-  }
 
-  /**
-   * Fetch and display device status
-   */
+    $('#device-parameters').on('shown.bs.modal', function () {
+        const activeTabPane = $(this).find('.tab-pane.active');
+        const tbody = activeTabPane.find('tbody');
+
+        // Only load data if the table body is currently empty
+        if (tbody.is(':empty')) {
+            const activeTabLink = $(this).find('#configTabs a.active');
+            if (activeTabLink.length) {
+                activateAndLoadConfig(activeTabLink);
+            }
+        }
+    });
+}
+
   function fetchStatus() {
     fetch('/tmp/BCMETER_WEB_STATUS')
       .then(response => response.ok ? response.text() : Promise.reject('Network error'))
       .then(data => {
         try {
           const jsonData = JSON.parse(data);
+          window.in_hotspot = jsonData.in_hotspot;
           updateStatus(
-            jsonData.bcMeter_status, 
-            jsonData.hostname, 
-            jsonData.log_creation_time, 
-            jsonData.calibration_time, 
-            jsonData.filter_status, 
+            jsonData.bcMeter_status,
+            jsonData.hostname,
+            jsonData.log_creation_time,
+            jsonData.calibration_time,
+            jsonData.filter_status,
             jsonData.in_hotspot
           );
         } catch (e) {
           console.error('JSON parsing error:', e);
           updateStatus(-1, "Device", null, null, null, false);
+          window.in_hotspot = false;
         }
       })
       .catch(error => {
         console.error('Fetch error:', error);
         updateStatus(-1, "Device", null, null, null, false);
+        window.in_hotspot = false;
       });
   }
 
-  /**
-   * Update the display with device status
-   */
-  function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
-    window.deviceName = deviceName;
-    
-    // Show warning modal if necessary
-    if ((!calibrationTime || (filterStatus !== null && filterStatus < 2)) && 
-        (!window.is_ebcMeter || (window.is_ebcMeter && filterStatus === 0))) {
-      showWarningModal(calibrationTime, filterStatus);
-    }
-    
-    const statusDiv = document.getElementById('statusDiv');
-    statusDiv.className = 'status-div';
-    
-    let formattedCreationTime = formatTimeString(creationTimeString);
-    let formattedCalibrationTime = formatTimeString(calibrationTime);
-    let statusText = getStatusText(status, deviceName, formattedCreationTime);
-    
-    // Update the calibration time and filter status displays
-    const calibrationTimeDiv = document.getElementById('calibrationTime');
-    const filterStatusDiv = document.getElementById('filterStatusDiv');
-    
-    if (calibrationTimeDiv) {
-      calibrationTimeDiv.textContent = formattedCalibrationTime ? 
-        `Last calibration: ${formattedCalibrationTime}` : 'No calibration data';
-    }
-    
-    if (filterStatusDiv) {
-      filterStatusDiv.textContent = filterStatus !== null ? 
-        `Filter status: ${filterStatus}/5` : 'No filter status';
-    }
-    
-    // Update main status display
-    statusDiv.textContent = statusText;
-    setStatusColors(statusDiv, status);
-    updateHotspotWarning(in_hotspot);
+function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
+  window.deviceName = deviceName;
+  if ((!calibrationTime || (filterStatus !== null && filterStatus < 2)) &&
+    (!window.is_ebcMeter || (window.is_ebcMeter && filterStatus === 0))) {
+    showWarningModal(calibrationTime, filterStatus);
   }
 
-  /**
-   * Format timestamp string to readable date
-   */
+  const statusDiv = document.getElementById('statusDiv');
+  statusDiv.className = 'status-div';
+
+  let formattedCreationTime = formatTimeString(creationTimeString);
+  let formattedCalibrationTime = formatTimeString(calibrationTime);
+  let statusText = getStatusText(status, deviceName, formattedCreationTime);
+  const calibrationTimeDiv = document.getElementById('calibrationTime');
+  const filterStatusDiv = document.getElementById('filterStatusDiv');
+
+  if (calibrationTimeDiv) {
+    calibrationTimeDiv.textContent = formattedCalibrationTime ?
+      `Last calibration: ${formattedCalibrationTime}` : 'No calibration data';
+  }
+
+  if (filterStatusDiv) {
+    filterStatusDiv.textContent = filterStatus !== null ?
+      `Filter status: ${filterStatus}/5` : 'No filter status';
+  }
+  statusDiv.textContent = statusText;
+  setStatusColors(statusDiv, status);
+  updateHotspotWarning(in_hotspot);
+
+  // Start auto-refresh when script is running (status 2 or 3)
+  if ((status === '2' || status === '3') && typeof window.updateCurrentLogsFunction === 'function') {
+    window.updateCurrentLogsFunction();
+  }
+}
+
   function formatTimeString(timeString) {
     if (!timeString || timeString.length < 13) return '';
-    
+
     const year = parseInt("20" + timeString.substring(0, 2));
     const month = parseInt(timeString.substring(2, 4)) - 1;
     const day = parseInt(timeString.substring(4, 6));
     const hours = parseInt(timeString.substring(7, 9));
     const minutes = parseInt(timeString.substring(9, 11));
     const seconds = parseInt(timeString.substring(11, 13));
-    
+
     if ([year, month, day, hours, minutes, seconds].some(isNaN)) return '';
-    
+
     return new Date(year, month, day, hours, minutes, seconds).toLocaleString();
   }
 
-  /**
-   * Get status text based on status code
-   */
   function getStatusText(status, deviceName, formattedCreationTime) {
     const statusMessages = {
       '-1': `${deviceName} status unknown`,
@@ -283,9 +342,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return statusMessages[status] || `${deviceName} has an unrecognized status`;
   }
 
-  /**
-   * Set status colors based on status code
-   */
   function setStatusColors(statusDiv, status) {
     const statusColors = {
       '-1': 'bg-secondary',
@@ -300,36 +356,23 @@ document.addEventListener('DOMContentLoaded', () => {
     statusDiv.classList.add(statusColors[status] || '', 'text-white');
   }
 
-  /**
-   * Update hotspot warning display
-   */
   function updateHotspotWarning(in_hotspot) {
     const hotspotWarningDiv = document.getElementById('hotspotwarning');
     if (hotspotWarningDiv) {
-      if (in_hotspot === true) {
-        hotspotWarningDiv.style.display = 'block';
-        hotspotWarningDiv.className = 'alert alert-warning';
-      } else {
+      if (in_hotspot === true) {} else {
         hotspotWarningDiv.style.display = 'none';
       }
     }
   }
 
-  /**
-   * Show error message with rate limiting
-   */
   function showError(message) {
     const now = Date.now();
-    if (now - lastErrorTimestamp > 10000) { 
-      // Show error message to user
+    if (now - lastErrorTimestamp > 10000) {
       lastErrorTimestamp = now;
       console.error(message);
     }
   }
 
-  /**
-   * Show warning modal for device maintenance
-   */
   function showWarningModal(calibrationTime, filterStatus) {
     if (document.getElementById('warningModal') || hasShownWarningModal) {
       return;
@@ -375,14 +418,13 @@ document.addEventListener('DOMContentLoaded', () => {
     hasShownWarningModal = true;
   }
 
-  /**
-   * Check for undervoltage status
-   */
   function checkUndervoltageStatus() {
     $.ajax({
       url: 'includes/status.php',
       type: 'POST',
-      data: { status: 'undervolt' },
+      data: {
+        status: 'undervolt'
+      },
       success: function(response) {
         if (response.trim() !== '') {
           $('#undervoltage-status').html(response);
@@ -394,9 +436,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  /**
-   * Ignore undervoltage warning
-   */
   function ignoreWarning() {
     const warningDiv = document.getElementById('undervoltage-status');
     if (warningDiv) {
@@ -404,174 +443,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-// Add this to interface.js - Replace the current fetchTimeData function
-
-/**
- * Check and synchronize device time once on page load
- */
-function syncDeviceTime() {
-    const browserTime = new Date();
-    const browserTimestamp = Math.floor(browserTime.getTime() / 1000);
-    const formattedBrowserTime = browserTime.toLocaleString();
-    
-    // Show browser time immediately
-    if (document.getElementById("datetime_local")) {
-        document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + formattedBrowserTime;
-    }
-    
-    // Fetch server time once
-    $.ajax({
-        url: "includes/gettime.php",
-        type: "post",
-        data: { datetime: "now" },
-        cache: false,
-        timeout: 3000,
-        success: function(result) {
-            // Parse server time from response
-            let serverTime;
-            try {
-                // Assuming the response is a formatted date string
-                serverTime = new Date(result);
-                
-                // If parsing fails, try to extract time from string
-                if (isNaN(serverTime.getTime())) {
-                    const matches = result.match(/(\w{3})\s+(\d+)\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
-                    if (matches) {
-                        const months = {"Jan":0,"Feb":1,"Mar":2,"Apr":3,"May":4,"Jun":5,"Jul":6,"Aug":7,"Sep":8,"Oct":9,"Nov":10,"Dec":11};
-                        serverTime = new Date(
-                            parseInt(matches[3]), // year
-                            months[matches[1]], // month
-                            parseInt(matches[2]), // day
-                            parseInt(matches[4]), // hour
-                            parseInt(matches[5]), // minute
-                            parseInt(matches[6])  // second
-                        );
-                    }
-                }
-            } catch (e) {
-                console.error("Error parsing server time:", e);
-                return;
-            }
-            
-            // Update device time display
-            if (document.getElementById("datetime_device")) {
-                document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + result;
-            }
-            
-            if (document.getElementById("devicetime")) {
-                document.getElementById("devicetime").innerHTML = "Time on bcMeter: " + result;
-            }
-            
-            // Calculate time difference in seconds
-            const timeDifference = Math.abs(browserTime.getTime() - serverTime.getTime()) / 1000;
-            
-            // If time difference is more than 10 seconds, correct automatically
-            if (timeDifference > 10) {
-                console.log("Time difference detected:", timeDifference, "seconds. Synchronizing...");
-                
-                // Update UI to show we're syncing
-                if (document.getElementById("datetime_note")) {
-                    document.getElementById("datetime_note").innerHTML = "Time difference detected. Synchronizing...";
-                }
-                
-                // Automatically sync time
-                $.ajax({
-                    url: "includes/status.php",
-                    type: "get",
-                    data: { 
-                        status: "timestamp",
-                        timestamp: browserTimestamp
-                    },
-                    success: function() {
-                        // Update status message
-                        if (document.getElementById("datetime_note")) {
-                            document.getElementById("datetime_note").innerHTML = "Time successfully synchronized!";
-                        }
-                        
-                        // Update device time display
-                        if (document.getElementById("datetime_device")) {
-                            document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + formattedBrowserTime;
-                        }
-                    },
-                    error: function() {
-                        if (document.getElementById("datetime_note")) {
-                            document.getElementById("datetime_note").innerHTML = "Failed to synchronize time.";
-                        }
-                    }
-                });
-            } else {
-                // No need to sync
-                if (document.getElementById("datetime_note")) {
-                    document.getElementById("datetime_note").innerHTML = "Device time is correct.";
-                }
-            }
-            
-            // Update hotspot warning styling
-            if (document.getElementById('hotspotwarning')) {
-                document.getElementById('hotspotwarning').classList.remove('alert-danger');
-                document.getElementById('hotspotwarning').classList.add('alert');
-            }
-        },
-        error: function(xhr, status, error) {
-            const deviceURL = (window.deviceName !== "") ? "http://" + window.deviceName : "";
-            
-            if (document.getElementById("datetime_device")) {
-                document.getElementById("datetime_device").innerHTML = "No connection to bcMeter<br /> Wait a minute to click <a href=\"" + deviceURL + "\">here </a> after WiFi Setup";
-            }
-            
-            if (document.getElementById("datetime_local")) {
-                document.getElementById("datetime_local").innerHTML = "";
-            }
-            
-            if (document.getElementById("set_time")) {
-                document.getElementById("set_time").value = "";
-            }
-            
-            if (document.getElementById("datetime_note")) {
-                document.getElementById("datetime_note").innerHTML = "";
-            }
-            
-            if (document.getElementById("devicetime")) {
-                document.getElementById("devicetime").innerHTML = "";
-            }
-            
-            if (document.getElementById('hotspotwarning')) {
-                document.getElementById('hotspotwarning').classList.remove('alert');
-                document.getElementById('hotspotwarning').classList.add('alert-danger');
-            }
-        }
-    });
-}
-
-
-
-  /**
-   * Check for unsaved changes and ask for confirmation
-   */
   function handleTabSwitch(newTab) {
     if (isDirty) {
-      const confirmSwitch = confirm('You have unsaved changes. Do you want to save them before switching?');
+      const confirmSwitch = confirm('You have unsaved changes. Do you want to save them before switching?'); //
       if (confirmSwitch) {
         let activeTabId = null;
-        
-        tabsConfig.forEach(tab => {
-          if ($(`#${tab.tabId}`).hasClass('active')) {
-            activeTabId = tab.tabId;
+
+        tabsConfig.forEach(tab => { //
+          if ($(`#${tab.tabId}`).hasClass('active')) { //
+            activeTabId = tab.tabId; //
           }
         });
 
         if (activeTabId) {
-          saveConfigurationBasedOnTab(activeTabId);
-        }  
+          saveConfiguration(getFormIdFromConfigType(tabsConfig.find(tab => tab.tabId === activeTabId).configType))
+            .then(() => {
+                isDirty = false; // Reset only after save is confirmed
+                activateAndLoadConfig(newTab);
+            })
+            .catch(error => {
+                console.error('Error saving configuration:', error);
+                // Decide what to do on error: keep isDirty true, or proceed
+                activateAndLoadConfig(newTab); // Proceed anyway, or handle error
+            });
+        } else {
+            activateAndLoadConfig(newTab); // No active tab, proceed
+        }
+      } else {
+        isDirty = false; // User chose NOT to save, so discard changes
+        activateAndLoadConfig(newTab);
       }
+    } else {
+      activateAndLoadConfig(newTab);
     }
-    isDirty = false;
-    activateAndLoadConfig(newTab);
   }
-
-  /**
-   * Monitor form changes
-   */
   function monitorChanges(formId) {
     const form = document.getElementById(formId);
     if (form) {
@@ -583,205 +488,203 @@ function syncDeviceTime() {
     }
   }
 
-  /**
-   * Activate tab and load config
-   */
   function activateAndLoadConfig(tabElement) {
     const configType = tabElement.attr('aria-controls');
     loadConfig(configType);
-    
+
     const formId = getFormIdFromConfigType(configType);
     monitorChanges(formId);
   }
 
-  /**
-   * Get form ID from config type
-   */
   function getFormIdFromConfigType(configType) {
     const formIds = {
       'session': 'session-parameters-form',
       'device': 'device-parameters-form',
       'administration': 'administration-parameters-form',
-      'email': 'email-parameters-form',
-      'compair': 'compair-parameters-form'
+      'email': 'email-parameters-form'
     };
     return formIds[configType] || '';
   }
 
-  /**
-   * Get base URL with port 5000
-   */
   function getBaseUrl() {
     return window.location.protocol + '//' + window.location.hostname + ':5000';
   }
 
-  /**
-   * Load configuration data
-   */
-  function loadConfig(configType) {
-    fetch(`${getBaseUrl()}/load-config`)
-      .then(response => response.json())
-      .then(data => {
-        const formId = getFormIdFromConfigType(configType);
-        const tbody = document.querySelector(`#${formId} tbody`);
-        tbody.innerHTML = '';
-        
-        Object.entries(data).forEach(([key, config]) => {
-          if (config.parameter === configType) {
-            const description = config.description;
-            let valueField = '';
-            
-            if (config.type === 'boolean') {
-              const checkedAttr = config.value ? 'checked' : '';
-              valueField = `<input name="${key}" type="checkbox" ${checkedAttr} data-toggle="toggle" data-onstyle="info" data-offstyle="light">`;
-            } else if (config.type === 'number' || config.type === 'float') {
-              valueField = `<input type="number" class="form-control" name="${key}" value="${config.value}">`;
-            } else if (config.type === 'string') {
-              valueField = `<input type="text" class="form-control" name="${key}" value="${config.value}">`;
-            } else if (config.type === 'array') {
-              valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
-            }
-            
-            const row = `<tr data-toggle="tooltip" data-placement="top" title="${description}">
-              <td>${description}</td>
-              <td>${valueField}</td>
-            </tr>`;
-            tbody.innerHTML += row;
-          }
-        });
-
-        $('[data-toggle="toggle"]').bootstrapToggle();
-        monitorChanges(formId);
-      })
-      .catch(error => console.error('Failed to load configuration:', error));
-  }
-
-  /**
-   * Save configuration
-   */
-  function saveConfiguration(configType) {
+function loadConfig(configType) {
     const formId = getFormIdFromConfigType(configType);
-    const form = document.getElementById(formId);
-    const updatedConfig = {};
+    const tbody = document.querySelector(`#${formId} tbody`);
 
-    form.querySelectorAll('input[type="checkbox"], input[type="number"], input[type="text"]').forEach(input => {
-      const key = input.name;
-      let value = input.value;
-      
-      if (input.type === 'checkbox') {
-        value = input.checked;
-      } else if (input.classList.contains('array')) {
-        try {
-          value = JSON.parse(input.value);
-        } catch (e) {
-          console.error('Failed to parse array input:', e);
+    if (!tbody) {
+        console.error(`Could not find tbody for formId: ${formId}`);
+        return;
+    }
+
+    // Show loading indicator
+    tbody.innerHTML = '<tr><td colspan="2" class="text-center"><em>Loading...</em></td></tr>';
+
+    fetch(`${getBaseUrl()}/load-config`)
+        .then(response => response.json())
+        .then(data => {
+            tbody.innerHTML = ''; // Clear loading indicator
+
+            Object.entries(data).forEach(([key, config]) => {
+                if (config.parameter === configType) {
+                    const description = config.description;
+                    let valueField = '';
+
+                    if (config.type === 'boolean') {
+                        const checkedAttr = config.value ? 'checked' : '';
+                        valueField = `<input name="${key}" type="checkbox" ${checkedAttr} data-toggle="toggle" data-onstyle="info" data-offstyle="light">`;
+                    } else if (config.type === 'number' || config.type === 'float') {
+                        valueField = `<input type="number" class="form-control" name="${key}" value="${config.value}">`;
+                    } else if (config.type === 'string') {
+                        valueField = `<input type="text" class="form-control" name="${key}" value="${config.value}">`;
+                    } else if (config.type === 'array') {
+                        valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
+                    }
+
+                    const row = `<tr data-toggle="tooltip" data-placement="top" title="${description}">
+                                <td>${description}</td>
+                                <td>${valueField}</td>
+                            </tr>`;
+                    tbody.innerHTML += row;
+                }
+            });
+
+            $('[data-toggle="toggle"]').bootstrapToggle();
+            monitorChanges(formId);
+        })
+        .catch(error => {
+            console.error('Failed to load configuration:', error);
+            tbody.innerHTML = '<tr><td colspan="2" class="text-center text-danger"><em>Failed to load configuration.</em></td></tr>';
+        });
+}
+
+ function saveConfiguration(configType) {
+    return new Promise((resolve, reject) => { // Wrap in a Promise
+      const formId = getFormIdFromConfigType(configType); //
+      const form = document.getElementById(formId); //
+      const updatedConfig = {}; //
+
+      form.querySelectorAll('input[type="checkbox"], input[type="number"], input[type="text"]').forEach(input => { //
+        const key = input.name; //
+        let value = input.value; //
+
+        if (input.type === 'checkbox') { //
+          value = input.checked; //
+        } else if (input.classList.contains('array')) { //
+          try { //
+            value = JSON.parse(input.value); //
+          } catch (e) { //
+            console.error('Failed to parse array input:', e); //
+          }
+        }
+
+        if (input.type === 'number') { //
+          value = value.replace(/,/g, '.'); //
+        }
+
+        const description = input.closest('tr').getAttribute('title')?.trim() || ''; //
+
+        if (key) { //
+          updatedConfig[key] = { //
+            value: value, //
+            description: description, //
+            type: determineType(input), //
+            parameter: configType //
+          };
+        }
+      });
+
+      function determineType(input) { //
+        if (input.type === 'checkbox') { //
+          return 'boolean'; //
+        } else if (input.type === 'number') { //
+          return 'number'; //
+        } else if (input.classList.contains('array')) { //
+          return 'array'; //
+        } else if (input.type === 'text') { //
+          return 'string'; //
+        } else {
+          return typeof value; //
         }
       }
-      
-      if (input.type === 'number') {
-        value = value.replace(/,/g, '.');
-      }
-      
-      const description = input.closest('tr').getAttribute('title')?.trim() || '';
 
-      if (key) {
-        updatedConfig[key] = {
-          value: value,
-          description: description,
-          type: determineType(input),
-          parameter: configType
-        };
-      }
-    });
+      fetch(`${getBaseUrl()}/load-config`) //
+        .then(response => response.json()) //
+        .then(existingConfig => { //
+          const mergedConfig = { ...existingConfig }; //
 
-    function determineType(input) {
-      if (input.type === 'checkbox') {
-        return 'boolean';
-      } else if (input.type === 'number') {
-        return 'number';
-      } else if (input.classList.contains('array')) {
-        return 'array';
-      } else if (input.type === 'text') {
-        return 'string';
-      } else {
-        return typeof value;
-      }
-    }
+          Object.keys(updatedConfig).forEach(key => { //
+            mergedConfig[key] = updatedConfig[key]; //
+          });
 
-    fetch(`${getBaseUrl()}/load-config`)
-      .then(response => response.json())
-      .then(existingConfig => {
-        const mergedConfig = { ...existingConfig };
-        
-        Object.keys(updatedConfig).forEach(key => {
-          mergedConfig[key] = updatedConfig[key];
+          fetch(`${getBaseUrl()}/save-config`, { //
+              method: 'POST', //
+              headers: { //
+                'Content-Type': 'application/json' //
+              },
+              body: JSON.stringify(mergedConfig) //
+            })
+            .then(response => { //
+              if (!response.ok) { //
+                throw new Error('Failed to save configuration'); //
+              }
+              console.log('Configuration saved successfully'); //
+              isDirty = false; // Reset isDirty flag upon successful save
+              resolve(); // Resolve the Promise
+            })
+            .catch(error => {
+              console.error('Failed to save configuration:', error); //
+              reject(error); // Reject the Promise on error
+            });
+        })
+        .catch(error => {
+          console.error('Failed to load configuration:', error); //
+          reject(error); // Reject the Promise on error
         });
-
-        fetch(`${getBaseUrl()}/save-config`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(mergedConfig)
-        })
-        .then(response => {
-          if (!response.ok) {
-            throw new Error('Failed to save configuration');
-          }
-          console.log('Configuration saved successfully');
-        })
-        .catch(error => console.error('Failed to save configuration:', error));
-      })
-      .catch(error => console.error('Failed to load configuration:', error));
+    }); // End of Promise
   }
 
-  /**
-   * Save configuration based on active tab
-   */
   function saveConfigurationBasedOnTab(tabId) {
-    const tabToConfigMap = {
-      'session-tab': 'session',
-      'device-tab': 'device',
-      'administration-tab': 'administration',
-      'email-tab': 'email',
-      'compair-tab': 'compair'
+    const tabToConfigMap = { //
+      'session-tab': 'session', //
+      'device-tab': 'device', //
+      'administration-tab': 'administration', //
+      'email-tab': 'email'
     };
 
-    const configType = tabToConfigMap[tabId];
-    if (configType) {
-      saveConfiguration(configType);
+    const configType = tabToConfigMap[tabId]; //
+    if (configType) { //
+      saveConfiguration(configType); //
     }
   }
 
-  /**
-   * Fetch available WiFi networks
-   */
   function fetchWifiNetworks() {
     $('.loading-available-networks').show();
-    
+
     $.getJSON('includes/wlan_list.php', function(networks) {
       window.availableNetworks = networks;
       const dropdown = $('#js-wifi-dropdown');
-      
+
       dropdown.find('option:not(:first):not([value="custom-network-selection"])').remove();
-      
+
       networks.forEach(network => {
         if (network !== window.currentWifiSsid) {
           dropdown.append($('<option></option>').val(network).text(network));
         }
       });
-      
+
       updatePasswordFieldVisibility(window.currentWifiSsid);
-      
+
       $('.loading-available-networks').hide();
     });
   }
 
-  /**
-   * Update password field visibility based on network
-   */
   function updatePasswordFieldVisibility(selectedNetwork) {
     const isInRange = window.availableNetworks?.includes(selectedNetwork);
     const hasStoredPassword = window.currentWifiSsid === selectedNetwork;
-    
+
     if (!isInRange || !hasStoredPassword) {
       $('.wifi-pwd-field-exist').hide();
       $('.wifi-pwd-field').show();
@@ -791,7 +694,6 @@ function syncDeviceTime() {
     }
   }
 
-  // Confirmation dialog functions
   function confirmReboot(e) {
     e.preventDefault();
     bootbox.dialog({
@@ -885,7 +787,9 @@ function syncDeviceTime() {
           callback: function() {
             $.ajax({
               type: 'post',
-              data: { force_wifi: true },
+              data: {
+                force_wifi: true
+              },
               success: function(response) {}
             });
           }
@@ -918,7 +822,6 @@ function syncDeviceTime() {
 
   function confirmUpdate(e) {
     e.preventDefault();
-    // Ask about downloading config first
     bootbox.confirm({
       title: 'Download Config File?',
       message: "Would you like to download the current configuration file (bcMeter_config.json) before proceeding with the update?",
@@ -934,7 +837,6 @@ function syncDeviceTime() {
       },
       callback: function(result) {
         if (result) {
-          // Download config first
           fetch('/bcMeter_config.json')
             .then(response => {
               if (!response.ok) {
@@ -951,7 +853,7 @@ function syncDeviceTime() {
               a.click();
               a.remove();
               URL.revokeObjectURL(downloadUrl);
-              
+
               showUpdateDialog();
             })
             .catch(error => {
@@ -959,7 +861,6 @@ function syncDeviceTime() {
               alert("Failed to download the configuration file.");
             });
         } else {
-          // Skip download
           showUpdateDialog();
         }
       }
@@ -1022,268 +923,177 @@ function syncDeviceTime() {
 
 function confirmStartNewLog(e) {
     e.preventDefault();
-    
-    if ($(this).data('processing')) {
-        return false;
-    }
-    $(this).data('processing', true);
-    
+
+    if ($(e.target).data('processing')) return;
+    $(e.target).data('processing', true);
+
     const isEbcMeter = typeof window.is_ebcMeter !== 'undefined' && window.is_ebcMeter === true;
-    
-    const messageText = isEbcMeter ? 
-      "<p>This will start a new log. It takes about 2 minutes for the new chart to appear.</p>" +
-      "<p>For optimal accuracy, please wait until the temperature curve flattens, which indicates the device has reached stable running temperature. This may take several minutes.</p>" :
-      "<p>This will start a new log. It takes a few minutes for the new chart to appear.</p>";
+    const messageText = "<p>This will start a new log. It takes a few moments for the new chart to appear.</p>";
     
     bootbox.dialog({
-      title: 'Start new log?',
-      message: messageText,
-      size: 'small',
-      buttons: {
-        cancel: {
-          label: "No",
-          className: 'btn-success',
-          callback: function() {
-            // Re-enable the button
-            $(e.target).data('processing', false);
-          }
-        },
-        ok: {
-          label: "Yes",
-          className: 'btn-danger',
-          callback: function() {
-            bootbox.hideAll();
-            
-            const processingModalMessage = isEbcMeter ?
-              '<div class="text-center">' +
-              '<p>It takes about 2 minutes for the first samples to appear.</p>' +
-              '<p>Please note that measurements will be most accurate once the device has reached a stable running temperature.</p>' +
-              '<p>For best results, wait until the temperature curve flattens.</p>' +
-              '<div class="progress mt-3">' +
-              '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%"></div>' +
-              '</div></div>' :
-              '<div class="text-center">' +
-              '<p>It takes a few minutes for the first samples to appear.</p>' +
-              '<p>Please note that samples might be inaccurate until the device has reached running temperature.</p>' +
-              '<div class="progress mt-3">' +
-              '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%"></div>' +
-              '</div></div>';
-            
-            var processingModal = bootbox.dialog({
-              title: 'Initializing...',
-              message: processingModalMessage,
-              closeButton: false,
-              centerVertical: true,
-              size: 'small',
-              buttons: {
-                cancel: {
-                  label: "Cancel",
-                  className: 'btn-secondary',
-                  callback: function() {
-                    clearInterval(progressInterval);
-                    
-                    ajaxCancelled = true;
-                    
+        title: 'Start New Log?',
+        message: messageText,
+        size: 'small',
+        buttons: {
+            cancel: {
+                label: "No",
+                className: 'btn-secondary',
+                callback: function() {
+                    $(e.target).data('processing', false);
+                }
+            },
+            ok: {
+                label: "Yes, Start New Log",
+                className: 'btn-danger',
+                callback: function() {
+                    // Restored original messages with the progress bar HTML structure
+                    const processingModalMessage = isEbcMeter ?
+                        '<div class="text-center">' +
+                        '<p>It takes about 5-10 minutes for the first samples to appear.</p>' +
+                        '<p>Please note that measurements will be most accurate once the device has reached a stable running temperature.</p>' +
+                        '<p>For most accurate emission control, you may wait until the temperature curve flattens.</p>' +
+                        '<div class="progress mt-3" style="height: 20px;">' +
+                        '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>' +
+                        '</div></div>' :
+                        '<div class="text-center">' +
+                        '<p>It takes a few minutes for the first samples to appear.</p>' +
+                        '<p>Please note that samples might be inaccurate until the device has reached running temperature.</p>' +
+                        '<div class="progress mt-3" style="height: 20px;">' +
+                        '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>' +
+                        '</div></div>';
+
+                    const processingModal = bootbox.dialog({
+                        title: 'Initializing New Log...',
+                        message: processingModalMessage,
+                        closeButton: false
+                    });
+
                     $.ajax({
-                      type: 'post',
-                      timeout: 10000, // 10 second timeout
-                      data: {
-                        exec_command: 'sudo systemctl stop bcMeter'
-                      },
-                      success: function() {
-                        bootbox.alert({
-                          title: "Cancelled",
-                          message: "The process has been cancelled and bcMeter service stopped.",
-                          className: 'text-info',
-                          callback: function() {
-                            // Re-enable the button
+                        type: 'post',
+                        url: 'index.php',
+                        data: { exec_new_log: true },
+                        timeout: 40000,
+                        success: function() {
+                            const totalWaitTime = 15000; 
+                            const intervalTime = 150;
+                            let elapsedTime = 0;
+                            const progressBar = processingModal.find('.progress-bar');
+
+                            const progressInterval = setInterval(function() {
+                                elapsedTime += intervalTime;
+                                const percentComplete = Math.min(Math.round((elapsedTime / totalWaitTime) * 100), 100);
+                                progressBar.css('width', percentComplete + '%');
+
+                                if (percentComplete >= 100) {
+                                    clearInterval(progressInterval);
+                                    window.location.reload();
+                                }
+                            }, intervalTime);
+                        },
+                        error: function() {
+                            processingModal.modal('hide');
+                            bootbox.alert('There was an error starting the new log.');
                             $(e.target).data('processing', false);
-                          }
-                        });
-                      },
-                      error: function() {
-                        bootbox.alert({
-                          title: "Error",
-                          message: "There was an error stopping the bcMeter service.",
-                          className: 'text-danger',
-                          callback: function() {
-                            // Re-enable the button
-                            $(e.target).data('processing', false);
-                          }
-                        });
-                      }
+                        }
                     });
-                  }
                 }
-              }
-            });
-            
-            var progressBar = processingModal.find('.progress-bar');
-            var progress = 0;
-            var ajaxComplete = false;
-            var ajaxError = false;
-            var ajaxCancelled = false;
-            var errorMessage = "";
-            
-            var progressInterval = setInterval(function() {
-              progress += 2;
-              progressBar.css('width', progress + '%');
-              progressBar.attr('aria-valuenow', progress);
-              
-              if (progress >= 100) {
-                clearInterval(progressInterval);
-                
-                if (!ajaxCancelled) {
-                  processingModal.modal('hide');
-                  
-                  if (ajaxError) {
-                    bootbox.alert({
-                      title: "Error",
-                      message: errorMessage,
-                      className: 'text-danger',
-                      callback: function() {
-                        // Re-enable the button
-                        $(e.target).data('processing', false);
-                      }
-                    });
-                  } else {
-                    window.location.reload();
-                  }
-                }
-              }
-            }, 260); // 13 seconds total (260ms * 50 steps = 13000ms)
-            
-            $.ajax({
-              type: 'post',
-              timeout: 20000, // Add 20 second timeout
-              data: {
-                exec_new_log: true
-              },
-              success: function(response) {
-                if (ajaxCancelled) {
-                  return;
-                }
-                
-                if (response && typeof response === 'string' && response.includes('error')) {
-                  ajaxError = true;
-                  errorMessage = "Server error: " + response;
-                } else {
-                  ajaxComplete = true;
-                }
-              },
-              error: function(xhr, status, error) {
-                if (ajaxCancelled) {
-                  return;
-                }
-                ajaxError = true;
-                
-                if (status === 'timeout') {
-                  errorMessage = "The server took too long to respond. It may be overloaded.";
-                } else {
-                  errorMessage = "There was an error starting the new log. Please try again.";
-                }
-              }
-            });
-          }
+            }
         }
-      }
     });
 }
- /**
- * Fetch and process log files
- */
-function fetchAndProcessLogFile(logType, elementId) {
-  fetch(`../../maintenance_logs/${logType}.log`)
-    .then(response => {
-      if (response.status === 404) {
-        document.getElementById(elementId).innerHTML = 'Log file not found (404).';
-        throw new Error('404 Not Found');
-      }
-      if (!response.ok) {
-        document.getElementById(elementId).innerHTML = 'Error fetching log file.';
-        throw new Error('Fetch error');
-      }
-      return response.text();
-    })
-    .then(data => {
-      const lines = data.split('\n');
-      let prevMessage = '';
-      let prevTimestamp = '';
-      let contentCount = 0;
-      let output = '';
-      lines.forEach(line => {
-        const matches = line.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}),\d{3}\s+-\s+(DEBUG|ERROR): (.+)/);
-        if (matches) {
-          const timestamp = matches[1];
-          const level = matches[2];
-          const message = matches[3];
-          const currentMessage = message;
-          if (currentMessage === prevMessage) {
-            contentCount++;
-          } else {
-            if (contentCount > 1) {
-              output += `${prevTimestamp} ${level}: ${prevMessage} (Repeated ${contentCount} times)<br>`;
-            } else if (prevMessage !== '') {
-              output += `${prevTimestamp} ${level}: ${prevMessage}<br>`;
-            }
-            prevMessage = currentMessage;
-            prevTimestamp = timestamp;
-            contentCount = 1;
-          }
+  function fetchAndProcessLogFile(logType, elementId) {
+    fetch(`../../maintenance_logs/${logType}.log`)
+      .then(response => {
+        if (response.status === 404) {
+          document.getElementById(elementId).innerHTML = 'Log file not found (404).';
+          throw new Error('404 Not Found');
         }
-      });
-      if (contentCount > 1) {
-        output += `${prevTimestamp} DEBUG: ${prevMessage} (Repeated ${contentCount} times)<br>`;
-      } else if (prevMessage !== '') {
-        output += `${prevTimestamp} DEBUG: ${prevMessage}<br>`;
-      }
-      document.getElementById(elementId).innerHTML = output;
-    })
-    .catch(error => console.error(error));
-}
+        if (!response.ok) {
+          document.getElementById(elementId).innerHTML = 'Error fetching log file.';
+          throw new Error('Fetch error');
+        }
+        return response.text();
+      })
+      .then(data => {
+        const lines = data.split('\n');
+        let prevMessage = '';
+        let prevTimestamp = '';
+        let contentCount = 0;
+        let output = '';
+        lines.forEach(line => {
+          const matches = line.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}),\d{3}\s+-\s+(DEBUG|ERROR): (.+)/);
+          if (matches) {
+            const timestamp = matches[1];
+            const level = matches[2];
+            const message = matches[3];
+            const currentMessage = message;
+            if (currentMessage === prevMessage) {
+              contentCount++;
+            } else {
+              if (contentCount > 1) {
+                output += `${prevTimestamp} ${level}: ${prevMessage} (Repeated ${contentCount} times)<br>`;
+              } else if (prevMessage !== '') {
+                output += `${prevTimestamp} ${level}: ${prevMessage}<br>`;
+              }
+              prevMessage = currentMessage;
+              prevTimestamp = timestamp;
+              contentCount = 1;
+            }
+          }
+        });
+        if (contentCount > 1) {
+          output += `${prevTimestamp} DEBUG: ${prevMessage} (Repeated ${contentCount} times)<br>`;
+        } else if (prevMessage !== '') {
+          output += `${prevTimestamp} DEBUG: ${prevMessage}<br>`;
+        }
+        document.getElementById(elementId).innerHTML = output;
+      })
+      .catch(error => console.error(error));
+  }
 
-/**
- * Log Deletion Feature for bcMeter Interface
- */
-
-// Add delete buttons to log entries
 function addDeleteButtonsToLogs() {
-  document.querySelectorAll('#large-files table tbody tr, #small-files table tbody tr').forEach((row, index) => {
-    const downloadLink = row.querySelector('td:last-child a');
-    if (!downloadLink) return;
-    
-    const fileName = downloadLink.getAttribute('href').split('/').pop();
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.className = 'btn btn-danger ml-2';
-    deleteBtn.innerText = 'Delete';
-    
-    // Disable delete button for the first row (most recent log)
-    if (index === 0) {
-      deleteBtn.disabled = true;
-      deleteBtn.title = "Cannot delete the most recent log file";
-      deleteBtn.classList.add('disabled');
-    } else {
-      deleteBtn.onclick = () => showDeleteConfirmation(fileName);
-    }
-    
-    row.querySelector('td:last-child').appendChild(deleteBtn);
+  document.querySelectorAll('#large-files table tbody, #small-files table tbody').forEach(tableBody => {
+    const rows = Array.from(tableBody.querySelectorAll('tr'));
+    rows.forEach((row, index) => {
+      const downloadLink = row.querySelector('td:last-child a');
+      if (!downloadLink) return;
+      const existingDeleteBtn = row.querySelector('.btn-danger');
+      if (existingDeleteBtn) return;
+      
+      const fileName = downloadLink.getAttribute('href').split('/').pop();
+      const dateText = row.querySelector('td:first-child').textContent;
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn btn-danger ml-2';
+      deleteBtn.innerText = 'Delete';
+      
+      const isNewestLog = rows.every(otherRow => {
+        const otherDateText = otherRow.querySelector('td:first-child').textContent;
+        return dateText >= otherDateText;
+      });
+      
+      if (isNewestLog) {
+        deleteBtn.disabled = true;
+        deleteBtn.title = "Cannot delete the most recent log file";
+        deleteBtn.classList.add('disabled');
+      } else {
+        deleteBtn.onclick = () => showDeleteConfirmation(fileName);
+      }
+      
+      row.querySelector('td:last-child').appendChild(deleteBtn);
+    });
   });
 }
 
+  function showDeleteConfirmation(fileName) {
+    const modal = document.getElementById('deleteLogModal') || createDeleteModal();
+    document.getElementById('delete-log-filename').textContent = fileName;
+    document.getElementById('delete-log-filepath').value = fileName;
+    $('#deleteLogModal').modal('show');
+  }
 
-
-// Show delete confirmation modal
-function showDeleteConfirmation(fileName) {
-  const modal = document.getElementById('deleteLogModal') || createDeleteModal();
-  document.getElementById('delete-log-filename').textContent = fileName;
-  document.getElementById('delete-log-filepath').value = fileName;
-  $('#deleteLogModal').modal('show');
-}
-
-// Create delete confirmation modal if not exists
-function createDeleteModal() {
-  const modalHtml = `
+  function createDeleteModal() {
+    const modalHtml = `
     <div class="modal fade" id="deleteLogModal" tabindex="-1" role="dialog">
       <div class="modal-dialog" role="document">
         <div class="modal-content">
@@ -1309,75 +1119,302 @@ function createDeleteModal() {
       </div>
     </div>
   `;
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-  return document.getElementById('deleteLogModal');
-}
-
-// Initialize when log modal opens
-document.querySelector('button[data-target="#downloadOld"]').addEventListener('click', () => {
-  setTimeout(addDeleteButtonsToLogs, 500);
-});
-
-// Tab change handlers
-document.querySelectorAll('#logTabs a[data-toggle="tab"]').forEach(tab => {
-  tab.addEventListener('shown.bs.tab', addDeleteButtonsToLogs);
-});
-
-function addDeleteButtonsToLogs() {
- document.querySelectorAll('#large-files table tbody, #small-files table tbody').forEach(tableBody => {
-   const rows = Array.from(tableBody.querySelectorAll('tr'));
-   rows.forEach((row, index) => {
-     const downloadLink = row.querySelector('td:last-child a');
-     if (!downloadLink) return;
-     const fileName = downloadLink.getAttribute('href').split('/').pop();
-     const dateText = row.querySelector('td:first-child').textContent;
-     const deleteBtn = document.createElement('button');
-     deleteBtn.type = 'button';
-     deleteBtn.className = 'btn btn-danger ml-2';
-     deleteBtn.innerText = 'Delete';
-     const isNewestLog = rows.every(otherRow => {
-       const otherDateText = otherRow.querySelector('td:first-child').textContent;
-       return dateText >= otherDateText;
-     });
-     if (isNewestLog) {
-       deleteBtn.disabled = true;
-       deleteBtn.title = "Cannot delete the most recent log file";
-       deleteBtn.classList.add('disabled');
-     } else {
-       deleteBtn.onclick = () => showDeleteConfirmation(fileName);
-     }
-     row.querySelector('td:last-child').appendChild(deleteBtn);
-   });
- });
-}
-
-
-document.querySelector('#small-files-tab').addEventListener('shown.bs.tab', addDeleteSmallLogsButton);
-document.querySelector('button[data-target="#downloadOld"]').addEventListener('click', () => {
-  setTimeout(addDeleteSmallLogsButton, 500);
-});
-/**
- * Initialize log fetching
- */
-function startLogFetching() {
-  const logs = [
-    { type: 'bcMeter', elementId: 'logBcMeter' },
-    { type: 'ap_control_loop', elementId: 'logApControlLoop' },
-    { type: 'bcMeter_shared', elementId: 'logBcMeterShared' }
-  ];
-  
-  if (document.getElementById('logCompairFrostUpload')) {
-    logs.push({ type: 'compair_frost_upload', elementId: 'logCompairFrostUpload' });
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    return document.getElementById('deleteLogModal');
   }
-  
-  logs.forEach(log => {
-    fetchAndProcessLogFile(log.type, log.elementId);
-    // Set interval for periodic fetching (every 15 seconds)
-    setInterval(() => fetchAndProcessLogFile(log.type, log.elementId), 15000);
+
+  document.querySelector('button[data-target="#downloadOld"]').addEventListener('click', () => {
+    setTimeout(addDeleteButtonsToLogs, 500);
+  });
+
+  document.querySelectorAll('#logTabs a[data-toggle="tab"]').forEach(tab => {
+    tab.addEventListener('shown.bs.tab', addDeleteButtonsToLogs);
+  });
+
+  document.querySelector('#small-files-tab').addEventListener('shown.bs.tab', addDeleteButtonsToLogs);
+
+  document.querySelector('button[data-target="#downloadOld"]').addEventListener('click', () => {
+    setTimeout(addDeleteButtonsToLogs, 500);
+  });
+
+  function startLogFetching() {
+    const logs = [{
+      type: 'bcMeter',
+      elementId: 'logBcMeter'
+    }, {
+      type: 'ap_control_loop',
+      elementId: 'logApControlLoop'
+    }];
+
+   
+
+    logs.forEach(log => {
+      fetchAndProcessLogFile(log.type, log.elementId);
+      setInterval(() => fetchAndProcessLogFile(log.type, log.elementId), 5000);
+    });
+  }
+
+  $('#systemlogs').on('shown.bs.modal', startLogFetching);
+  checkUndervoltageStatus();
+  setInterval(checkUndervoltageStatus, 120000);
+
+  window.getLogDuration = getLogDuration;
+});
+
+function syncDeviceTime() {
+  const browserTime = new Date();
+  const browserTimestamp = Math.floor(browserTime.getTime() / 1000);
+  const formattedBrowserTime = browserTime.toLocaleString();
+  if (document.getElementById("datetime_local")) {
+    document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + formattedBrowserTime;
+  }
+  $.ajax({
+    url: "includes/get_device_time.php",
+    type: "get",
+    cache: false,
+    timeout: 3000,
+    success: function(result) {
+      const deviceTimestamp = parseInt(result.trim(), 10);
+      const deviceTime = new Date(deviceTimestamp * 1000);
+      const formattedDeviceTime = deviceTime.toLocaleString();
+      const timeDifference = Math.abs(browserTimestamp - deviceTimestamp);
+      updateTimeDisplays(formattedDeviceTime);
+      if (window.in_hotspot && timeDifference >= 10) {
+        console.log("Time difference detected:", timeDifference, "seconds. Synchronizing...");
+
+        if (document.getElementById("datetime_note")) {
+          document.getElementById("datetime_note").innerHTML = "Time difference detected. Synchronizing...";
+        }
+        performTimeSync(browserTimestamp, browserTime, deviceTime, timeDifference);
+      } else {
+        if (document.getElementById("datetime_note")) {
+          document.getElementById("datetime_note").innerHTML = "Device time is correct (difference is less than 10 seconds).";
+        }
+        console.log("Time is synced");
+      }
+      if (document.getElementById('hotspotwarning')) {
+        document.getElementById('hotspotwarning').classList.remove('alert-danger');
+        document.getElementById('hotspotwarning').classList.add('alert');
+      }
+    },
+    error: function(xhr, status, error) {
+      handleSyncError();
+    }
   });
 }
 
-$('#systemlogs').on('shown.bs.modal', startLogFetching);
-  checkUndervoltageStatus();
-  setInterval(checkUndervoltageStatus, 120000); // Check every 2 minutes
+function updateTimeDisplays(formattedDeviceTime) {
+  if (document.getElementById("datetime_device")) {
+    document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + formattedDeviceTime;
+  }
+
+  if (document.getElementById("devicetime")) {
+    document.getElementById("devicetime").innerHTML = "Time on bcMeter: " + formattedDeviceTime;
+  }
+}
+
+function handleSyncError() {
+  const deviceURL = (window.deviceName !== "" && window.deviceName !== undefined) ? "http://" + window.deviceName : "";
+  if (document.getElementById("datetime_device")) {
+    document.getElementById("datetime_device").innerHTML = "No connection to bcMeter<br /> Wait a minute to click <a href=\"" + deviceURL + "\">here </a> after WiFi Setup";
+  }
+  ["datetime_local", "set_time", "datetime_note", "devicetime"].forEach(id => {
+    if (document.getElementById(id)) {
+      document.getElementById(id).innerHTML = "";
+    }
+  });
+  if (document.getElementById('hotspotwarning')) {
+    document.getElementById('hotspotwarning').classList.remove('alert');
+    document.getElementById('hotspotwarning').classList.add('alert-danger');
+  }
+  if (window.in_hotspot) {
+    syncTimeManually();
+  }
+}
+
+function performTimeSync(browserTimestamp, browserTime, deviceTime, timeDifference) {
+  const formattedBrowserTime = browserTime.toLocaleString();
+  const formattedDeviceTime = deviceTime.toLocaleString();
+
+  $.ajax({
+    url: "includes/set_device_time.php",
+    type: "post",
+    data: {
+      timestamp: browserTimestamp,
+      show_modal: 1
+    },
+    success: function(response) {
+      if (document.getElementById("datetime_note")) {
+        document.getElementById("datetime_note").innerHTML = "Time successfully synchronized!";
+      }
+      if (document.getElementById("datetime_device")) {
+        document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + formattedBrowserTime;
+      }
+      showTimeSyncSuccessModal(formattedBrowserTime, formattedDeviceTime, timeDifference);
+    },
+    error: function() {
+      if (document.getElementById("datetime_note")) {
+        document.getElementById("datetime_note").innerHTML = "Failed to synchronize time.";
+      }
+    }
+  });
+}
+
+function quickSyncCheck() {
+  const browserTimestamp = Math.floor(new Date().getTime() / 1000);
+
+  $.ajax({
+    url: "includes/time_check.php",
+    type: "post",
+    data: {
+      browser_time: browserTimestamp
+    },
+    success: function(response) {
+      if (response.needs_sync) {
+        syncTimeManually();
+      }
+    },
+    error: function() {
+      syncTimeManually();
+    }
+  });
+}
+
+function syncTimeManually() {
+  const browserTime = new Date();
+  const browserTimestamp = Math.floor(browserTime.getTime() / 1000);
+  const formattedBrowserTime = browserTime.toLocaleString();
+
+  $.ajax({
+    url: "includes/set_device_time.php",
+    type: "post",
+    data: {
+      timestamp: browserTimestamp,
+      show_modal: localStorage.getItem('timeModalShown') ? 0 : 1
+    },
+    success: function(response) {
+      if (document.getElementById("datetime_note")) {
+        document.getElementById("datetime_note").innerHTML = "Time successfully synchronized!";
+      }
+
+      if (document.getElementById("datetime_device")) {
+        document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + formattedBrowserTime;
+      }
+      if (response.show_modal) {
+        showTimeSyncSuccessModal(formattedBrowserTime, "Unknown (unavailable in hotspot mode)", null);
+        localStorage.setItem('timeModalShown', '1');
+      }
+    },
+    error: function() {
+      if (document.getElementById("datetime_note")) {
+        document.getElementById("datetime_note").innerHTML = "Failed to synchronize time.";
+      }
+    }
+  });
+}
+
+function showTimeSyncSuccessModal(browserTime, deviceTime, timeDifference) {
+  if (localStorage.getItem('timeModalShown') === '1' && !sessionStorage.getItem('forceSyncModal')) {
+    return;
+  }
+  sessionStorage.setItem('forceSyncModal', '');
+  localStorage.setItem('timeModalShown', '1');
+  if (!document.getElementById('timeSyncModal')) {
+    const modalHTML = `
+    <div class="modal fade" id="timeSyncModal" tabindex="-1" role="dialog" aria-labelledby="timeSyncModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title" id="timeSyncModalLabel">Time Synchronization Successful</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="time-sync-details">
+                        <p><strong>Browser Time:</strong> <span id="browserTimeValue"></span></p>
+                        <p><strong>Device Time (before sync):</strong> <span id="deviceTimeValue"></span></p>
+                        <p id="timeDifferenceRow"><strong>Time Difference:</strong> <span id="timeDifferenceValue"></span></p>
+                        <p class="text-success font-weight-bold">Device time has been synchronized with your browser time.</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+  }
+  setTimeout(() => {
+    const browserTimeEl = document.getElementById('browserTimeValue');
+    const deviceTimeEl = document.getElementById('deviceTimeValue');
+    const timeDifferenceRow = document.getElementById('timeDifferenceRow');
+    const timeDifferenceEl = document.getElementById('timeDifferenceValue');
+
+    if (browserTimeEl) browserTimeEl.textContent = browserTime;
+    if (deviceTimeEl) deviceTimeEl.textContent = deviceTime;
+
+    if (timeDifferenceRow && timeDifferenceEl) {
+      if (timeDifference !== null) {
+        timeDifferenceEl.textContent = timeDifference + ' seconds';
+        timeDifferenceRow.style.display = 'block';
+      } else {
+        timeDifferenceRow.style.display = 'none';
+      }
+    }
+    $('#timeSyncModal').modal('show');
+  }, 50);
+}
+
+function showTimeAlert(difference) {
+  const minutes = Math.floor(difference / 60);
+  const timeMessage = minutes > 0 ?
+    `Device time is off by ${minutes} minutes and ${difference % 60} seconds.` :
+    `Device time is off by ${difference} seconds.`;
+
+  if (!document.getElementById('timeAlertModal')) {
+    const modalHTML = `
+        <div class="modal fade" id="timeAlertModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title">Time Difference Detected</h5>
+                        <button type="button" class="close" data-dismiss="modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p>${timeMessage}</p>
+                        <p>Inaccurate time may affect measurement timestamps and data logging.</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Ignore</button>
+                        <button type="button" class="btn btn-primary" onclick="syncTimeManually(); $('#timeAlertModal').modal('hide');">Sync Now</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+  } else {
+    document.querySelector('#timeAlertModal .modal-body p:first-child').textContent = timeMessage;
+  }
+
+  $('#timeAlertModal').modal('show');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $(document).on('click', '[data-toggle="modal"]', function(e) {
+    const trigger = $(this);
+    const parentModal = trigger.closest('.modal.show');
+
+    if (parentModal.length) {
+        e.preventDefault();
+        const targetModalId = trigger.data('target');
+        parentModal.one('hidden.bs.modal', () => $(targetModalId).modal('show'));
+        parentModal.modal('hide');
+    }
+});
+  setTimeout(syncDeviceTime, 2000);
+  setInterval(syncDeviceTime, 600000);
 });

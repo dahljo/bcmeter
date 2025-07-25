@@ -12,7 +12,7 @@ if (( $EUID != 0 )); then
     exit 1
 fi
 
-
+chown -R bcMeter:bcMeter $BASE_DIR
 
 export DEBIAN_FRONTEND=noninteractive
 APT_PACKAGES="\
@@ -42,22 +42,21 @@ APT_PACKAGES="\
     dhcpcd5"
 
 PYTHON_PACKAGES="\
-    wifi \
-    gpiozero \
     tabulate \
     adafruit-blinka \
     adafruit-circuitpython-sht4x \
     oled-text \
     requests \
     flask-cors \
-    pandas"
+    pandas \
+    spidev"
 
 
 BCMINSTALLLOG="$BASE_DIR/maintenance_logs/bcMeter_install.log"
 BCMINSTALLED=/tmp/bcmeter_installed
 UPDATING=/tmp/bcmeter_updating
 
-mkdir -p "$(dirname "$BCMINSTALLLOG")"wpa_passphrase
+mkdir -p "$(dirname "$BCMINSTALLLOG")"
 touch "$BCMINSTALLLOG"
 echo "$(date) installation/update log" >> "$BCMINSTALLLOG"
 
@@ -69,10 +68,10 @@ if [ "$1" == "revert" ]; then
     rm -f "$UPDATING"
     rm -rf "$BASE_DIR/logs"
     rm -rf "$BASE_DIR/maintenance_logs"
+    rm -f "/var/log/syslog*"
     mkdir "$BASE_DIR/logs/"
     mkdir "$BASE_DIR/maintenance_logs/"
     touch "$BASE_DIR/logs/log_current.csv"
-    touch "$BASE_DIR/maintenance_logs/compair_frost_upload.log"
     chmod -R 777 "$BASE_DIR/."
     exit
 fi
@@ -194,6 +193,7 @@ server {
     # Enable directory listing for /logs
     location /logs/ {
         autoindex on;
+        add_header Access-Control-Allow-Origin "*";
     }
 }
 EOL
@@ -460,6 +460,8 @@ raspi-config nonint do_boot_behaviour B2
 echo "Enabled autologin - you can disable this with sudo raspi-config anytime"
 raspi-config nonint do_i2c 0
 echo "Enabled i2c"
+sudo raspi-config nonint do_spi 0
+echo "Enabled SPI"
 raspi-config nonint do_hostname "bcMeter"
 raspi-config nonint do_net_names 0
 
@@ -596,7 +598,6 @@ systemctl daemon-reload
 systemctl unmask hostapd
 systemctl enable hostapd
 
-touch "$BASE_DIR/maintenance_logs/compair_frost_upload.log"
 
 mkdir -p "$BASE_DIR"/tmp
 [ ! -f "$BASE_DIR"/tmp/BCMETER_WEB_STATUS ] && {

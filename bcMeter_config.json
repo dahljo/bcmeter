@@ -12,7 +12,7 @@
         "parameter": "session"
     },
     "automatic_airflow_control": {
-        "value": true,
+        "value": false,
         "description": "Adjust airflow depending on loading automatically",
         "type": "boolean",
         "parameter": "session"
@@ -71,6 +71,12 @@
         "type": "number",
         "parameter": "device"
     },
+    "twelvevolt_duty": {
+        "value": 20,
+        "description": "dutycycle for 12V Pump",
+        "type": "number",
+        "parameter": "device"
+    },
     "reverse_dutycycle": {
         "value": false,
         "description": "Reverse pump duticycle; off for most generic without controller!",
@@ -93,25 +99,32 @@
         "value": false,
         "description": "Swap data channels if you see continous negative values or on Rev 2 bcMeters.",
         "type": "boolean",
-        "parameter": "administration"
+        "parameter": "hidden"
     },
-    "led_brightness": {
-        "value": 100,
-        "description": "IR LED Brightness",
+    "led_duty_cycle_370nm": {
+        "value": 255,
+        "description": "370nm UV LED Brightness",
         "type": "number",
-        "parameter": "administration"
+        "parameter": "hidden"
     },
-    "compair_upload": {
-        "value": false,
-        "description": "Upload Data to CompAIR. Needs coordinates.",
-        "type": "boolean",
-        "parameter": "compair"
+        "led_duty_cycle_520nm": {
+        "value": 255,
+        "description": "520nm Green LED Brightness",
+        "type": "number",
+        "parameter": "hidden"
     },
+        "led_duty_cycle_880nm": {
+        "value": 255,
+        "description": "880nm IR LED Brightness",
+        "type": "number",
+        "parameter": "hidden"
+    },
+
     "get_location": {
         "value": false,
         "description": "Get rough location by IP automatically each time the log starts?",
         "type": "boolean",
-        "parameter": "compair"
+        "parameter": "session"
     },
     "location": {
         "value": [
@@ -120,7 +133,7 @@
         ],
         "description": "Location of the bcMeter. Keep syntax exactly like that [lat,lon]",
         "type": "array",
-        "parameter": "compair"
+        "parameter": "session"
     },
     "use_display": {
         "value": false,
@@ -174,12 +187,18 @@
         "value": "email_service_password",
         "description": "Contact jd@bcmeter.org for the mail sending service password - not public for spam protection",
         "type": "string",
-        "parameter": "device"
+        "parameter": "email"
     },
     "TWELVEVOLT_ENABLE": {
     "value": false,
     "description": "Enable 12V power output on the device",
     "type": "boolean",
     "parameter": "device"
+},
+    "spi_vref": {
+    "value": 4.096,
+    "description": "Reference Voltage for SPI ADC",
+    "type": "float",
+    "parameter": "hidden"
 }
 }

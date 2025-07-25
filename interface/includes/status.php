@@ -237,28 +237,75 @@ shell_exec('sudo systemctl daemon-reload');
     $status = $_GET['status'] ?? '';
     
     switch($status) {
-        case 'change_hostname':
-            if (isset($_GET['new_hostname'])) {
-                $new_hostname = $_GET['new_hostname'];
-                $setHostname = 'sudo raspi-config nonint do_hostname '. $new_hostname;
-                $hostname = shell_exec($setHostname);
-                echo "Changing hostname to $new_hostname on next reboot.";
-            }
-            echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
-            break;
+case 'change_hostname':
+        if (isset($_GET['new_hostname'])) {
+            $new_hostname = $_GET['new_hostname'];
+            $success = true;
+            $errors = [];
             
+            // Validate hostname format
+            if (!preg_match('/^[a-zA-Z0-9-]{1,63}$/', $new_hostname)) {
+                die("Invalid hostname format");
+            }
+            
+            // Change hostname
+            $setHostname = 'sudo raspi-config nonint do_hostname '. escapeshellarg($new_hostname);
+            exec($setHostname, $output, $returnCode);
+            
+            if ($returnCode !== 0) {
+                $success = false;
+                $errors[] = "Failed to set hostname (exit code: $returnCode)";
+            }
+            
+            // Update hostapd config using sudo with a single command
+            $hostapd_conf = '/etc/hostapd/hostapd.conf';
+            
+            // Use sed to directly modify the file with sudo
+            $sedCommand = sprintf(
+                "sudo sed -i.backup 's/^ssid=.*/ssid=%s/' %s",
+                escapeshellarg($new_hostname),
+                escapeshellarg($hostapd_conf)
+            );
+            
+            exec($sedCommand, $output, $sedReturn);
+            
+            if ($sedReturn === 0) {
+                // Verify the change
+                $grepCommand = sprintf(
+                    "sudo grep -q '^ssid=%s$' %s",
+                    escapeshellarg($new_hostname),
+                    escapeshellarg($hostapd_conf)
+                );
+                
+                exec($grepCommand, $output, $grepReturn);
+                
+                if ($grepReturn === 0) {
+                    echo "<div class='success'>✓ Hostname will change to '$new_hostname' and WiFi SSID will be updated on next reboot.</div>";
+                    error_log("Successfully updated hostname and SSID to $new_hostname");
+                } else {
+                    $errors[] = "WiFi SSID update verification failed";
+                    // Restore backup
+                    exec("sudo mv ${hostapd_conf}.backup $hostapd_conf");
+                }
+            } else {
+                $errors[] = "Failed to update WiFi SSID in hostapd config";
+            }
+            
+            // Display any errors
+            if (!empty($errors)) {
+                echo "<div class='error'>× Some operations failed:</div>";
+                echo "<ul>";
+                foreach ($errors as $error) {
+                    echo "<li>$error</li>";
+                    error_log("Hostname change error: $error");
+                }
+                echo "</ul>";
+            }
+        }
+        echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 5000);</script>";
+        break;
         case 'debug':
             echo "Debug mode activated";
-            break;
-            
-        case 'timestamp':
-            $timestamp = $_GET['timestamp'];
-            $DEVICETIME = shell_exec('date');
-            echo "<pre style='text-align:center;'>Old time set on device: $DEVICETIME </pre>";
-            shell_exec("sudo date -s @'" . $timestamp . "'");
-            $DEVICETIME = shell_exec('date');
-            echo "<pre style='text-align:center;'>New time set on device: $DEVICETIME </pre>";
-            echo "<script>setTimeout(function(){window.location.replace('/interface/index.php');}, 4000);</script>";
             break;
             
         case 'deleteOld':

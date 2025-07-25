@@ -104,32 +104,56 @@ def run_command(command):
 		logger.error(f"Exception running command '{command}': {e}")
 		return None
 
+def get_network_name():
+	"""Gets the active network SSID using platform-specific commands."""
+	try:
+		system = platform.system()
+		if system == "Windows":
+			cmd = "netsh wlan show interfaces"
+			output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
+			for line in output.split('\n'):
+				if "SSID" in line and ":" in line:
+					return line.split(":")[1].strip()
+		elif system == "Darwin": # macOS
+			cmd = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I"
+			output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
+			for line in output.split('\n'):
+				if "SSID" in line and ":" in line:
+					return line.split(":")[1].strip()
+		elif system == "Linux":
+			cmd = "iwgetid -r"
+			output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
+			return output.strip()
+	except (subprocess.CalledProcessError, FileNotFoundError):
+		return 'Could not determine'
+	return 'Could not determine'
+
 def get_basic_info():
 	"""Gather useful system information using only standard library."""
 	try:
-		# Get hostname and IP
 		hostname = socket.gethostname()
 		ip = socket.gethostbyname(hostname)
-		
-		# Get disk usage
+
 		total, used, free = shutil.disk_usage("/")
 		disk_total = f"{total // (2**30)} GB"
 		disk_free = f"{free // (2**30)} GB"
 		disk_used_percent = f"{(used / total) * 100:.1f}%"
-		
-		# Get directory size
-		log_dir = base_dir + '/logs/'
+
+		# Create logs dir if it doesn't exist to prevent errors
+		log_dir = os.path.join(base_dir, 'logs/')
+		os.makedirs(log_dir, exist_ok=True)
 		log_size = sum(
-			os.path.getsize(os.path.join(log_dir, f)) 
-			for f in os.listdir(log_dir) 
+			os.path.getsize(os.path.join(log_dir, f))
+			for f in os.listdir(log_dir)
 			if os.path.isfile(os.path.join(log_dir, f))
 		)
 		log_size_mb = f"{log_size / (2**20):.1f} MB"
-		
+
 		info = {
 			'hostname': hostname,
 			'ip_address': ip,
-			'platform': platform.platform(),  # More detailed than platform.system()
+			'network_name': get_network_name(), # Added network name
+			'platform': platform.platform(),
 			'python_version': platform.python_version(),
 			'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
 			'disk_total': disk_total,
@@ -137,20 +161,18 @@ def get_basic_info():
 			'disk_used': disk_used_percent,
 			'log_dir_size': log_size_mb
 		}
-		
-		# Try to get additional network info if available
+
 		try:
 			with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-				s.connect(("8.8.8.8", 80))  # Doesn't actually send data
+				s.connect(("8.8.8.8", 80))
 				external_ip = s.getsockname()[0]
 				info['external_ip'] = external_ip
-		except:
+		except OSError:
 			info['external_ip'] = 'Could not determine'
 			
 		return info
 	except Exception as e:
 		return {'error': str(e)}
-
 
 
 def convert_config_to_json():
@@ -321,10 +343,13 @@ def send_email(payload):
 		body = "bcMeter Device Information:\n\n"
 		try:
 			info = get_basic_info()
-			body = "bcMeter Device Information:\n\n"
-			body += "Network:\n"
+
+			if 'error' in info:
+				raise Exception(info['error'])
+
+			body += f"Network: {info['network_name']}\n"
 			body += f"- Hostname: {info['hostname']}\n"
-			body += f"- Access interface in LAN by: http://{info['external_ip']}\n\n"
+			body += f"- Access interface in LAN by: http://{info['ip_address']}\n\n"
 			
 			body += "System:\n"
 			body += f"- Platform: {info['platform']}\n"
@@ -334,12 +359,13 @@ def send_email(payload):
 			body += "Storage:\n"
 			body += f"- Total Disk Space: {info['disk_total']}\n"
 			body += f"- Free Disk Space: {info['disk_free']}\n"
+			if info['disk_free'] == "0 GB":
+				body += f"-- Use the UPDATE function to expand partition! \n"
 			body += f"- Disk Usage: {info['disk_used']}\n"
 			body += f"- Log Directory Size: {info['log_dir_size']}\n"
 		except Exception as e:
-			logger.error(f"Failed to gather system information: {str(e)}")
-			body += {e}
-			#return
+			# logger.error(f"Failed to gather system information: {str(e)}")
+			body += f"Failed to gather system information: {e}"
 	else:
 		body = template["body"]
 
@@ -381,7 +407,8 @@ def send_email(payload):
 
 
 airflow_type = config.get('af_sensor_type', 1)
-print(f"Using Airflow sensor type {airflow_type}")
+if config.get('airflow_sensor'):
+	print(f"Using Airflow sensor type {airflow_type}")
 
 def save_config_to_json(key, value=None, description=None, parameter_type=None, parameter_category=None):
 	"""Saves or updates a configuration parameter in the JSON file."""

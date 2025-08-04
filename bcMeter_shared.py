@@ -128,18 +128,21 @@ def get_network_name():
 		return 'Could not determine'
 	return 'Could not determine'
 
-def get_basic_info():
+def get_basic_info(base_dir='.'):
 	"""Gather useful system information using only standard library."""
 	try:
 		hostname = socket.gethostname()
-		ip = socket.gethostbyname(hostname)
+		
+		lan_ip = '127.0.0.1'
+		try:
+			with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+				s.connect(("8.8.8.8", 80))
+				lan_ip = s.getsockname()[0]
+		except OSError:
+			pass
 
 		total, used, free = shutil.disk_usage("/")
-		disk_total = f"{total // (2**30)} GB"
-		disk_free = f"{free // (2**30)} GB"
-		disk_used_percent = f"{(used / total) * 100:.1f}%"
-
-		# Create logs dir if it doesn't exist to prevent errors
+		
 		log_dir = os.path.join(base_dir, 'logs/')
 		os.makedirs(log_dir, exist_ok=True)
 		log_size = sum(
@@ -147,33 +150,21 @@ def get_basic_info():
 			for f in os.listdir(log_dir)
 			if os.path.isfile(os.path.join(log_dir, f))
 		)
-		log_size_mb = f"{log_size / (2**20):.1f} MB"
 
 		info = {
 			'hostname': hostname,
-			'ip_address': ip,
-			'network_name': get_network_name(), # Added network name
+			'ip_address': lan_ip,
 			'platform': platform.platform(),
 			'python_version': platform.python_version(),
 			'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-			'disk_total': disk_total,
-			'disk_free': disk_free,
-			'disk_used': disk_used_percent,
-			'log_dir_size': log_size_mb
+			'disk_total': f"{total // (2**30)} GB",
+			'disk_free': f"{free // (2**30)} GB",
+			'disk_used': f"{(used / total) * 100:.1f}%",
+			'log_dir_size': f"{log_size / (2**20):.1f} MB"
 		}
-
-		try:
-			with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-				s.connect(("8.8.8.8", 80))
-				external_ip = s.getsockname()[0]
-				info['external_ip'] = external_ip
-		except OSError:
-			info['external_ip'] = 'Could not determine'
-			
 		return info
 	except Exception as e:
 		return {'error': str(e)}
-
 
 def convert_config_to_json():
 	config_variables = {}

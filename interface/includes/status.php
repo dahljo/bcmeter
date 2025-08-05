@@ -11,7 +11,7 @@ session_start();
 header('X-Accel-Buffering: no');
 
 // Base directory for bcMeter files
-$baseDir = file_exists('/home/bcMeter') ? '/home/bcMeter' : '/home/pi';
+$baseDir = file_exists('/home/bcmeter') ? '/home/bcmeter' : (file_exists('/home/bcMeter') ? '/home/bcMeter' : '/home/pi');
 
 /**
  * Check for bcMeter updates

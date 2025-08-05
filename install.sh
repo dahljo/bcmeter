@@ -3,7 +3,9 @@ INSTALLER_VERSION="0.90 2025-03-21"
 
 # Check if /home/bcMeter exists, otherwise default to /home/pi
 BASE_DIR="/home/pi"
-if [ -d "/home/bcMeter" ]; then
+if [ -d "/home/bcmeter" ]; then
+    BASE_DIR="/home/bcmeter"
+elif [ -d "/home/bcMeter" ]; then
     BASE_DIR="/home/bcMeter"
 fi
 
@@ -12,7 +14,8 @@ if (( $EUID != 0 )); then
     exit 1
 fi
 
-chown -R bcMeter:bcMeter $BASE_DIR
+APP_USER=$(basename "$BASE_DIR")
+chown -R "$APP_USER:$APP_USER" "$BASE_DIR"
 
 export DEBIAN_FRONTEND=noninteractive
 APT_PACKAGES="\

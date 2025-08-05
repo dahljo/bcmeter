@@ -39,8 +39,9 @@ from bcMeter_shared import (
 	apply_dynamic_airflow
 )
 
-bcMeter_version = "1.0.7 2025-07-18"
-base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+bcMeter_version = "1.0.8 2025-08-05"
+base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+
 logger = setup_logging('bcMeter')
 debug = True if (len(sys.argv) > 1) and (sys.argv[1] == "debug") else False
 if debug:
@@ -1180,7 +1181,7 @@ def bcmeter_main(stop_event):
 		
 		led_brightness_legacy = int(config.get('led_brightness', False))
 
-		led_duty_cycle_880nm = int(config.get('led_duty_cycle_880nm', led_brightness_default)) if not led_brightness_legacy else led_brightness_legacy
+		led_duty_cycle_880nm = int(config.get('led_duty_cycle_880nm', led_brightness_legacy)) if not led_brightness_legacy else led_brightness_legacy
 		led_duty_cycle_settings = {
 			'880nm': led_duty_cycle_880nm,
 			'520nm': int(config.get('led_duty_cycle_520nm', led_duty_cycle_880nm)),

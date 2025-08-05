@@ -6,7 +6,7 @@ from flask_cors import CORS
 import os
 import json
 
-base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 app = Flask(__name__)
 # Enable CORS for all domains on all routes

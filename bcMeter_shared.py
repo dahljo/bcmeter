@@ -14,7 +14,8 @@ import shutil
 bcMeter_shared_version = "0.1 2025-04-04"
 
 i2c = busio.I2C(SCL, SDA)
-base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+
 hostname = socket.gethostname()
 
 CONNECTION_PRIMARY = {"host": "www.google.com", "port": 80}

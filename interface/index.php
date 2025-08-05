@@ -41,7 +41,8 @@ function getMacAddress($interface = 'wlan0') {
 
 $macAddr = getMacAddress();
 
-$baseDir = file_exists('/home/bcMeter') ? '/home/bcMeter' : '/home/pi';
+$baseDir = file_exists('/home/bcmeter') ? '/home/bcmeter' : (file_exists('/home/bcMeter') ? '/home/bcMeter' : '/home/pi');
+
 
 function getBcMeterConfigValue($bcMeter_variable, $default = null) {
     global $baseDir;

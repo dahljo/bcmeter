@@ -201,4 +201,14 @@
     "type": "float",
     "parameter": "hidden"
 }
+,
+    "num_channels": {
+    "value": 1,
+    "description": "Modify depending on bcMeter version",
+    "type": "integer",
+    "parameter": "hidden"
+}
+
+
+
 }

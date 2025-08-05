@@ -39,7 +39,7 @@ logger = setup_logging('ap_control_loop')
 logger.debug(f"bcMeter Network Handler started for {devicename} (v{ctrl_lp_ver})")
 logger.debug(get_pi_revision())
 
-base_dir = '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
+base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 class ServiceManager:
 	def __init__(self):

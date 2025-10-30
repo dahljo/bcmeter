@@ -259,6 +259,8 @@ def setup_access_point():
 				return False
 		
 		device_name = socket.gethostname()
+		with open('/etc/hostapd/hostapd.conf', 'r+') as f: 
+			f.write(re.sub(r'^ssid=.*$', f'ssid={socket.gethostname()}', f.read(), flags=re.MULTILINE))
 		prepare_dhcpcd_conf(1)
 		run_command("sudo systemctl daemon-reload")
 		time.sleep(2)
@@ -989,7 +991,7 @@ def ap_control_loop():
 					else:
 						if (manage_bcmeter_status(action='get', parameter='filter_status') > 3) and calibration_time is not None and not is_ebcMeter and current_status not in (5,6):
 							print("Calibration time ", calibration_time)
-							run_bcMeter_service("Starting with status ", current_status)
+							run_bcMeter_service(f"Starting with status {current_status}")
 							current_status = 2
 						else:
 							current_status = 0

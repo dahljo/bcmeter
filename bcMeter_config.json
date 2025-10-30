@@ -117,7 +117,7 @@
         "value": 255,
         "description": "880nm IR LED Brightness",
         "type": "number",
-        "parameter": "hidden"
+        "parameter": "device"
     },
 
     "get_location": {

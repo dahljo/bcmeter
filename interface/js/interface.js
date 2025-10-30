@@ -276,6 +276,57 @@ function setupModalEvents() {
         updateStatus(-1, "Device", null, null, null, false);
         window.in_hotspot = false;
       });
+  
+
+      fetch('../logs/log_current.csv?t=' + new Date().getTime()) 
+          .then(response => {
+              if (!response.ok) throw new Error('Network response was not ok');
+              return response.text();
+          })
+          .then(text => {
+              const lines = text.trim().split('\n');
+              if (lines.length < 3) throw new Error('Log file is empty or has no data'); // 1 header, 1 blank, 1 data
+              
+              // Find the header line, skipping blank lines
+              let headerLine = '';
+              for (let i = 0; i < lines.length; i++) {
+                  if (lines[i].trim() !== '') {
+                      headerLine = lines[i];
+                      break;
+                  }
+              }
+              if (headerLine === '') throw new Error('No header line found');
+
+              const headers = headerLine.split(';').map(h => h.trim());
+              const lastLine = lines[lines.length - 1].split(';');
+              
+              // Use the correct 880nm column names from bcMeter.py
+              const sensorIndex = headers.indexOf('bcmSen_880nm');
+              const refIndex = headers.indexOf('bcmRef_880nm');
+              
+              if (sensorIndex === -1 || refIndex === -1) {
+                  console.error('Headers found:', headers);
+                  throw new Error('Columns "bcmSen_880nm" or "bcmRef_880nm" not found');
+              }
+              
+              const sensorVal = parseFloat(lastLine[sensorIndex]);
+              const refVal = parseFloat(lastLine[refIndex]);
+              
+              if (isNaN(sensorVal) || isNaN(refVal) || refVal === 0) {
+                  console.error('Invalid data:', lastLine);
+                  throw new Error('Invalid sensor/reference data');
+              }
+              const loading = 100-Math.min(100, (sensorVal / refVal) * 100);
+              $('#filterStatusValue').text(loading.toFixed(1) + ' %');
+          })
+          .catch(error => {
+              console.error('Error fetching filter status:', error);
+              $('#filterStatusValue').text('Not enough data');
+          });
+
+
+
+
   }
 
 function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {

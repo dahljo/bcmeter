@@ -106,28 +106,13 @@ def run_command(command):
 		return None
 
 def get_network_name():
-	"""Gets the active network SSID using platform-specific commands."""
+	"""Gets the active network SSID."""
 	try:
-		system = platform.system()
-		if system == "Windows":
-			cmd = "netsh wlan show interfaces"
-			output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
-			for line in output.split('\n'):
-				if "SSID" in line and ":" in line:
-					return line.split(":")[1].strip()
-		elif system == "Darwin": # macOS
-			cmd = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I"
-			output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
-			for line in output.split('\n'):
-				if "SSID" in line and ":" in line:
-					return line.split(":")[1].strip()
-		elif system == "Linux":
-			cmd = "iwgetid -r"
-			output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
-			return output.strip()
+		cmd = "iwgetid -r"
+		ssid = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
+		return ssid if ssid else "Not connected"
 	except (subprocess.CalledProcessError, FileNotFoundError):
-		return 'Could not determine'
-	return 'Could not determine'
+		return "Could not determine"
 
 def get_basic_info(base_dir='.'):
 	"""Gather useful system information using only standard library."""
@@ -335,6 +320,7 @@ def send_email(payload):
 		body = "bcMeter Device Information:\n\n"
 		try:
 			info = get_basic_info()
+			info['network_name'] = get_network_name()
 
 			if 'error' in info:
 				raise Exception(info['error'])

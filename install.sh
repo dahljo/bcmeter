@@ -1,5 +1,5 @@
 #!/bin/bash
-INSTALLER_VERSION="0.90 2025-03-21"
+INSTALLER_VERSION="0.90 2025-11-02"
 
 # Check if /home/bcMeter exists, otherwise default to /home/pi
 BASE_DIR="/home/pi"
@@ -52,7 +52,9 @@ PYTHON_PACKAGES="\
     requests \
     flask-cors \
     pandas \
-    spidev"
+    spidev \
+    flask \
+    smbus2"
 
 
 BCMINSTALLLOG="$BASE_DIR/maintenance_logs/bcMeter_install.log"
@@ -96,12 +98,48 @@ systemctl enable rsyslog
 systemctl start rsyslog
 
 echo "Installing/updating python3 packages"
+python3 -m ensurepip --upgrade
+pip3 install $PYTHON_PACKAGES --break-system-packages --root-user-action=ignore
 
-pip3 install --upgrade pip $(pip3 --version | awk '{print $2}' | awk -F. '{
-    if ($1 > 22 || ($1 == 22 && $2 >= 3)) print "--break-system-packages"
-}') && pip3 install $PYTHON_PACKAGES $(pip3 --version | awk '{print $2}' | awk -F. '{
-    if ($1 > 22 || ($1 == 22 && $2 >= 3)) print "--break-system-packages"
-}')
+
+echo "Checking for pigpiod installation..." #necessary as of november 2025 as the pigpiod is currently not available in trixie repo
+
+if ! command -v pigpiod >/dev/null 2>&1; then
+    echo "pigpiod not found on this system."
+    echo "This daemon is required for GPIO access by bcMeter."
+    read -p "Install pigpiod manually now? (y/n): " yn
+    yn=${yn:-y}
+    case $yn in
+        [Yy]* )
+            echo "Installing pigpiod..."
+            apt update
+            apt install -y pigpio || {
+                echo "pigpio package not available via apt on this system."
+                echo "Attempting to build from source..."
+                apt install -y build-essential git
+                cd /tmp
+                git clone https://github.com/joan2937/pigpio.git
+                cd pigpio
+                make && make install
+                cd -
+                rm -rf /tmp/pigpio
+            }
+            systemctl enable pigpiod 2>/dev/null || true
+            systemctl start pigpiod 2>/dev/null || true
+            echo "pigpiod installed and started; ignore errors above"
+            ;;
+        [Nn]* )
+            echo "Skipping pigpiod installation. Note: GPIO functionality will not work until pigpiod is installed and started."
+            ;;
+        * )
+            echo "Invalid input. Skipping pigpiod installation."
+            ;;
+    esac
+else
+    echo "pigpiod already installed."
+fi
+
+
 
 
 if ! grep -q "PIGPIO_ADDR=soft" /etc/environment; then
@@ -185,7 +223,7 @@ server {
     # PHP handling
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_pass unix:/run/php/php8.4-fpm.sock;
     }
 
     # Deny access to hidden files
@@ -251,6 +289,28 @@ fi
 
 
 
+clone_repo() {
+    echo "Fetching latest bcMeter repository..."
+
+    git clone https://github.com/bcmeter/bcmeter.git "$BASE_DIR/bcmeter_tmp" || { echo "Git clone failed"; exit 1; }
+
+    [ -d "$BASE_DIR/bcmeter" ] && rm -rf "$BASE_DIR/bcmeter"
+    [ -d "$BASE_DIR/interface" ] && rm -rf "$BASE_DIR/interface"
+
+    if [ -d "$BASE_DIR/bcmeter_tmp" ]; then
+        rsync -a "$BASE_DIR/bcmeter_tmp/" "$BASE_DIR/"
+        rm -rf "$BASE_DIR/bcmeter_tmp"
+        [ -d "$BASE_DIR/gerbers" ] && rm -rf "$BASE_DIR/gerbers"
+        [ -d "$BASE_DIR/stl" ] && rm -rf "$BASE_DIR/stl"
+        echo "Repository updated successfully."
+    else
+        echo "Temporary clone directory missing. Aborting."
+        exit 1
+    fi
+}
+
+
+
 
 #updating
 if [ "$1" == "update" ]; then
@@ -309,40 +369,18 @@ if [ "$1" == "update" ]; then
         echo "Running update"
         echo "Backing up old Parameters and WiFi"
         cp "$BASE_DIR/bcMeter_config.json" "$BASE_DIR/bcMeter_config.orig"
-        cp "$BASE_DIR/bcMeter_wifi.json" "$base_dir/bcMeter_wifi.json.orig"
-        
-        echo "Updating from GitHub"
-        if [ -d "$BASE_DIR/bcmeter" ]; then
-            rm -rf "$BASE_DIR/bcmeter"
-        fi
-        if [ -d "$BASE_DIR/interface" ]; then
-            rm -rf "$BASE_DIR/interface"
-        fi       
+        cp "$BASE_DIR/bcMeter_wifi.json" "$BASE_DIR/bcMeter_wifi.json.orig"
 
-        git clone https://github.com/bcmeter/bcmeter.git "$BASE_DIR/bcmeter"
-        
-        # Move cloned files to the base directory
-        if [ -d "$BASE_DIR/bcmeter" ]; then
-            mv "$BASE_DIR/bcmeter/"* "$BASE_DIR/"
-        else
-            exit 1
-        fi        
-        # Clean up unnecessary folders
-        if [ -d "$BASE_DIR/gerbers" ]; then
-            rm -rf "$BASE_DIR/gerbers"
-        fi
-        if [ -d "$BASE_DIR/stl" ]; then
-            rm -rf "$BASE_DIR/stl"
-        fi
+        clone_repo
 
-        
+
         echo "Restoring Parameters"
         mv "$BASE_DIR/bcMeter_config.orig" "$BASE_DIR/bcMeter_config.json"
         mv "$BASE_DIR/bcMeter_wifi.json.orig" "$BASE_DIR/bcMeter_wifi.json"
-        
     else
         echo "Most recent version installed"
     fi
+
 
     if [ -f "$UPDATING" ]; then
         rm "$UPDATING"
@@ -443,7 +481,7 @@ if [ "$1" != "update" ]; then
 
 
 GITCLONE=0
-read -p "Clone from git (y) or already downloaded (n) (y/n): " yn
+read -p "Clone from git (y) or use already manually downloaded and more recent repository (n) (y/n): " yn
 yn=${yn:-y}  # If no input is provided, set 'yn' to 'y'
 
 case $yn in
@@ -453,8 +491,12 @@ case $yn in
 esac
 
 if [ "$GITCLONE" -eq 1 ]; then
-    git clone https://github.com/bcmeter/bcmeter.git "$BASE_DIR/bcmeter" && mv "$BASE_DIR/bcmeter/*" "$BASE_DIR/" && rm -rf "$BASE_DIR/gerbers/" "$BASE_DIR/stl/"
+
+    clone_repo
+
 fi
+
+
 mkdir "$BASE_DIR/logs"
 touch "$BASE_DIR/logs/log_current.csv"
 
@@ -489,27 +531,23 @@ echo "If you get a 502 bad gateway error in the browser when accessing the inter
 
 echo "Configuration complete."
 
-
 rm -rf "$BASE_DIR/bcmeter"
 
 touch "$BCMINSTALLED" 
 
 fi
 
-
-
 configure_network_interfaces() {
     NETWORK_CONF="/etc/network/interfaces.d/wlan0_wifi"
-    
-    # Check if the content already exists in the file
-    if ! grep -q "^auto wlan0" "$NETWORK_CONF"; then
-        # Write the configuration if not already present
+    mkdir -p "$(dirname "$NETWORK_CONF")"
+    if ! grep -q "^auto wlan0" "$NETWORK_CONF" 2>/dev/null; then
         tee "$NETWORK_CONF" <<EOF > /dev/null
 auto wlan0
 iface wlan0 inet dhcp
 EOF
     fi
 }
+
 
 configure_network_interfaces
 
@@ -554,7 +592,7 @@ fi
 
 configure_dnsmasq
 
-mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.orig
+[ -f /etc/hostapd/hostapd.conf ] && mv /etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf.orig
 tee -a /etc/hostapd/hostapd.conf <<EOF > /dev/null
 interface=wlan0
 driver=nl80211
@@ -572,6 +610,7 @@ wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 EOF
 
+
 #sed -i '/#DAEMON_CONF/c\DAEMON_CONF="/etc/hostapd/hostapd.conf"' /etc/default/hostapd
 
 
@@ -586,11 +625,6 @@ fi
 if ! grep -q 'net.ipv6.conf.all.disable_ipv6=1' /etc/sysctl.conf; then
     echo "net.ipv6.conf.all.disable_ipv6=1" | tee -a /etc/sysctl.conf
 fi
-
-
-
-
-
 
 
 rm /etc/wpa_supplicant/wpa_supplicant.conf
@@ -619,20 +653,25 @@ if ! systemctl is-active --quiet bcMeter_ap_control_loop; then
 fi
 EOF
 
-# Path to .bashrc
-BASHRC="$BASE_DIR/.bashrc"
+BASHRC="${BASE_DIR}/.bashrc"
 
-# Check if the content is already in .bashrc
 if grep -q "bcMeter_ap_control_loop" "$BASHRC"; then
     echo "Service check is already present in .bashrc"
 else
-    # Add the content to .bashrc
     echo "$SERVICE_CHECK" >> "$BASHRC"
     echo "Service check has been added to .bashrc"
     echo "Please run 'source ~/.bashrc' to apply the changes"
 fi
 
-
+if ! grep -q "auto_expand_rootfs" "$BASHRC"; then
+    cat >> "$BASHRC" <<'EOF'
+if [ "$(df / | awk 'NR==2{print int($2)}')" -lt "$(lsblk -bno SIZE / | awk '{print int($1/1024)}')" ]; then
+    echo "Expanding root filesystem..."
+    sudo raspi-config nonint do_expand_rootfs >/dev/null 2>&1
+    echo "Expansion scheduled. It will take effect after reboot."
+fi
+EOF
+fi
 
 
 chmod -R 777 "$BASE_DIR"/.

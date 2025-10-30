@@ -376,6 +376,7 @@ echo "<script>
                     <input type="submit" id="bcMeter_stop" name="bcMeter_stop" value="Stop Logging" class="btn btn-warning" />
                  </form>
                  <button type="button" id="saveGraph" class="btn btn-info">Download Current View</button>
+                <p>Filter loading: <span id="filterStatusValue"></span></p>
             </div>
         </div>
     </div>
@@ -396,7 +397,6 @@ echo "<script>
                         <p class="mb-1"><strong>Device ID:</strong> <?php echo 'bcMeter_0x' . $macAddr; ?></p>
                         <p class="mb-1"><strong>Software Version:</strong> <?php echo $VERSION; ?></p>
                         <div id="calibrationTime" class="mb-1"></div>
-                        <button type="button" class="btn btn-sm btn-info" data-toggle="modal" data-target="#filterStatusModal" id="report-button">Check Filter Status</button>
                     </div>
                 </div>
 
@@ -444,19 +444,7 @@ echo "<script>
 
 
 
-    <div class="modal fade" id="filterStatusModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header"><h5 class="modal-title">Filter Status</h5><button type="button" class="close" data-dismiss="modal"><span>&times;</span></button></div>
-                <div class="modal-body">
-                    <p>Filter loading: <span id="filterStatusValue"></span>%</p>
-                    <p>5 colors are possible: Green, red, orange, grey and black. Red means: be prepared to change. <br /> When grey, it should be changed. <br />Data will still be gathered. When black, the paper cannot load any more black carbon.</p>
-                    You may calibrate the device with fresh filter paper to get the most reliable results.
-                </div>
-                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button></div>
-            </div>
-        </div>
-    </div>
+
 
     <div class="modal fade" id="downloadOld" tabindex="-1" role="dialog">
         <div class="modal-dialog modal-lg" role="document">
@@ -772,6 +760,8 @@ echo "<script>
                     }
                 });
             });
+
+
         });
     </script>
 

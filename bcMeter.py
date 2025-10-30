@@ -39,7 +39,7 @@ from bcMeter_shared import (
 	apply_dynamic_airflow
 )
 
-bcMeter_version = "1.0.8 2025-08-05"
+bcMeter_version = "1.0.9 2025-10-30"
 base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 logger = setup_logging('bcMeter')
@@ -573,7 +573,9 @@ def calibrate_sens_ref():
 	except FileNotFoundError:
 		config_data = {}
 
-	led_duty_cycle_880nm = int(config.get('led_duty_cycle_880nm', 100))
+	led_brightness_legacy = int(config.get('led_brightness', False))
+	
+	led_duty_cycle_880nm = int(config.get('led_duty_cycle_880nm', led_brightness_legacy)) if not led_brightness_legacy else led_brightness_legacy
 
 	if use_spi:
 		active_wavelengths = WAVELENGTH_ORDER[:NUM_CHANNELS]
@@ -633,6 +635,7 @@ def calibrate_sens_ref():
 
 	calibration_time = datetime.now().strftime("%y%m%d_%H%M%S")
 	manage_bcmeter_status(action='set', calibration_time=calibration_time)
+	manage_bcmeter_status(action='set', filter_status=5)
 	print(f"Set calibration time to {calibration_time}")
 
 	with open("bcMeter_config.json", "w") as f:
@@ -1147,7 +1150,7 @@ def bcmeter_main(stop_event):
 
 	now = datetime.now().strftime("%H:%M:%S")
 	logFileName = f"{today}_{now.replace(':','')}.csv"
-
+	last_filter_mail_time = 0
 	active_wavelengths = WAVELENGTH_ORDER[:1] if is_ebcMeter or NUM_CHANNELS == 1 else WAVELENGTH_ORDER[:NUM_CHANNELS]
 	if not use_spi:
 		active_wavelengths = WAVELENGTH_ORDER[:1]
@@ -1180,8 +1183,9 @@ def bcmeter_main(stop_event):
 		ref_correction_default = float(str(config.get('ref_correction', 1)).replace(',', '.'))
 		
 		led_brightness_legacy = int(config.get('led_brightness', False))
-
+		print(f"LED brightness: {led_brightness_legacy} ")
 		led_duty_cycle_880nm = int(config.get('led_duty_cycle_880nm', led_brightness_legacy)) if not led_brightness_legacy else led_brightness_legacy
+		print(f"LED 880 duty: {led_duty_cycle_880nm}")
 		led_duty_cycle_settings = {
 			'880nm': led_duty_cycle_880nm,
 			'520nm': int(config.get('led_duty_cycle_520nm', led_duty_cycle_880nm)),
@@ -1276,6 +1280,14 @@ def bcmeter_main(stop_event):
 			if wavelength == '880nm':
 				bc_unfiltered_primary = bc_unfiltered
 
+				quotient = (main_sensor_value or 1) / (reference_sensor_value or 1)
+				filter_status = next((5 - i for i, t in enumerate([0.8, 0.7, 0.6, 0.4, 0.2]) if quotient > t), 0)
+				manage_bcmeter_status(action='set', filter_status=filter_status)
+				
+				if config.get('filter_status_mail', False) and filter_status < 3 and (time() - last_filter_mail_time > 7200):
+					send_email("Filter")
+					last_filter_mail_time = time()
+
 			last_run_values[wavelength]['atn'] = attenuation_current
 			log_entry['wavelengths'][wavelength] = {'sen': main_sensor_value, 'ref': reference_sensor_value, 'atn': attenuation_current, 'bc_unfiltered': bc_unfiltered, 'bc': 0}
 
@@ -1336,9 +1348,7 @@ def bcmeter_main(stop_event):
 			else:
 				show_display("Sampling...", False, 0)
 
-		# This sleep is no longer needed as the inner while loop controls the timing
-		# if sample_time - delay > 0:
-		# 	sleep(sample_time - delay)
+
 
 
 def check_service_running(service_name):
@@ -1392,7 +1402,23 @@ def housekeeping(stop_event):
 	while not stop_event.is_set():
 		config = config_json_handler()
 		
-		# Update display with running time
+		
+		send_log_by_mail = config.get('send_log_by_mail', False)
+		if send_log_by_mail:
+			mail_sending_interval_hours = float(str(config.get('mail_sending_interval', 24)).replace(',', '.'))
+			interval_seconds = mail_sending_interval_hours * 3600
+			
+			if (time() - last_email_time) >= interval_seconds:
+				logger.debug(f"Email interval of {mail_sending_interval_hours} hours reached. Attempting to send log.")
+				if check_connection():
+					send_email("Log") 
+					last_email_time = time()
+				else:
+					logger.warning("Offline, cannot send periodic email log.")
+
+
+
+
 		now = datetime.now()
 		time_diff = now - session_running_since
 		hours, remainder = divmod(time_diff.seconds, 3600)
@@ -1517,8 +1543,8 @@ if __name__ == '__main__':
 			if not find_mcp_address():
 				shutdown("I2C ADC initialization failed", 6)
 
-		airflow_sensor_bias = 0 # Default bias to 0
-		if not calibration:
+		airflow_sensor_bias = 0 
+		if not calibration and airflow_type < 9:
 			try:
 				if debug: print("[DEBUG] __main__: Calling calibrate_airflow_sensor_bias...")
 				bias_voltage = calibrate_airflow_sensor_bias()

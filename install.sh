@@ -662,16 +662,23 @@ else
     echo "Service check has been added to .bashrc"
     echo "Please run 'source ~/.bashrc' to apply the changes"
 fi
-
 if ! grep -q "auto_expand_rootfs" "$BASHRC"; then
     cat >> "$BASHRC" <<'EOF'
-if [ "$(df / | awk 'NR==2{print int($2)}')" -lt "$(lsblk -bno SIZE / | awk '{print int($1/1024)}')" ]; then
-    echo "Expanding root filesystem..."
-    sudo raspi-config nonint do_expand_rootfs >/dev/null 2>&1
-    echo "Expansion scheduled. It will take effect after reboot."
+ROOT_DEV=$(findmnt -no SOURCE /)
+DISK_DEV=$(lsblk -no PKNAME "$ROOT_DEV")
+if [ -n "$DISK_DEV" ]; then
+    PART_SIZE=$(lsblk -bndo SIZE "$ROOT_DEV" | tr -d '[:space:]')
+    DISK_SIZE=$(lsblk -bndo SIZE "/dev/$DISK_DEV" | tr -d '[:space:]')
+    if [ "$DISK_SIZE" -gt "$PART_SIZE" ] 2>/dev/null; then
+        echo "Expanding root filesystem..."
+        sudo raspi-config nonint do_expand_rootfs >/dev/null 2>&1
+        echo "Expansion scheduled. It will take effect after reboot."
+    fi
 fi
 EOF
 fi
+
+
 
 
 chmod -R 777 "$BASE_DIR"/.

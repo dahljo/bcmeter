@@ -331,7 +331,7 @@ function setupModalEvents() {
 
 function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
   window.deviceName = deviceName;
-  if ((!calibrationTime || (filterStatus !== null && filterStatus < 2)) &&
+  if (status != -1 && (!calibrationTime || (filterStatus !== null && filterStatus < 2)) &&
     (!window.is_ebcMeter || (window.is_ebcMeter && filterStatus === 0))) {
     showWarningModal(calibrationTime, filterStatus);
   }

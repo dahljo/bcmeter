@@ -19,6 +19,7 @@ chown -R "$APP_USER:$APP_USER" "$BASE_DIR"
 
 export DEBIAN_FRONTEND=noninteractive
 APT_PACKAGES="\
+    avahi-daemon \
     i2c-tools \
     zram-tools \
     python3-pip \
@@ -501,6 +502,7 @@ mkdir "$BASE_DIR/logs"
 touch "$BASE_DIR/logs/log_current.csv"
 
 echo "Configuring bcMeter"
+systemctl enable --now avahi-daemon #in case its not active: allow the bcMeter to be accessible by .local 
 raspi-config nonint do_boot_behaviour B2
 echo "Enabled autologin - you can disable this with sudo raspi-config anytime"
 raspi-config nonint do_i2c 0
@@ -610,8 +612,6 @@ wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 EOF
 
-
-#sed -i '/#DAEMON_CONF/c\DAEMON_CONF="/etc/hostapd/hostapd.conf"' /etc/default/hostapd
 
 
 CMDLINE_FILE="/boot/cmdline.txt"

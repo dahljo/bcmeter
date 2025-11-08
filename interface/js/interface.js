@@ -30,8 +30,6 @@ document.addEventListener('DOMContentLoaded', () => {
     statusIntervalId = setInterval(fetchStatus, statusInterval);
   }
 
-  syncDeviceTime();
-
   function initInterface() {
     setupDeviceControlListeners();
     setupTabSwitching();
@@ -130,39 +128,75 @@ document.addEventListener('DOMContentLoaded', () => {
       $('.wifi-pwd-field-exist').hide();
       $('.wifi-pwd-field').show();
     });
-    $('#saveWifiSettings').click(function(e) {
-        e.preventDefault();
+$('#saveWifiSettings').click(function(e) {
+    e.preventDefault();
+    const ssid = $('#js-wifi-dropdown').val();
+    let finalSsid = ssid === 'custom-network-selection' ? $('#custom_ssid').val() : ssid;
+    const password = $('#pass_log_id').val();
 
-        const ssid = $('#js-wifi-dropdown').val();
-        let finalSsid = ssid;
-        if (ssid === 'custom-network-selection') {
-            finalSsid = $('#custom_ssid').val();
-        }
+    const postData = {
+        conn_submit: true,
+        wifi_ssid: finalSsid,
+        custom_wifi_name: (ssid === 'custom-network-selection') ? finalSsid : '',
+        wifi_pwd: password
+    };
 
-        const password = $('#pass_log_id').val();
+    $.ajax({
+        type: 'POST',
+        url: 'index.php',
+        data: postData,
+        success: async function() {
+            try {
+                const statusResponse = await fetch('/tmp/BCMETER_WEB_STATUS');
+                const statusData = await statusResponse.json();
+                let hostname = statusData.hostname || 'bcMeter';
+                if (!hostname.endsWith('.local')) {
+                  hostname += '.local';
+                }
 
-        const postData = {
-            conn_submit: true,
-            wifi_ssid: finalSsid,
-            custom_wifi_name: (ssid === 'custom-network-selection') ? finalSsid : '',
-            wifi_pwd: password
-        };
-
-        $.ajax({
-            type: 'POST',
-            url: 'index.php',
-            data: postData,
-            success: function(response) {
-                bootbox.alert("WiFi settings saved. The device will now attempt to connect.", function() {
-                    $('#wifisetup').modal('hide');
-                    setTimeout(fetchStatus, 5000);
+                const progressModal = bootbox.dialog({
+                  title: 'Connecting to WiFi…',
+                  message: `
+                      <div class="text-center">
+                          <p>The device is now attempting to connect to the WiFi network.<br>
+                          This may take up to 60 seconds.</p>
+                          <div class="progress mt-3" style="height: 20px;">
+                              <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%"></div>
+                          </div>
+                          <p class="mt-3 small text-muted">
+                              After connection, you can access the device at:<br>
+                              <a href="http://${hostname}" target="_blank">http://${hostname}</a>
+                          </p>
+                      </div>`,
+                  closeButton: false
                 });
-            },
-            error: function() {
-                bootbox.alert("An error occurred while saving WiFi settings.");
+
+
+                const progressBar = progressModal.find('.progress-bar');
+                const totalTime = 75000, step = 300;
+                let elapsed = 0;
+                const interval = setInterval(() => {
+                    elapsed += step;
+                    const percent = Math.min(100, (elapsed / totalTime) * 100);
+                    progressBar.css('width', percent + '%');
+                    if (percent >= 100) {
+                        clearInterval(interval);
+                        progressModal.modal('hide');
+                        bootbox.alert(`WiFi connection attempt finished.<br>Try reconnecting to <a href="http://${hostname}" target="_blank">${hostname}</a>.`);
+                        setTimeout(fetchStatus, 5000);
+                    }
+                }, step);
+            } catch (err) {
+                console.error('Failed to fetch hostname:', err);
+                bootbox.alert("WiFi settings saved. The device will now attempt to connect.");
             }
-        });
+        },
+        error: function() {
+            bootbox.alert("An error occurred while saving WiFi settings.");
+        }
     });
+});
+
   }
 
   function setupTabSwitching() {
@@ -250,84 +284,114 @@ function setupModalEvents() {
     });
 }
 
-  function fetchStatus() {
-    fetch('/tmp/BCMETER_WEB_STATUS')
-      .then(response => response.ok ? response.text() : Promise.reject('Network error'))
-      .then(data => {
-        try {
-          const jsonData = JSON.parse(data);
-          window.in_hotspot = jsonData.in_hotspot;
-          updateStatus(
-            jsonData.bcMeter_status,
-            jsonData.hostname,
-            jsonData.log_creation_time,
-            jsonData.calibration_time,
-            jsonData.filter_status,
-            jsonData.in_hotspot
-          );
-        } catch (e) {
-          console.error('JSON parsing error:', e);
-          updateStatus(-1, "Device", null, null, null, false);
-          window.in_hotspot = false;
-        }
-      })
-      .catch(error => {
-        console.error('Fetch error:', error);
+function fetchStatus() {
+  fetch('/tmp/BCMETER_WEB_STATUS')
+    .then(response => response.ok ? response.text() : Promise.reject('Network error'))
+    .then(data => {
+      try {
+        const jsonData = JSON.parse(data);
+        window.in_hotspot = jsonData.in_hotspot;
+
+        updateStatus(
+          jsonData.bcMeter_status,
+          jsonData.hostname,
+          jsonData.log_creation_time,
+          jsonData.calibration_time,
+          jsonData.filter_status,
+          jsonData.in_hotspot
+        );
+      } catch (error) {
+        console.error('JSON parsing error:', error);
         updateStatus(-1, "Device", null, null, null, false);
         window.in_hotspot = false;
-      });
-  
+      }
+    })
+    .catch(error => {
+      console.error('Fetch error:', error);
+      updateStatus(-1, "Device", null, null, null, false);
+      window.in_hotspot = false;
+    });
 
-      fetch('../logs/log_current.csv?t=' + new Date().getTime()) 
-          .then(response => {
-              if (!response.ok) throw new Error('Network response was not ok');
-              return response.text();
-          })
-          .then(text => {
-              const lines = text.trim().split('\n');
-              if (lines.length < 3) throw new Error('Log file is empty or has no data'); // 1 header, 1 blank, 1 data
-              
-              // Find the header line, skipping blank lines
-              let headerLine = '';
-              for (let i = 0; i < lines.length; i++) {
-                  if (lines[i].trim() !== '') {
-                      headerLine = lines[i];
-                      break;
-                  }
-              }
-              if (headerLine === '') throw new Error('No header line found');
+  fetch('../logs/log_current.csv?t=' + new Date().getTime())
+    .then(response => {
+      if (!response.ok) throw new Error('Network response was not ok');
+      return response.text();
+    })
+    .then(text => {
+      const lines = text.trim().split('\n');
 
-              const headers = headerLine.split(';').map(h => h.trim());
-              const lastLine = lines[lines.length - 1].split(';');
-              
-              // Use the correct 880nm column names from bcMeter.py
-              const sensorIndex = headers.indexOf('bcmSen_880nm');
-              const refIndex = headers.indexOf('bcmRef_880nm');
-              
-              if (sensorIndex === -1 || refIndex === -1) {
-                  console.error('Headers found:', headers);
-                  throw new Error('Columns "bcmSen_880nm" or "bcmRef_880nm" not found');
-              }
-              
-              const sensorVal = parseFloat(lastLine[sensorIndex]);
-              const refVal = parseFloat(lastLine[refIndex]);
-              
-              if (isNaN(sensorVal) || isNaN(refVal) || refVal === 0) {
-                  console.error('Invalid data:', lastLine);
-                  throw new Error('Invalid sensor/reference data');
-              }
-              const loading = 100-Math.min(100, (sensorVal / refVal) * 100);
-              $('#filterStatusValue').text(loading.toFixed(1) + ' %');
-          })
-          .catch(error => {
-              console.error('Error fetching filter status:', error);
-              $('#filterStatusValue').text('Not enough data');
-          });
+      if (lines.length < 3) {
+        throw new Error('Log file is empty or has insufficient data');
+      }
 
+      // Find the header line (skip blank lines)
+      let headerLine = '';
+      for (let line of lines) {
+        if (line.trim() !== '') {
+          headerLine = line;
+          break;
+        }
+      }
 
+      if (headerLine === '') {
+        throw new Error('No header line found in log');
+      }
 
+      const headers = headerLine.split(';').map(h => h.trim());
+      const lastLine = lines[lines.length - 1].split(';');
 
-  }
+      const sensorIndex = headers.indexOf('bcmSen_880nm') !== -1
+        ? headers.indexOf('bcmSen_880nm')
+        : headers.indexOf('bcmSen');
+
+      const refIndex = headers.indexOf('bcmRef_880nm') !== -1
+        ? headers.indexOf('bcmRef_880nm')
+        : headers.indexOf('bcmRef');
+
+      if (sensorIndex === -1 || refIndex === -1) {
+        console.error('Available headers:', headers);
+        throw new Error('Required columns "bcmSen_880nm" or "bcmRef_880nm" not found');
+      }
+
+      const sensorVal = parseFloat(lastLine[sensorIndex]);
+      const refVal = parseFloat(lastLine[refIndex]);
+
+      if (isNaN(sensorVal) || isNaN(refVal) || refVal === 0) {
+        console.error('Invalid data row:', lastLine);
+        throw new Error('Invalid sensor/reference data in log');
+      }
+
+      const loading = 100 - Math.min(100, (sensorVal / refVal) * 100);
+
+      const filterButton = document.getElementById('filterStatusValue');
+      if (filterButton) {
+        filterButton.textContent = loading.toFixed(1) + ' %';
+
+        let colorClass = 'btn-dark'; // default
+        if (loading > 80) {
+          colorClass = 'btn-success';
+        } else if (loading > 60) {
+          colorClass = 'btn-warning';
+        } else if (loading > 40) {
+          colorClass = 'btn-danger';
+        } else if (loading > 20) {
+          colorClass = 'btn-secondary';
+        }
+
+        filterButton.className = 'btn btn-sm ' + colorClass;
+      }
+    })
+    .catch(error => {
+      console.error('Error fetching filter status:', error);
+
+      const filterButton = document.getElementById('filterStatusValue');
+      if (filterButton) {
+        filterButton.textContent = 'N/A';
+        filterButton.className = 'btn btn-sm btn-secondary';
+      }
+    });
+}
+
 
 function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
   window.deviceName = deviceName;
@@ -335,7 +399,7 @@ function updateStatus(status, deviceName, creationTimeString, calibrationTime, f
     (!window.is_ebcMeter || (window.is_ebcMeter && filterStatus === 0))) {
     showWarningModal(calibrationTime, filterStatus);
   }
-
+  console.log(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot)
   const statusDiv = document.getElementById('statusDiv');
   statusDiv.className = 'status-div';
 
@@ -1219,6 +1283,7 @@ function syncDeviceTime() {
   if (document.getElementById("datetime_local")) {
     document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + formattedBrowserTime;
   }
+  console.log("Time Check")
   $.ajax({
     url: "includes/get_device_time.php",
     type: "get",

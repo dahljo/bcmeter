@@ -369,15 +369,19 @@ echo "<script>
 
 
 
-            <div class="control-box text-center">
-                 <h5>Session Control</h5>
-                    <button type="button" id="startNewLog" class="btn btn-success">Start New Log</button>
-                 <form method="post" class="d-inline">
+           <div class="control-box text-center">
+                  <h5>Session Control</h5>
+                  <button type="button" id="startNewLog" class="btn btn-success">Start New Log</button>
+                  <form method="post" class="d-inline">
                     <input type="submit" id="bcMeter_stop" name="bcMeter_stop" value="Stop Logging" class="btn btn-warning" />
-                 </form>
-                 <button type="button" id="saveGraph" class="btn btn-info">Download Current View</button>
-                <p>Filter loading: <span id="filterStatusValue"></span></p>
-            </div>
+                  </form>
+                  <button type="button" id="saveGraph" class="btn btn-info">Download Current View</button>
+                  <p>
+                    Filter loading:
+                    <button id="filterStatusValue" type="button" class="btn btn-sm btn-dark" disabled>0 %</button>
+              </p>
+             </div>
+
         </div>
     </div>
 
@@ -392,15 +396,6 @@ echo "<script>
             <div class="modal-body">
 
                 <div class="card mb-3">
-                    <div class="card-header">System Status</div>
-                    <div class="card-body">
-                        <p class="mb-1"><strong>Device ID:</strong> <?php echo 'bcMeter_0x' . $macAddr; ?></p>
-                        <p class="mb-1"><strong>Software Version:</strong> <?php echo $VERSION; ?></p>
-                        <div id="calibrationTime" class="mb-1"></div>
-                    </div>
-                </div>
-
-                <div class="card">
                     <div class="card-header">Device Management</div>
                     <div class="card-body">
                         <div class="row">
@@ -432,6 +427,32 @@ echo "<script>
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header">System Status</div>
+                    <div class="card-body">
+                        <p class="mb-1"><strong>Device ID:</strong> <?php echo 'bcMeter_0x' . $macAddr; ?></p>
+                        <p class="mb-1"><strong>Software Version:</strong> <?php echo $VERSION; ?></p>
+                        <div id="calibrationTime" class="mb-1"></div>
+
+                    </div>
+                </div>
+                <div class="card mb-3">
+                  <div class="card-header">Time Synchronization</div>
+                  <div class="card-body">
+                    <p><strong>Browser Time:</strong> <span id="systemBrowserTime">Loading...</span></p>
+                    <p><strong>Device Time:</strong> <span id="systemDeviceTime">Loading...</span></p>
+                    <button class="btn btn-sm btn-primary" id="refreshTimes">Refresh Times</button>
+                  </div>
+                </div>
+
+                <div class="card mb-3">
+                  <div class="card-header">Device Identity</div>
+                  <div class="card-body">
+                    <p><strong>Current Device Name:</strong> <span id="currentDeviceName"><?php echo gethostname(); ?></span></p>
+                    <button class="btn btn-sm btn-secondary" id="renameDeviceBtn">Rename Device</button>
+                  </div>
                 </div>
 
             </div>
@@ -763,7 +784,41 @@ echo "<script>
 
 
         });
-    </script>
+
+      function updateSystemTimes() {
+        const browserTime = new Date().toLocaleString();
+        $("#systemBrowserTime").text(browserTime);
+        $.get("includes/get_device_time.php", function(result) {
+          const ts = parseInt(result.trim(), 10);
+          if (!isNaN(ts)) {
+            $("#systemDeviceTime").text(new Date(ts * 1000).toLocaleString());
+          } else {
+            $("#systemDeviceTime").text("Unavailable");
+          }
+        }).fail(() => $("#systemDeviceTime").text("Unavailable"));
+      }
+
+      $("#refreshTimes").click(updateSystemTimes);
+      $("#systemModal").on("shown.bs.modal", updateSystemTimes);
+
+      $("#renameDeviceBtn").click(() => {
+        bootbox.prompt({
+          title: "Rename Device",
+          message: "Enter a new hostname for this bcMeter device:",
+          callback: name => {
+            if (name && name.trim() !== "") {
+              $.post("includes/rename_device.php", { hostname: name.trim() })
+                .done(() => {
+                  bootbox.alert("Device renamed successfully. Reboot to apply changes.");
+                  $("#currentDeviceName").text(name.trim());
+                })
+                .fail(() => bootbox.alert("Failed to rename device."));
+            }
+          }
+        });
+      });
+
+</script>
 
 </body>
 </html>

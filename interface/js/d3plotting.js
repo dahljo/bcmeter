@@ -1155,140 +1155,207 @@ const yOptionClicked3 = value => {
     render();
 };
 
-
 function dataFile(file, isCombineLogsSelected = false, callback = null) {
-    const messageEl = document.getElementById("report-message");
-    const containerEl = document.getElementById("averages-container");
-    const isPeriodicUpdate = file === logPath + getMostRecentLogFile();
+  const messageEl = document.getElementById("report-message");
+  const containerEl = document.getElementById("averages-container");
+  const isPeriodicUpdate = file === logPath + getMostRecentLogFile();
 
-    if (!isCombineLogsSelected && !isPeriodicUpdate && messageEl) {
-        if(containerEl) containerEl.style.display = 'none';
-        messageEl.style.display = 'block';
-        messageEl.innerHTML = "<h5>Loading data...</h5>";
-    }
+  if (!isCombineLogsSelected && !isPeriodicUpdate && messageEl) {
+    if (containerEl) containerEl.style.display = "none";
+    messageEl.style.display = "block";
+    messageEl.innerHTML = "<h5>Loading data...</h5>";
+  }
 
-    const currentIsHidden = isHidden;
-    const currentIsHidden3 = isHidden3;
-    d3.dsv(';', file).then(rawData => {
-        const validRawData = rawData.filter(d => d.bcmTime);
-        if (!validRawData.length) {
-            console.warn(`No valid data rows found in ${file}.`);
-            data = [];
-            if(messageEl) messageEl.innerHTML = "";
-            render();
-            if (callback) callback();
-            return;
-        }
-        if (!rawData.columns?.length) {
-            if (validRawData.length > 0) rawData.columns = Object.keys(validRawData[0]);
-            else {
-                console.error("No valid headers found in file and no data rows to infer from:", file);
-                data = [];
-                if(messageEl) messageEl.innerHTML = "";
-                render();
-                if (callback) callback();
-                return;
-            }
-        }
+  const currentIsHidden = isHidden;
+  const currentIsHidden3 = isHidden3;
 
-        autoscaleAxis('both');
-        initialXDomain = null;
-        initialYDomain = null;
-        initialY2Domain = null;
-        initialY3Domain = null;
-
-        const headers = rawData.columns;
-        updateAliasesBasedOnUnits(headers);
-        const filteredHeaders = filterColumns(headers);
-        data.columns = filteredHeaders, combineLogs.columns = filteredHeaders;
-        if (yMenuDom) selectUpdate(filteredHeaders, "#y-menu", yColumn);
-        if (yMenuDom2) selectUpdate(filteredHeaders, "#y-menu2", yColumn2);
-        if (yMenuDom3) selectUpdate(filteredHeaders, "#y-menu3", yColumn3);
-        let newData = [], movingIndex6 = 0, movingIndex12 = 0;
-        validRawData.forEach((d, i) => {
-            d.bcmTimeRaw = d.bcmDate + ' ' + d.bcmTime;
-            d.bcmTime = parseTime(d.bcmDate + ' ' + d.bcmTime);
-            headers.forEach(column => {
-                if (column !== 'bcmDate' && column !== 'bcmTime' && column !== 'bcmTimeRaw') d[column] = isNaN(+d[column]) ? d[column] : +d[column];
-            });
-            newData.push(d);
-        });
-        let processedData = newData;
-        processedData.columns = filteredHeaders;
-        const bcColumn = window.is_ebcMeter ? (headers.includes("BCugm3_unfiltered") ? "BCugm3_unfiltered" : (headers.includes("BCugm3") ? "BCugm3" : null)) : (headers.includes("BCngm3_unfiltered") ? "BCngm3_unfiltered" : (headers.includes("BCngm3") ? "BCngm3" : null));
-        if (bcColumn) {
-            processedData.forEach((d, i) => {
-                const bcValue = +d[bcColumn];
-                if (!isNaN(bcValue)) {
-                    if (i >= 2 && i <= processedData.length - 3) {
-                        const window6 = processedData.slice(i - 2, i + 4);
-                        const validWindow6 = window6.map(item => +item[bcColumn]).filter(val => !isNaN(val));
-                        d.BC_rolling_avg_of_6 = validWindow6.length > 0 ? d3.mean(validWindow6) : null;
-                    } else d.BC_rolling_avg_of_6 = null;
-                    if (i >= 5 && i <= processedData.length - 6) {
-                        const window12 = processedData.slice(i - 5, i + 7);
-                        const validWindow12 = window12.map(item => +item[bcColumn]).filter(val => !isNaN(val));
-                        d.BC_rolling_avg_of_12 = validWindow12.length > 0 ? d3.mean(validWindow12) : null;
-                    } else d.BC_rolling_avg_of_12 = null;
-                } else d.BC_rolling_avg_of_6 = null, d.BC_rolling_avg_of_12 = null;
-            });
-            if (!processedData.columns.includes('BC_rolling_avg_of_6')) processedData.columns.push('BC_rolling_avg_of_6');
-            if (!processedData.columns.includes('BC_rolling_avg_of_12')) processedData.columns.push('BC_rolling_avg_of_12');
-        }
-        if (!isCombineLogsSelected) {
-            data = processedData;
-            if (window.current_file) dataObj[window.current_file] = data;
-            let len = data.length - 1;
-            if (len >= 0) {
-                updateAverageDisplay(len);
-                if (len > 0 && headers.includes('bcmRef') && headers.includes('bcmSen')) {
-                    let bcmRef = data[len].bcmRef, bcmSen = data[len].bcmSen, btn = document.getElementById("report-button");
-                    const statusValueEl = document.getElementById('filterStatusValue');
-
-                    if (bcmSen == 0 && bcmRef == 0) {
-                        btn.className = "btn btn-sm btn-secondary";
-                        if (statusValueEl) statusValueEl.textContent = "N/A";
-                    } else {
-                        const filterStatus = bcmSen / bcmRef;
-                        const percentage = Math.round(filterStatus * 100);
-                        if (statusValueEl) statusValueEl.textContent = percentage;
-
-                        btn.className = "btn btn-sm " + (!window.is_ebcMeter ? (filterStatus > 0.8 ? "btn-success" : filterStatus > 0.7 ? "btn-warning" : filterStatus > 0.55 ? "btn-danger" : filterStatus > 0.45 ? "btn-secondary" : "btn-dark") : (filterStatus <= 0.1 ? "btn-dark" : filterStatus <= 0.2 ? "btn-secondary" : filterStatus <= 0.25 ? "btn-danger" : filterStatus <= 0.4 ? "btn-warning" : "btn-success"));
-                    }
-                }
-            }
-            isHidden = currentIsHidden;
-            isHidden3 = currentIsHidden3;
-            localStorage.setItem('y2AxisHidden', isHidden.toString());
-            localStorage.setItem('y3AxisHidden', isHidden3.toString());
-            if (messageEl && !messageEl.innerHTML.includes("Averages:")) messageEl.innerHTML = "";
-            render();
-        } else {
-            if (!window.skipBackgroundLoading) {
-                const fileName = file.split("/").pop();
-                dataObj[fileName] = processedData;
-                combineLogs = [...combineLogs, ...processedData];
-                if (window.current_file === "combine_logs") {
-                    data = combineLogs;
-                    if (data.length > 0) updateAverageDisplay(data.length - 1);
-                    if (messageEl && !messageEl.innerHTML.includes("Averages:")) messageEl.innerHTML = "";
-                    render();
-                }
-            }
-            if (callback) callback();
-        }
-    }).catch(error => {
-        console.error(`Error during d3.dsv parsing for ${file}:`, error);
+  d3.dsv(";", file)
+    .then(rawData => {
+      const validRawData = rawData.filter(d => d.bcmTime);
+      if (!validRawData.length) {
+        console.warn(`No valid data rows found in ${file}.`);
         data = [];
-        if (messageEl) {
-            if(containerEl) containerEl.style.display = 'none';
-            messageEl.style.display = 'block';
-            messageEl.innerHTML = "<h5>Error: Could not load data file.</h5>";
-        }
+        if (messageEl) messageEl.innerHTML = "";
         render();
-        if (isCombineLogsSelected && callback) callback();
+        if (callback) callback();
+        return;
+      }
+
+      if (!rawData.columns?.length) {
+        if (validRawData.length > 0) rawData.columns = Object.keys(validRawData[0]);
+        else {
+          console.error("No valid headers found in file:", file);
+          data = [];
+          if (messageEl) messageEl.innerHTML = "";
+          render();
+          if (callback) callback();
+          return;
+        }
+      }
+
+      autoscaleAxis("both");
+      initialXDomain = initialYDomain = initialY2Domain = initialY3Domain = null;
+
+      const headers = rawData.columns;
+      updateAliasesBasedOnUnits(headers);
+      const filteredHeaders = filterColumns(headers);
+
+      data.columns = filteredHeaders;
+      combineLogs.columns = filteredHeaders;
+
+      if (yMenuDom) selectUpdate(filteredHeaders, "#y-menu", yColumn);
+      if (yMenuDom2) selectUpdate(filteredHeaders, "#y-menu2", yColumn2);
+      if (yMenuDom3) selectUpdate(filteredHeaders, "#y-menu3", yColumn3);
+
+      const newData = validRawData.map(d => {
+        d.bcmTimeRaw = `${d.bcmDate} ${d.bcmTime}`;
+        d.bcmTime = parseTime(d.bcmDate + " " + d.bcmTime);
+        headers.forEach(column => {
+          if (!["bcmDate", "bcmTime", "bcmTimeRaw"].includes(column)) {
+            d[column] = isNaN(+d[column]) ? d[column] : +d[column];
+          }
+        });
+        return d;
+      });
+
+      const processedData = newData;
+      processedData.columns = filteredHeaders;
+
+      const bcColumn = window.is_ebcMeter
+        ? (headers.includes("BCugm3_unfiltered")
+            ? "BCugm3_unfiltered"
+            : headers.includes("BCugm3")
+            ? "BCugm3"
+            : null)
+        : (headers.includes("BCngm3_unfiltered")
+            ? "BCngm3_unfiltered"
+            : headers.includes("BCngm3")
+            ? "BCngm3"
+            : null);
+
+      if (bcColumn) {
+        processedData.forEach((d, i) => {
+          const value = +d[bcColumn];
+          if (isNaN(value)) {
+            d.BC_rolling_avg_of_6 = null;
+            d.BC_rolling_avg_of_12 = null;
+            return;
+          }
+
+          if (i >= 2 && i <= processedData.length - 3) {
+            const window6 = processedData.slice(i - 2, i + 4)
+              .map(item => +item[bcColumn])
+              .filter(v => !isNaN(v));
+            d.BC_rolling_avg_of_6 = window6.length ? d3.mean(window6) : null;
+          } else {
+            d.BC_rolling_avg_of_6 = null;
+          }
+
+          if (i >= 5 && i <= processedData.length - 6) {
+            const window12 = processedData.slice(i - 5, i + 7)
+              .map(item => +item[bcColumn])
+              .filter(v => !isNaN(v));
+            d.BC_rolling_avg_of_12 = window12.length ? d3.mean(window12) : null;
+          } else {
+            d.BC_rolling_avg_of_12 = null;
+          }
+        });
+
+        if (!processedData.columns.includes("BC_rolling_avg_of_6"))
+          processedData.columns.push("BC_rolling_avg_of_6");
+
+        if (!processedData.columns.includes("BC_rolling_avg_of_12"))
+          processedData.columns.push("BC_rolling_avg_of_12");
+      }
+
+      if (!isCombineLogsSelected) {
+        data = processedData;
+        if (window.current_file) dataObj[window.current_file] = data;
+
+        const len = data.length - 1;
+        if (len >= 0) {
+          updateAverageDisplay(len);
+
+          if (len > 0 && headers.includes("bcmRef") && headers.includes("bcmSen")) {
+            const bcmRef = data[len].bcmRef;
+            const bcmSen = data[len].bcmSen;
+            const btn = document.getElementById("filterStatusValue");
+
+            if (btn) {
+              if (bcmSen === 0 && bcmRef === 0) {
+                btn.className = "btn btn-sm btn-secondary";
+                btn.textContent = "N/A";
+              } else {
+                const ratio = bcmSen / bcmRef;
+                const percentage = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+                btn.textContent = percentage + " %";
+
+                let cls;
+                if (!window.is_ebcMeter) {
+                  if (ratio > 0.8) cls = "btn-success";
+                  else if (ratio > 0.7) cls = "btn-warning";
+                  else if (ratio > 0.55) cls = "btn-danger";
+                  else if (ratio > 0.45) cls = "btn-secondary";
+                  else cls = "btn-dark";
+                } else {
+                  if (ratio <= 0.1) cls = "btn-dark";
+                  else if (ratio <= 0.2) cls = "btn-secondary";
+                  else if (ratio <= 0.25) cls = "btn-danger";
+                  else if (ratio <= 0.4) cls = "btn-warning";
+                  else cls = "btn-success";
+                }
+
+                btn.className = "btn btn-sm " + cls;
+              }
+            }
+          }
+        }
+
+        isHidden = currentIsHidden;
+        isHidden3 = currentIsHidden3;
+
+        localStorage.setItem("y2AxisHidden", isHidden.toString());
+        localStorage.setItem("y3AxisHidden", isHidden3.toString());
+
+        if (messageEl && !messageEl.innerHTML.includes("Averages:")) {
+          messageEl.innerHTML = "";
+        }
+
+        render();
+      } else {
+        if (!window.skipBackgroundLoading) {
+          const fileName = file.split("/").pop();
+          dataObj[fileName] = processedData;
+          combineLogs = [...combineLogs, ...processedData];
+
+          if (window.current_file === "combine_logs") {
+            data = combineLogs;
+            if (data.length > 0) updateAverageDisplay(data.length - 1);
+            if (messageEl && !messageEl.innerHTML.includes("Averages:")) {
+              messageEl.innerHTML = "";
+            }
+            render();
+          }
+        }
+
+        if (callback) callback();
+      }
+    })
+    .catch(error => {
+      console.error(`Error during d3.dsv parsing for ${file}:`, error);
+      data = [];
+
+      if (messageEl) {
+        if (containerEl) containerEl.style.display = "none";
+        messageEl.style.display = "block";
+        messageEl.innerHTML = "<h5>Error: Could not load data file.</h5>";
+      }
+
+      render();
+      if (isCombineLogsSelected && callback) callback();
     });
 }
+
 function loadInitialData() {
   console.log("loadInitialData called.");
   if (!data.columns || !combineLogs.columns) initializeColumnData();

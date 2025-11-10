@@ -363,23 +363,25 @@ function fetchStatus() {
 
       const loading = 100 - Math.min(100, (sensorVal / refVal) * 100);
 
-      const filterButton = document.getElementById('filterStatusValue');
-      if (filterButton) {
-        filterButton.textContent = loading.toFixed(1) + ' %';
+const filterButton = document.getElementById('filterStatusValue');
+if (filterButton) {
+  filterButton.textContent = 'Filter Loading: ' + loading.toFixed(1) + '%';
 
-        let colorClass = 'btn-dark'; // default
-        if (loading > 80) {
-          colorClass = 'btn-success';
-        } else if (loading > 60) {
-          colorClass = 'btn-warning';
-        } else if (loading > 40) {
-          colorClass = 'btn-danger';
-        } else if (loading > 20) {
-          colorClass = 'btn-secondary';
-        }
+  let colorClass = 'btn-success'; 
+  if (loading > 80) {
+    colorClass = 'btn-dark';
+  } else if (loading > 60) {
+    colorClass = 'btn-danger';
+  } else if (loading > 40) {
+    colorClass = 'btn-warning';
+  } else if (loading > 20) {
+    colorClass = 'btn-secondary';
+  }
 
-        filterButton.className = 'btn btn-sm ' + colorClass;
-      }
+  filterButton.className = 'btn btn-sm ' + colorClass;
+}
+
+
     })
     .catch(error => {
       console.error('Error fetching filter status:', error);

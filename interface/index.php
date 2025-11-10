@@ -269,41 +269,75 @@ echo "<script>
 <body>
     <a href="" id="download" style="display: none;"></a>
 
-    <div class="top-nav">
-        <div class="nav-buttons">
-            <a href="http://<?php echo $_SERVER['HTTP_HOST']; ?>">
-                <img src="bcMeter-logo.png" style="width: 150px; vertical-align: middle;"/>
-            </a>
-            <button class="btn btn-primary" id="dashboard-btn">Dashboard</button>
-            <button class="btn btn-secondary" data-toggle="modal" data-target="#downloadOld">Session logs</button>
-            <button class="btn btn-secondary" data-toggle="modal" data-target="#device-parameters">Configuration</button>
-            <button class="btn btn-secondary" data-toggle="modal" data-target="#systemModal">System</button>
+<div class="top-nav bg-light py-2 border-bottom">
+  <div class="container-fluid">
+    <div class="row align-items-center justify-content-between flex-wrap">
+
+      <div class="col-12 col-md-auto d-flex flex-wrap align-items-center justify-content-center mb-2 mb-md-0">
+        <a href="http://<?php echo $_SERVER['HTTP_HOST']; ?>" class="mr-3 mb-2 mb-md-0">
+          <img src="bcMeter-logo.png" style="width:150px;vertical-align:middle" alt="bcMeter logo">
+        </a>
+
+        <div class="btn-group" role="group">
+          <button type="button" id="startNewLog" class="btn btn-info">Start</button>
+          <form method="post" class="d-inline m-0 p-0">
+            <button type="submit" id="bcMeter_stop" name="bcMeter_stop" class="btn btn-danger">Stop</button>
+          </form>
+          <button class="btn btn-primary" data-toggle="modal" data-target="#downloadOld">Log Files</button>
         </div>
-        <div class="status-div" id="statusDiv"></div>
+      </div>
+
+
+
+      <div class="col-12 col-md-auto d-flex flex-wrap align-items-center justify-content-center justify-content-md-end">
+        <div class="btn-group" role="group">
+          <button class="btn btn-info" data-toggle="modal" data-target="#device-parameters">Settings</button>
+          <button class="btn btn-warning text-dark" data-toggle="modal" data-target="#systemModal">Maintenance</button>
+        </div>
+      </div>
+
     </div>
+  </div>
+</div>
+
+
+
+
+
+
+
 
     <div class="page-container">
         <div id="dashboard-view">
-                        <?php if ($is_ebcMeter === true): ?>
-                <p class="text-center text-muted font-weight-bold mt-2">direct emission control</p>
-            <?php endif; ?>
+        <?php if ($is_ebcMeter === true): ?>
+            <p class="text-center text-muted font-weight-bold mt-2">direct emission control</p>
+        <?php endif; ?>
 
-            <div id="averages-container">
-                <div class="stat-card">
-                    <h6 id="dynamic-avg-label">Average</h6>
-                    <p id="dynamic-avg-value">-</p>
-                </div>
-                <div class="stat-card">
-                    <h6>Total Average</h6>
-                    <p id="avgAll-value">-</p>
-                </div>
+<div class="averages-wrapper">
+    <div class="status-section">
+        <div id="statusDiv" class="status-div">Status: Ready</div>
+        <div id="filterStatusValue">Filter: None</div>
+    </div>
 
-                    <div class="stat-card">
-                        <h6>Peak Value</h6>
-                        <p id="peak-value">-</p>
-                        <button id="resetPeakBtn" class="btn btn-sm btn-outline-secondary mt-2" style="display: none;">Reset Peak</button>
-                    </div>
-                                </div>
+    <div id="averages-container">
+        <div class="stat-card">
+            <h6 id="dynamic-avg-label">Average</h6>
+            <p id="dynamic-avg-value">-</p>
+        </div>
+
+        <div class="stat-card">
+            <h6>Total Average</h6>
+            <p id="avgAll-value">-</p>
+        </div>
+
+        <div class="stat-card">
+            <h6>Peak Value</h6>
+            <p id="peak-value">-</p>
+            <button id="resetPeakBtn" class="btn btn-sm btn-outline-secondary mt-2" style="display: none;">Reset Peak</button>
+        </div>
+    </div>
+</div>
+
 
 
             <div id="report-message" style="text-align: center; display: none;"></div>
@@ -320,70 +354,93 @@ echo "<script>
 
 
 <div class="control-box">
-                <div>
-                    <h5>Plot Controls</h5>
-                    <div class="text-center">
-                        <button class="btn btn-light" id="resetZoom">Reset Zoom</button>
-                        <button type="button" class="btn btn-light ml-1" data-toggle="modal" data-target="#scaleModal">Axis scaling</button>
-                    </div>
-                </div>
-                    <br /> <br/>
+  <h5>Plot Controls</h5>
 
-                <div class="control-grid">
-                    <label>View Log:</label>
-                    <span id="logs"><?php echo $logString; ?></span>
+  <div class="text-center mb-3">
+    <button type="button" id="saveGraph" class="btn btn-info mx-1">Download View</button>
 
-                    <label for="y-menu">Y1-Axis:</label>
-                    <select id="y-menu" class="form-control"></select>
+    <button class="btn btn-light" id="resetZoom">Reset Zoom</button>
+    <button class="btn btn-light ml-1" data-toggle="modal" data-target="#scaleModal">Axis scaling</button>
+  </div>
 
-                    <label for="medianFilter1">Denoise Y1:</label>
-                    <div class="d-flex align-items-center">
-                        <input id="medianFilter1" type="text" style="width: 100%;" data-slider-min="2" data-slider-max="10" data-slider-step="1" data-slider-value="2"/>
-                        <span id="medianFilterValue1" class="ml-2 badge badge-secondary"></span>
-                    </div>
+  <div class="form-group mb-3">
+    <label>View Log:</label>
+    <span id="logs"><?php echo $logString; ?></span>
+  </div>
 
-                    <label></label> <button class="btn btn-light" id="hide-y-menu2">Hide Second Graph</button>
+  <div id="plotControlsAccordion">
 
-                    <label for="y-menu2">Y2-Axis:</label>
-                    <select id="y-menu2" class="form-control"></select>
+    <div class="card">
+      <div class="card-header p-2">
+        <button class="btn btn-link text-left w-100 collapsed" data-toggle="collapse" data-target="#collapseY1">
+          Y1-Axis Controls
+        </button>
+      </div>
+      <div id="collapseY1" class="collapse show" data-parent="#plotControlsAccordion">
+        <div class="card-body">
+          <label for="y-menu">Y1-Axis:</label>
+          <select id="y-menu" class="form-control mb-2"></select>
 
-                    <label for="medianFilter2">Denoise Y2:</label>
-                     <div class="d-flex align-items-center">
-                        <input id="medianFilter2" type="text" style="width: 100%;" data-slider-min="2" data-slider-max="10" data-slider-step="1" data-slider-value="2"/>
-                        <span id="medianFilterValue2" class="ml-2 badge badge-secondary"></span>
-                    </div>
+          <label for="medianFilter1">Denoise Y1:</label>
+          <div class="d-flex align-items-center mb-2">
+            <input id="medianFilter1" type="text" class="w-100"
+                   data-slider-min="2" data-slider-max="10" data-slider-step="1" data-slider-value="2"/>
+            <span id="medianFilterValue1" class="ml-2 badge badge-secondary"></span>
+          </div>
 
-                    <label></label> <button class="btn btn-light" id="hide-y-menu3">Hide Third Graph</button>
-
-                    <label for="y-menu3">Y3-Axis:</label>
-                    <select id="y-menu3" class="form-control"></select>
-
-                    <label for="medianFilter3">Denoise Y3:</label>
-                     <div class="d-flex align-items-center">
-                        <input id="medianFilter3" type="text" style="width: 100%;" data-slider-min="2" data-slider-max="10" data-slider-step="1" data-slider-value="2"/>
-                        <span id="medianFilterValue3" class="ml-2 badge badge-secondary"></span>
-                    </div>
-                </div>
-            </div>
-
-
-
-
-           <div class="control-box text-center">
-                  <h5>Session Control</h5>
-                  <button type="button" id="startNewLog" class="btn btn-success">Start New Log</button>
-                  <form method="post" class="d-inline">
-                    <input type="submit" id="bcMeter_stop" name="bcMeter_stop" value="Stop Logging" class="btn btn-warning" />
-                  </form>
-                  <button type="button" id="saveGraph" class="btn btn-info">Download Current View</button>
-                  <p>
-                    Filter loading:
-                    <button id="filterStatusValue" type="button" class="btn btn-sm btn-dark" disabled>0 %</button>
-              </p>
-             </div>
 
         </div>
+      </div>
     </div>
+
+    <div class="card">
+      <div class="card-header p-2">
+        <button class="btn btn-link text-left w-100 collapsed" data-toggle="collapse" data-target="#collapseY2">
+          Y2-Axis Controls
+        </button>
+      </div>
+      <div id="collapseY2" class="collapse" data-parent="#plotControlsAccordion">
+        <div class="card-body">
+          <label for="y-menu2">Y2-Axis:</label>
+          <select id="y-menu2" class="form-control mb-2"></select>
+
+          <label for="medianFilter2">Denoise Y2:</label>
+          <div class="d-flex align-items-center mb-2">
+            <input id="medianFilter2" type="text" class="w-100"
+                   data-slider-min="2" data-slider-max="10" data-slider-step="1" data-slider-value="2"/>
+            <span id="medianFilterValue2" class="ml-2 badge badge-secondary"></span>
+          </div>
+          <button class="btn btn-light btn-sm w-100" id="hide-y-menu2">Hide Second Graph</button>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header p-2">
+        <button class="btn btn-link text-left w-100 collapsed" data-toggle="collapse" data-target="#collapseY3">
+          Y3-Axis Controls
+        </button>
+      </div>
+      <div id="collapseY3" class="collapse" data-parent="#plotControlsAccordion">
+        <div class="card-body">
+          <label for="y-menu3">Y3-Axis:</label>
+          <select id="y-menu3" class="form-control mb-2"></select>
+
+          <label for="medianFilter3">Denoise Y3:</label>
+          <div class="d-flex align-items-center mb-2">
+            <input id="medianFilter3" type="text" class="w-100"
+                   data-slider-min="2" data-slider-max="10" data-slider-step="1" data-slider-value="2"/>
+            <span id="medianFilterValue3" class="ml-2 badge badge-secondary"></span>
+                      <button class="btn btn-light btn-sm w-100" id="hide-y-menu3">Hide Third Graph</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 
 
 <div class="modal fade" id="systemModal" tabindex="-1" role="dialog">

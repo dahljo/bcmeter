@@ -672,29 +672,39 @@ const findBCColumn = () => {
 function toggleYMenu2() {
   isHidden = !isHidden;
   localStorage.setItem('y2AxisHidden', isHidden);
+
   d3.select('.y-axis2').style("opacity", Number(!isHidden));
   d3.select('.line-chart2').style("opacity", Number(!isHidden));
+  d3.selectAll('.y-axis-label2').style("opacity", Number(!isHidden));
+
   const button = document.getElementById("hide-y-menu2");
   if (button) button.innerHTML = isHidden ? 'Show Second Graph' : 'Hide Second Graph';
+
   if (yMin2Doc && yMax2Doc) {
     yMin2Doc.style.opacity = isHidden ? 0 : 1;
     yMax2Doc.style.opacity = isHidden ? 0 : 1;
   }
+
   render();
 }
 
 function toggleYMenu3() {
-    isHidden3 = !isHidden3;
-    localStorage.setItem('y3AxisHidden', isHidden3);
-    d3.select('.y-axis3').style("opacity", Number(!isHidden3));
-    d3.select('.line-chart3').style("opacity", Number(!isHidden3));
-    const button = document.getElementById("hide-y-menu3");
-    if (button) button.innerHTML = isHidden3 ? 'Show Third Graph' : 'Hide Third Graph';
-    if (yMin3Doc && yMax3Doc) {
-        yMin3Doc.style.opacity = isHidden3 ? 0 : 1;
-        yMax3Doc.style.opacity = isHidden3 ? 0 : 1;
-    }
-    render();
+  isHidden3 = !isHidden3;
+  localStorage.setItem('y3AxisHidden', isHidden3);
+
+  d3.select('.y-axis3').style("opacity", Number(!isHidden3));
+  d3.select('.line-chart3').style("opacity", Number(!isHidden3));
+  d3.selectAll('.y-axis-label3').style("opacity", Number(!isHidden3));
+
+  const button = document.getElementById("hide-y-menu3");
+  if (button) button.innerHTML = isHidden3 ? 'Show Third Graph' : 'Hide Third Graph';
+
+  if (yMin3Doc && yMax3Doc) {
+    yMin3Doc.style.opacity = isHidden3 ? 0 : 1;
+    yMax3Doc.style.opacity = isHidden3 ? 0 : 1;
+  }
+
+  render();
 }
 
 

@@ -35,16 +35,42 @@ h6 {
 }
 
 /* === Dashboard Components === */
-#averages-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 15px;
-    text-align: center;
-    margin-bottom: 20px;
+
+
+
+#filterStatusValue {
+    padding: 7px!important;
+
+}
+.averages-wrapper {
     background-color: #fff;
     border: 1px solid #dee2e6;
     border-radius: 8px;
     padding: 20px;
+    margin-bottom: 20px;
+}
+
+.status-section {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 25px;
+    margin-bottom: 20px;
+}
+
+#averages-container {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    text-align: center;
+}
+
+.stat-card {
+    background-color: #ffffff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
 }
 
 .stat-card h6 {
@@ -286,6 +312,13 @@ svg#line-chart {
 
 /* === Responsive Design === */
 @media (max-width: 576px) {
+
+    #averages-container {
+        grid-template-columns: 1fr;
+    }
+    .status-section {
+        flex-direction: column;
+    }
     /* Adjust top navigation for smaller screens to prevent overflow */
     .top-nav {
         flex-direction: column;

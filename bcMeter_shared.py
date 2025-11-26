@@ -11,7 +11,7 @@ import platform
 import os
 import shutil
 
-bcMeter_shared_version = "0.1 2025-04-04"
+bcMeter_shared_version = "1.0 2025-11-13"
 
 i2c = busio.I2C(SCL, SDA)
 base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
@@ -45,51 +45,61 @@ def check_connection():
 
 
 
+
 def setup_logging(log_entity):
-	# Create the log folder if it doesn't exist
-	log_folder = base_dir + '/maintenance_logs/'
-	os.makedirs(log_folder, exist_ok=True)
+    log_folder = base_dir + '/maintenance_logs/'
+    os.makedirs(log_folder, exist_ok=True)
 
-	# Create a logger
-	logger = logging.getLogger(f'{log_entity}_log')
-	logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG
+    logger = logging.getLogger(f'{log_entity}_log')
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
 
-	# Clear the handlers to avoid duplicate log messages
-	logger.handlers.clear()
+    log_file_generic = os.path.join(log_folder, f'{log_entity}.log')
+    if os.path.exists(log_file_generic):
+        os.remove(log_file_generic)
+    
+    handler_generic = logging.FileHandler(log_file_generic)
+    handler_generic.setLevel(logging.DEBUG)
+    formatter_generic = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+    handler_generic.setFormatter(formatter_generic)
 
-	# Configure the log file with a generic name
-	log_file_generic = os.path.join(log_folder, f'{log_entity}.log')
-	if os.path.exists(log_file_generic):
-		os.remove(log_file_generic)
-	handler_generic = logging.FileHandler(log_file_generic)
-	handler_generic.setLevel(logging.DEBUG)
-	formatter_generic = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
-	handler_generic.setFormatter(formatter_generic)
+    current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file_timestamped = os.path.join(log_folder, f'{log_entity}_{current_datetime}.log')
+    
+    handler_timestamped = logging.FileHandler(log_file_timestamped)
+    handler_timestamped.setLevel(logging.DEBUG)
+    formatter_timestamped = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+    handler_timestamped.setFormatter(formatter_timestamped)
 
-	# Configure the log file with a timestamp in its filename
-	current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-	log_file_timestamped = os.path.join(log_folder, f'{log_entity}_{current_datetime}.log')
-	handler_timestamped = logging.FileHandler(log_file_timestamped)
-	handler_timestamped.setLevel(logging.DEBUG)
-	formatter_timestamped = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
-	handler_timestamped.setFormatter(formatter_timestamped)
+    logger.addHandler(handler_generic)
+    logger.addHandler(handler_timestamped)
 
-	# Add both handlers to the logger
-	logger.addHandler(handler_generic)
-	logger.addHandler(handler_timestamped)
+    prefix_to_match = f"{log_entity}_"
+    
+    log_files = []
+    for f in os.listdir(log_folder):
+        if not f.endswith('.log'): 
+            continue
 
-	# Maintain only a fixed number of log files (e.g., last 10)
-	log_file_prefix = f'{log_entity}_'
-	log_files = [f for f in os.listdir(log_folder) if f.startswith(log_file_prefix) and f.endswith('.log')]
-	log_files.sort()
-	if len(log_files) > 10:
-		files_to_remove = log_files[:len(log_files) - 10]
-		for file_to_remove in files_to_remove:
-			os.remove(os.path.join(log_folder, file_to_remove))
+        if not f.startswith(prefix_to_match):
+            continue
 
-	logger.debug(f"Logging setup complete for {log_entity}")
 
-	return logger
+        remainder = f[len(prefix_to_match):]
+        if len(remainder) > 0 and remainder[0].isdigit():
+            log_files.append(f)
+
+    log_files.sort()
+
+    if len(log_files) > 10:
+        for file_to_remove in log_files[:len(log_files) - 10]:
+            try:
+                os.remove(os.path.join(log_folder, file_to_remove))
+            except OSError as e:
+                print(f"Error deleting file {file_to_remove}: {e}")
+
+    logger.debug(f"Logging setup complete for {log_entity}")
+    return logger
 
 logger = setup_logging('bcMeter_shared')
 
@@ -245,7 +255,6 @@ def update_config(*, variable, value=None, description=None, type=None, paramete
 		json.dump(config, json_file, indent=4)
 		json_file.truncate()
 
-# Usage:
 try:
 	config = config_json_handler()
 except FileNotFoundError:
@@ -505,12 +514,12 @@ def manage_bcmeter_status(
 	
 	# Ensure default structure exists
 	default_parameters = {
-		'bcMeter_status': 0,
+		'bcMeter_status': 5,
 		'calibration_time': None,
 		'log_creation_time': None,
 		'hostname': socket.gethostname(),
 		'filter_status': 0,
-		'in_hotspot': False
+		'in_hotspot': True
 	}
 	
 	try:
@@ -946,3 +955,7 @@ def apply_dynamic_airflow(bc_concentration, config, override_airflow_flag, logge
 	target_airflow = adjust_airflow_dynamically(avg_bc, af_sensor_type)
 	logger.info(f"Airflow adjusted: {current_airflow:.3f} → {target_airflow:.3f} L/min (BC={avg_bc} ng/m³)")
 	return True, target_airflow
+
+
+if not os.path.exists(base_dir + "/tmp/BCMETER_WEB_STATUS"):
+	manage_bcmeter_status(action='set')

@@ -46,11 +46,9 @@ APT_PACKAGES="\
     dhcpcd5"
 
 PYTHON_PACKAGES="\
-    tabulate \
     adafruit-blinka \
     adafruit-circuitpython-sht4x \
     oled-text \
-    requests \
     flask-cors \
     pandas \
     spidev \
@@ -106,14 +104,6 @@ pip3 install $PYTHON_PACKAGES --break-system-packages --root-user-action=ignore
 echo "Checking for pigpiod installation..." #necessary as of november 2025 as the pigpiod is currently not available in trixie repo
 
 if ! command -v pigpiod >/dev/null 2>&1; then
-    echo "pigpiod not found on this system."
-    echo "This daemon is required for GPIO access by bcMeter."
-    read -p "Install pigpiod manually now? (y/n): " yn
-    yn=${yn:-y}
-    case $yn in
-        [Yy]* )
-            echo "Installing pigpiod..."
-            apt update
             apt install -y pigpio || {
                 echo "pigpio package not available via apt on this system."
                 echo "Attempting to build from source..."
@@ -128,14 +118,6 @@ if ! command -v pigpiod >/dev/null 2>&1; then
             systemctl enable pigpiod 2>/dev/null || true
             systemctl start pigpiod 2>/dev/null || true
             echo "pigpiod installed and started; ignore errors above"
-            ;;
-        [Nn]* )
-            echo "Skipping pigpiod installation. Note: GPIO functionality will not work until pigpiod is installed and started."
-            ;;
-        * )
-            echo "Invalid input. Skipping pigpiod installation."
-            ;;
-    esac
 else
     echo "pigpiod already installed."
 fi
@@ -660,17 +642,22 @@ if grep -q "bcMeter_ap_control_loop" "$BASHRC"; then
 else
     echo "$SERVICE_CHECK" >> "$BASHRC"
     echo "Service check has been added to .bashrc"
-    echo "Please run 'source ~/.bashrc' to apply the changes"
 fi
 if ! grep -q "auto_expand_rootfs" "$BASHRC"; then
     cat >> "$BASHRC" <<'EOF'
 ROOT_DEV=$(findmnt -no SOURCE /)
 DISK_DEV=$(lsblk -no PKNAME "$ROOT_DEV")
+
 if [ -n "$DISK_DEV" ]; then
-    PART_SIZE=$(lsblk -bndo SIZE "$ROOT_DEV" | tr -d '[:space:]')
-    DISK_SIZE=$(lsblk -bndo SIZE "/dev/$DISK_DEV" | tr -d '[:space:]')
-    if [ "$DISK_SIZE" -gt "$PART_SIZE" ] 2>/dev/null; then
-        echo "Expanding root filesystem..."
+    PART_SIZE_BYTES=$(lsblk -bndo SIZE "$ROOT_DEV" | tr -d '[:space:]')
+    DISK_SIZE_BYTES=$(lsblk -bndo SIZE "/dev/$DISK_DEV" | tr -d '[:space:]')
+    
+    OTHER_SPACE_BYTES=$((DISK_SIZE_BYTES - PART_SIZE_BYTES))
+    
+    THRESHOLD_BYTES=524288000 
+
+    if [ "$OTHER_SPACE_BYTES" -gt "$THRESHOLD_BYTES" ]; then
+        echo "Unused disk space detected. Expanding root filesystem..."
         sudo raspi-config nonint do_expand_rootfs >/dev/null 2>&1
         echo "Expansion scheduled. It will take effect after reboot."
     fi
@@ -685,7 +672,7 @@ chmod -R 777 "$BASE_DIR"/.
 
 if [ "$1" != "update" ]; then
     echo "Installation will now finalize silently, cut the network connection and then reboot. This takes a while."
-    echo "bcMeter will create a hotspot in about 5 minutes you'll need to connect to:"
+    echo "bcMeter will create a hotspot in about 2 minutes you'll need to connect to:"
     echo "WiFi Name: bcMeter - Password: bcMeterbcMeter"
 
     systemctl stop NetworkManager

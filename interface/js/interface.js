@@ -1,4 +1,3 @@
-// interface.js
 document.addEventListener('DOMContentLoaded', () => {
   let isDirty = false;
   let hasShownWarningModal = false;
@@ -18,8 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     configType: 'email'
   }];
   initInterface();
-  fetchStatus();
-
+  fetchStatus()
   let statusIntervalId = setInterval(fetchStatus, 5000);
 
   function updateStatusInterval() {
@@ -128,35 +126,35 @@ document.addEventListener('DOMContentLoaded', () => {
       $('.wifi-pwd-field-exist').hide();
       $('.wifi-pwd-field').show();
     });
-$('#saveWifiSettings').click(function(e) {
-    e.preventDefault();
-    const ssid = $('#js-wifi-dropdown').val();
-    let finalSsid = ssid === 'custom-network-selection' ? $('#custom_ssid').val() : ssid;
-    const password = $('#pass_log_id').val();
+    $('#saveWifiSettings').click(function(e) {
+      e.preventDefault();
+      const ssid = $('#js-wifi-dropdown').val();
+      let finalSsid = ssid === 'custom-network-selection' ? $('#custom_ssid').val() : ssid;
+      const password = $('#pass_log_id').val();
 
-    const postData = {
+      const postData = {
         conn_submit: true,
         wifi_ssid: finalSsid,
         custom_wifi_name: (ssid === 'custom-network-selection') ? finalSsid : '',
         wifi_pwd: password
-    };
+      };
 
-    $.ajax({
+      $.ajax({
         type: 'POST',
         url: 'index.php',
         data: postData,
         success: async function() {
-            try {
-                const statusResponse = await fetch('/tmp/BCMETER_WEB_STATUS');
-                const statusData = await statusResponse.json();
-                let hostname = statusData.hostname || 'bcMeter';
-                if (!hostname.endsWith('.local')) {
-                  hostname += '.local';
-                }
+          try {
+            const statusResponse = await fetch('/tmp/BCMETER_WEB_STATUS');
+            const statusData = await statusResponse.json();
+            let hostname = statusData.hostname || 'bcMeter';
+            if (!hostname.endsWith('.local')) {
+              hostname += '.local';
+            }
 
-                const progressModal = bootbox.dialog({
-                  title: 'Connecting to WiFi…',
-                  message: `
+            const progressModal = bootbox.dialog({
+              title: 'Connecting to WiFi…',
+              message: `
                       <div class="text-center">
                           <p>The device is now attempting to connect to the WiFi network.<br>
                           This may take up to 60 seconds.</p>
@@ -168,35 +166,33 @@ $('#saveWifiSettings').click(function(e) {
                               <a href="http://${hostname}" target="_blank">http://${hostname}</a>
                           </p>
                       </div>`,
-                  closeButton: false
-                });
+              closeButton: false
+            });
 
-
-                const progressBar = progressModal.find('.progress-bar');
-                const totalTime = 75000, step = 300;
-                let elapsed = 0;
-                const interval = setInterval(() => {
-                    elapsed += step;
-                    const percent = Math.min(100, (elapsed / totalTime) * 100);
-                    progressBar.css('width', percent + '%');
-                    if (percent >= 100) {
-                        clearInterval(interval);
-                        progressModal.modal('hide');
-                        bootbox.alert(`WiFi connection attempt finished.<br>Try reconnecting to <a href="http://${hostname}" target="_blank">${hostname}</a>.`);
-                        setTimeout(fetchStatus, 5000);
-                    }
-                }, step);
-            } catch (err) {
-                console.error('Failed to fetch hostname:', err);
-                bootbox.alert("WiFi settings saved. The device will now attempt to connect.");
-            }
+            const progressBar = progressModal.find('.progress-bar');
+            const totalTime = 75000, step = 300;
+            let elapsed = 0;
+            const interval = setInterval(() => {
+              elapsed += step;
+              const percent = Math.min(100, (elapsed / totalTime) * 100);
+              progressBar.css('width', percent + '%');
+              if (percent >= 100) {
+                clearInterval(interval);
+                progressModal.modal('hide');
+                bootbox.alert(`WiFi connection attempt finished.<br>Try reconnecting to <a href="http://${hostname}" target="_blank">${hostname}</a>.`);
+                setTimeout(fetchStatus, 5000);
+              }
+            }, step);
+          } catch (err) {
+            console.error('Failed to fetch hostname:', err);
+            bootbox.alert("WiFi settings saved. The device will now attempt to connect.");
+          }
         },
         error: function() {
-            bootbox.alert("An error occurred while saving WiFi settings.");
+          bootbox.alert("An error occurred while saving WiFi settings.");
         }
+      });
     });
-});
-
   }
 
   function setupTabSwitching() {
@@ -253,7 +249,7 @@ $('#saveWifiSettings').click(function(e) {
     }
   }
 
-function setupModalEvents() {
+  function setupModalEvents() {
     $('#pills-devicecontrol').on('hidden.bs.collapse', function() {
       $('#statusDiv').empty();
     });
@@ -270,165 +266,161 @@ function setupModalEvents() {
       });
     }
 
-    $('#device-parameters').on('shown.bs.modal', function () {
-        const activeTabPane = $(this).find('.tab-pane.active');
-        const tbody = activeTabPane.find('tbody');
+    $('#device-parameters').on('shown.bs.modal', function() {
+      const activeTabPane = $(this).find('.tab-pane.active');
+      const tbody = activeTabPane.find('tbody');
 
-        // Only load data if the table body is currently empty
-        if (tbody.is(':empty')) {
-            const activeTabLink = $(this).find('#configTabs a.active');
-            if (activeTabLink.length) {
-                activateAndLoadConfig(activeTabLink);
-            }
+      if (tbody.is(':empty')) {
+        const activeTabLink = $(this).find('#configTabs a.active');
+        if (activeTabLink.length) {
+          activateAndLoadConfig(activeTabLink);
         }
+      }
     });
-}
+  }
 
-function fetchStatus() {
-  fetch('/tmp/BCMETER_WEB_STATUS')
-    .then(response => response.ok ? response.text() : Promise.reject('Network error'))
-    .then(data => {
-      try {
-        const jsonData = JSON.parse(data);
-        window.in_hotspot = jsonData.in_hotspot;
+  function fetchStatus() {
+    fetch('/tmp/BCMETER_WEB_STATUS')
+      .then(response => response.ok ? response.text() : Promise.reject('Network error'))
+      .then(data => {
+        try {
+          const jsonData = JSON.parse(data);
+          window.in_hotspot = jsonData.in_hotspot;
 
-        updateStatus(
-          jsonData.bcMeter_status,
-          jsonData.hostname,
-          jsonData.log_creation_time,
-          jsonData.calibration_time,
-          jsonData.filter_status,
-          jsonData.in_hotspot
-        );
-      } catch (error) {
-        console.error('JSON parsing error:', error);
+          updateStatus(
+            jsonData.bcMeter_status,
+            jsonData.hostname,
+            jsonData.log_creation_time,
+            jsonData.calibration_time,
+            jsonData.filter_status,
+            jsonData.in_hotspot
+          );
+        } catch (error) {
+          console.error('JSON parsing error:', error);
+          updateStatus(-1, "Device", null, null, null, false);
+          window.in_hotspot = false;
+        }
+      })
+      .catch(error => {
+        console.error('Fetch error:', error);
         updateStatus(-1, "Device", null, null, null, false);
         window.in_hotspot = false;
-      }
-    })
-    .catch(error => {
-      console.error('Fetch error:', error);
-      updateStatus(-1, "Device", null, null, null, false);
-      window.in_hotspot = false;
-    });
+      });
 
-  fetch('../logs/log_current.csv?t=' + new Date().getTime())
-    .then(response => {
-      if (!response.ok) throw new Error('Network response was not ok');
-      return response.text();
-    })
-    .then(text => {
-      const lines = text.trim().split('\n');
+    fetch('../logs/log_current.csv?t=' + new Date().getTime())
+      .then(response => {
+        if (!response.ok) throw new Error('Network response was not ok');
+        return response.text();
+      })
+      .then(text => {
+        const lines = text.trim().split('\n');
 
-      if (lines.length < 3) {
-        throw new Error('Log file is empty or has insufficient data');
-      }
-
-      // Find the header line (skip blank lines)
-      let headerLine = '';
-      for (let line of lines) {
-        if (line.trim() !== '') {
-          headerLine = line;
-          break;
+        if (lines.length < 3) {
+          throw new Error('Log file is empty or has insufficient data');
         }
-      }
 
-      if (headerLine === '') {
-        throw new Error('No header line found in log');
-      }
+        let headerLine = '';
+        for (let line of lines) {
+          if (line.trim() !== '') {
+            headerLine = line;
+            break;
+          }
+        }
 
-      const headers = headerLine.split(';').map(h => h.trim());
-      const lastLine = lines[lines.length - 1].split(';');
+        if (headerLine === '') {
+          throw new Error('No header line found in log');
+        }
 
-      const sensorIndex = headers.indexOf('bcmSen_880nm') !== -1
-        ? headers.indexOf('bcmSen_880nm')
-        : headers.indexOf('bcmSen');
+        const headers = headerLine.split(';').map(h => h.trim());
+        const lastLine = lines[lines.length - 1].split(';');
 
-      const refIndex = headers.indexOf('bcmRef_880nm') !== -1
-        ? headers.indexOf('bcmRef_880nm')
-        : headers.indexOf('bcmRef');
+        const sensorIndex = headers.indexOf('bcmSen_880nm') !== -1
+          ? headers.indexOf('bcmSen_880nm')
+          : headers.indexOf('bcmSen');
 
-      if (sensorIndex === -1 || refIndex === -1) {
-        console.error('Available headers:', headers);
-        throw new Error('Required columns "bcmSen_880nm" or "bcmRef_880nm" not found');
-      }
+        const refIndex = headers.indexOf('bcmRef_880nm') !== -1
+          ? headers.indexOf('bcmRef_880nm')
+          : headers.indexOf('bcmRef');
 
-      const sensorVal = parseFloat(lastLine[sensorIndex]);
-      const refVal = parseFloat(lastLine[refIndex]);
+        if (sensorIndex === -1 || refIndex === -1) {
+          console.error('Available headers:', headers);
+          throw new Error('Required columns "bcmSen_880nm" or "bcmRef_880nm" not found');
+        }
 
-      if (isNaN(sensorVal) || isNaN(refVal) || refVal === 0) {
-        console.error('Invalid data row:', lastLine);
-        throw new Error('Invalid sensor/reference data in log');
-      }
+        const sensorVal = parseFloat(lastLine[sensorIndex]);
+        const refVal = parseFloat(lastLine[refIndex]);
 
-      const loading = 100 - Math.min(100, (sensorVal / refVal) * 100);
+        if (isNaN(sensorVal) || isNaN(refVal) || refVal === 0) {
+          console.error('Invalid data row:', lastLine);
+          throw new Error('Invalid sensor/reference data in log');
+        }
 
-const filterButton = document.getElementById('filterStatusValue');
-if (filterButton) {
-  filterButton.textContent = 'Filter Loading: ' + loading.toFixed(1) + '%';
+        const loading = 100 - Math.min(100, (sensorVal / refVal) * 100);
 
-  let colorClass = 'btn-success'; 
-  if (loading > 80) {
-    colorClass = 'btn-dark';
-  } else if (loading > 60) {
-    colorClass = 'btn-danger';
-  } else if (loading > 40) {
-    colorClass = 'btn-warning';
-  } else if (loading > 20) {
-    colorClass = 'btn-secondary';
+        const filterButton = document.getElementById('filterStatusValue');
+        if (filterButton) {
+          filterButton.textContent = 'Filter Loading: ' + loading.toFixed(1) + '%';
+
+          let colorClass = 'btn-success';
+          if (loading > 80) {
+            colorClass = 'btn-dark';
+          } else if (loading > 60) {
+            colorClass = 'btn-danger';
+          } else if (loading > 40) {
+            colorClass = 'btn-warning';
+          } else if (loading > 20) {
+            colorClass = 'btn-secondary';
+          }
+
+          filterButton.className = 'btn btn-sm ' + colorClass;
+        }
+      })
+      .catch(error => {
+        console.error('Error fetching filter status:', error);
+
+        const filterButton = document.getElementById('filterStatusValue');
+        if (filterButton) {
+          filterButton.textContent = 'Filter status not available yet';
+          filterButton.className = 'btn btn-sm btn-secondary';
+        }
+      });
   }
+  window.fetchStatus = fetchStatus;
 
-  filterButton.className = 'btn btn-sm ' + colorClass;
-}
+  function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
+    window.deviceName = deviceName;
+    if (status != -1 && (!calibrationTime || (filterStatus !== null && filterStatus < 2)) &&
+      (!window.is_ebcMeter || (window.is_ebcMeter && filterStatus === 0))) {
+      showWarningModal(calibrationTime, filterStatus);
+    }
+    console.log(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot);
+    const statusDiv = document.getElementById('statusDiv');
+    if (!statusDiv) return;
+    statusDiv.className = 'status-div';
 
+    let formattedCreationTime = formatTimeString(creationTimeString);
+    let formattedCalibrationTime = formatTimeString(calibrationTime);
+    let statusText = getStatusText(status, deviceName, formattedCreationTime);
+    const calibrationTimeDiv = document.getElementById('calibrationTime');
+    const filterStatusDiv = document.getElementById('filterStatusDiv');
 
-    })
-    .catch(error => {
-      console.error('Error fetching filter status:', error);
+    if (calibrationTimeDiv) {
+      calibrationTimeDiv.textContent = formattedCalibrationTime ?
+        `Last calibration: ${formattedCalibrationTime}` : 'No calibration data';
+    }
 
-      const filterButton = document.getElementById('filterStatusValue');
-      if (filterButton) {
-        filterButton.textContent = 'N/A';
-        filterButton.className = 'btn btn-sm btn-secondary';
-      }
-    });
-}
+    if (filterStatusDiv) {
+      filterStatusDiv.textContent = filterStatus !== null ?
+        `Filter status: ${filterStatus}/5` : 'No filter status';
+    }
+    statusDiv.textContent = statusText;
+    setStatusColors(statusDiv, status);
+    updateHotspotWarning(in_hotspot);
 
-
-function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
-  window.deviceName = deviceName;
-  if (status != -1 && (!calibrationTime || (filterStatus !== null && filterStatus < 2)) &&
-    (!window.is_ebcMeter || (window.is_ebcMeter && filterStatus === 0))) {
-    showWarningModal(calibrationTime, filterStatus);
+    if ((status === '2' || status === '3') && typeof window.updateCurrentLogsFunction === 'function') {
+      window.updateCurrentLogsFunction();
+    }
   }
-  console.log(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot)
-  const statusDiv = document.getElementById('statusDiv');
-  statusDiv.className = 'status-div';
-
-  let formattedCreationTime = formatTimeString(creationTimeString);
-  let formattedCalibrationTime = formatTimeString(calibrationTime);
-  let statusText = getStatusText(status, deviceName, formattedCreationTime);
-  const calibrationTimeDiv = document.getElementById('calibrationTime');
-  const filterStatusDiv = document.getElementById('filterStatusDiv');
-
-  if (calibrationTimeDiv) {
-    calibrationTimeDiv.textContent = formattedCalibrationTime ?
-      `Last calibration: ${formattedCalibrationTime}` : 'No calibration data';
-  }
-
-  if (filterStatusDiv) {
-    filterStatusDiv.textContent = filterStatus !== null ?
-      `Filter status: ${filterStatus}/5` : 'No filter status';
-  }
-  statusDiv.textContent = statusText;
-  setStatusColors(statusDiv, status);
-  updateHotspotWarning(in_hotspot);
-
-  // Start auto-refresh when script is running (status 2 or 3)
-  if ((status === '2' || status === '3') && typeof window.updateCurrentLogsFunction === 'function') {
-    window.updateCurrentLogsFunction();
-  }
-}
 
   function formatTimeString(timeString) {
     if (!timeString || timeString.length < 13) return '';
@@ -562,38 +554,38 @@ function updateStatus(status, deviceName, creationTimeString, calibrationTime, f
 
   function handleTabSwitch(newTab) {
     if (isDirty) {
-      const confirmSwitch = confirm('You have unsaved changes. Do you want to save them before switching?'); //
+      const confirmSwitch = confirm('You have unsaved changes. Do you want to save them before switching?');
       if (confirmSwitch) {
         let activeTabId = null;
 
-        tabsConfig.forEach(tab => { //
-          if ($(`#${tab.tabId}`).hasClass('active')) { //
-            activeTabId = tab.tabId; //
+        tabsConfig.forEach(tab => {
+          if ($(`#${tab.tabId}`).hasClass('active')) {
+            activeTabId = tab.tabId;
           }
         });
 
         if (activeTabId) {
           saveConfiguration(getFormIdFromConfigType(tabsConfig.find(tab => tab.tabId === activeTabId).configType))
             .then(() => {
-                isDirty = false; // Reset only after save is confirmed
-                activateAndLoadConfig(newTab);
+              isDirty = false;
+              activateAndLoadConfig(newTab);
             })
             .catch(error => {
-                console.error('Error saving configuration:', error);
-                // Decide what to do on error: keep isDirty true, or proceed
-                activateAndLoadConfig(newTab); // Proceed anyway, or handle error
+              console.error('Error saving configuration:', error);
+              activateAndLoadConfig(newTab);
             });
         } else {
-            activateAndLoadConfig(newTab); // No active tab, proceed
+          activateAndLoadConfig(newTab);
         }
       } else {
-        isDirty = false; // User chose NOT to save, so discard changes
+        isDirty = false;
         activateAndLoadConfig(newTab);
       }
     } else {
       activateAndLoadConfig(newTab);
     }
   }
+
   function monitorChanges(formId) {
     const form = document.getElementById(formId);
     if (form) {
@@ -627,153 +619,152 @@ function updateStatus(status, deviceName, creationTimeString, calibrationTime, f
     return window.location.protocol + '//' + window.location.hostname + ':5000';
   }
 
-function loadConfig(configType) {
+  function loadConfig(configType) {
     const formId = getFormIdFromConfigType(configType);
     const tbody = document.querySelector(`#${formId} tbody`);
 
     if (!tbody) {
-        console.error(`Could not find tbody for formId: ${formId}`);
-        return;
+      console.error(`Could not find tbody for formId: ${formId}`);
+      return;
     }
 
-    // Show loading indicator
     tbody.innerHTML = '<tr><td colspan="2" class="text-center"><em>Loading...</em></td></tr>';
 
     fetch(`${getBaseUrl()}/load-config`)
-        .then(response => response.json())
-        .then(data => {
-            tbody.innerHTML = ''; // Clear loading indicator
+      .then(response => response.json())
+      .then(data => {
+        tbody.innerHTML = '';
 
-            Object.entries(data).forEach(([key, config]) => {
-                if (config.parameter === configType) {
-                    const description = config.description;
-                    let valueField = '';
+        Object.entries(data).forEach(([key, config]) => {
+          if (config.parameter === configType) {
+            const description = config.description;
+            let valueField = '';
 
-                    if (config.type === 'boolean') {
-                        const checkedAttr = config.value ? 'checked' : '';
-                        valueField = `<input name="${key}" type="checkbox" ${checkedAttr} data-toggle="toggle" data-onstyle="info" data-offstyle="light">`;
-                    } else if (config.type === 'number' || config.type === 'float') {
-                        valueField = `<input type="number" class="form-control" name="${key}" value="${config.value}">`;
-                    } else if (config.type === 'string') {
-                        valueField = `<input type="text" class="form-control" name="${key}" value="${config.value}">`;
-                    } else if (config.type === 'array') {
-                        valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
-                    }
+            if (config.type === 'boolean') {
+              const checkedAttr = config.value ? 'checked' : '';
+              valueField = `<input name="${key}" type="checkbox" ${checkedAttr} data-toggle="toggle" data-onstyle="info" data-offstyle="light">`;
+            } else if (config.type === 'number' || config.type === 'float') {
+              valueField = `<input type="number" class="form-control" name="${key}" value="${config.value}">`;
+            } else if (config.type === 'string') {
+              valueField = `<input type="text" class="form-control" name="${key}" value="${config.value}">`;
+            } else if (config.type === 'array') {
+              valueField = `<input type="text" class="form-control array" name="${key}" value="${JSON.stringify(config.value)}">`;
+            }
 
-                    const row = `<tr data-toggle="tooltip" data-placement="top" title="${description}">
+            const row = `<tr data-toggle="tooltip" data-placement="top" title="${description}">
                                 <td>${description}</td>
                                 <td>${valueField}</td>
                             </tr>`;
-                    tbody.innerHTML += row;
-                }
-            });
-
-            $('[data-toggle="toggle"]').bootstrapToggle();
-            monitorChanges(formId);
-        })
-        .catch(error => {
-            console.error('Failed to load configuration:', error);
-            tbody.innerHTML = '<tr><td colspan="2" class="text-center text-danger"><em>Failed to load configuration.</em></td></tr>';
+            tbody.innerHTML += row;
+          }
         });
-}
 
- function saveConfiguration(configType) {
-    return new Promise((resolve, reject) => { // Wrap in a Promise
-      const formId = getFormIdFromConfigType(configType); //
-      const form = document.getElementById(formId); //
-      const updatedConfig = {}; //
+        $('[data-toggle="toggle"]').bootstrapToggle();
+        monitorChanges(formId);
+      })
+      .catch(error => {
+        console.error('Failed to load configuration:', error);
+        tbody.innerHTML = '<tr><td colspan="2" class="text-center text-danger"><em>Failed to load configuration.</em></td></tr>';
+      });
+  }
 
-      form.querySelectorAll('input[type="checkbox"], input[type="number"], input[type="text"]').forEach(input => { //
-        const key = input.name; //
-        let value = input.value; //
+  function saveConfiguration(configType) {
+    return new Promise((resolve, reject) => {
+      const formId = getFormIdFromConfigType(configType);
+      const form = document.getElementById(formId);
+      const updatedConfig = {};
 
-        if (input.type === 'checkbox') { //
-          value = input.checked; //
-        } else if (input.classList.contains('array')) { //
-          try { //
-            value = JSON.parse(input.value); //
-          } catch (e) { //
-            console.error('Failed to parse array input:', e); //
+      form.querySelectorAll('input[type="checkbox"], input[type="number"], input[type="text"]').forEach(input => {
+        const key = input.name;
+        let value = input.value;
+
+        if (input.type === 'checkbox') {
+          value = input.checked;
+        } else if (input.classList.contains('array')) {
+          try {
+            value = JSON.parse(input.value);
+          } catch (e) {
+            console.error('Failed to parse array input:', e);
           }
         }
 
-        if (input.type === 'number') { //
-          value = value.replace(/,/g, '.'); //
+        if (input.type === 'number') {
+          value = value.replace(/,/g, '.');
         }
 
-        const description = input.closest('tr').getAttribute('title')?.trim() || ''; //
+        const description = input.closest('tr').getAttribute('title')?.trim() || '';
 
-        if (key) { //
-          updatedConfig[key] = { //
-            value: value, //
-            description: description, //
-            type: determineType(input), //
-            parameter: configType //
+        if (key) {
+          updatedConfig[key] = {
+            value: value,
+            description: description,
+            type: determineType(input),
+            parameter: configType
           };
         }
       });
 
-      function determineType(input) { //
-        if (input.type === 'checkbox') { //
-          return 'boolean'; //
-        } else if (input.type === 'number') { //
-          return 'number'; //
-        } else if (input.classList.contains('array')) { //
-          return 'array'; //
-        } else if (input.type === 'text') { //
-          return 'string'; //
+      function determineType(input) {
+        if (input.type === 'checkbox') {
+          return 'boolean';
+        } else if (input.type === 'number') {
+          return 'number';
+        } else if (input.classList.contains('array')) {
+          return 'array';
+        } else if (input.type === 'text') {
+          return 'string';
         } else {
-          return typeof value; //
+          return typeof value;
         }
       }
 
-      fetch(`${getBaseUrl()}/load-config`) //
-        .then(response => response.json()) //
-        .then(existingConfig => { //
-          const mergedConfig = { ...existingConfig }; //
+      fetch(`${getBaseUrl()}/load-config`)
+        .then(response => response.json())
+        .then(existingConfig => {
+          const mergedConfig = { ...existingConfig };
 
-          Object.keys(updatedConfig).forEach(key => { //
-            mergedConfig[key] = updatedConfig[key]; //
+          Object.keys(updatedConfig).forEach(key => {
+            mergedConfig[key] = updatedConfig[key];
           });
 
-          fetch(`${getBaseUrl()}/save-config`, { //
-              method: 'POST', //
-              headers: { //
-                'Content-Type': 'application/json' //
+          fetch(`${getBaseUrl()}/save-config`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
               },
-              body: JSON.stringify(mergedConfig) //
+              body: JSON.stringify(mergedConfig)
             })
-            .then(response => { //
-              if (!response.ok) { //
-                throw new Error('Failed to save configuration'); //
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Failed to save configuration');
               }
-              console.log('Configuration saved successfully'); //
-              isDirty = false; // Reset isDirty flag upon successful save
-              resolve(); // Resolve the Promise
+              console.log('Configuration saved successfully');
+              isDirty = false;
+              resolve();
             })
             .catch(error => {
-              console.error('Failed to save configuration:', error); //
-              reject(error); // Reject the Promise on error
+              console.error('Failed to save configuration:', error);
+              reject(error);
             });
         })
         .catch(error => {
-          console.error('Failed to load configuration:', error); //
-          reject(error); // Reject the Promise on error
+          console.error('Failed to load configuration:', error);
+          reject(error);
         });
-    }); // End of Promise
+    });
   }
 
   function saveConfigurationBasedOnTab(tabId) {
-    const tabToConfigMap = { //
-      'session-tab': 'session', //
-      'device-tab': 'device', //
-      'administration-tab': 'administration', //
+    const tabToConfigMap = {
+      'session-tab': 'session',
+      'device-tab': 'device',
+      'administration-tab': 'administration',
       'email-tab': 'email'
     };
 
-    const configType = tabToConfigMap[tabId]; //
-    if (configType) { //
-      saveConfiguration(configType); //
+    const configType = tabToConfigMap[tabId];
+    if (configType) {
+      saveConfiguration(configType);
     }
   }
 
@@ -1037,8 +1028,7 @@ function loadConfig(configType) {
     });
   }
 
-
-function confirmStartNewLog(e) {
+  function confirmStartNewLog(e) {
     e.preventDefault();
 
     if ($(e.target).data('processing')) return;
@@ -1046,78 +1036,78 @@ function confirmStartNewLog(e) {
 
     const isEbcMeter = typeof window.is_ebcMeter !== 'undefined' && window.is_ebcMeter === true;
     const messageText = "<p>This will start a new log. It takes a few moments for the new chart to appear.</p>";
-    
+
     bootbox.dialog({
-        title: 'Start New Log?',
-        message: messageText,
-        size: 'small',
-        buttons: {
-            cancel: {
-                label: "No",
-                className: 'btn-secondary',
-                callback: function() {
-                    $(e.target).data('processing', false);
-                }
-            },
-            ok: {
-                label: "Yes, Start New Log",
-                className: 'btn-danger',
-                callback: function() {
-                    // Restored original messages with the progress bar HTML structure
-                    const processingModalMessage = isEbcMeter ?
-                        '<div class="text-center">' +
-                        '<p>It takes about 5-10 minutes for the first samples to appear.</p>' +
-                        '<p>Please note that measurements will be most accurate once the device has reached a stable running temperature.</p>' +
-                        '<p>For most accurate emission control, you may wait until the temperature curve flattens.</p>' +
-                        '<div class="progress mt-3" style="height: 20px;">' +
-                        '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>' +
-                        '</div></div>' :
-                        '<div class="text-center">' +
-                        '<p>It takes a few minutes for the first samples to appear.</p>' +
-                        '<p>Please note that samples might be inaccurate until the device has reached running temperature.</p>' +
-                        '<div class="progress mt-3" style="height: 20px;">' +
-                        '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>' +
-                        '</div></div>';
+      title: 'Start New Log?',
+      message: messageText,
+      size: 'small',
+      buttons: {
+        cancel: {
+          label: "No",
+          className: 'btn-secondary',
+          callback: function() {
+            $(e.target).data('processing', false);
+          }
+        },
+        ok: {
+          label: "Yes, Start New Log",
+          className: 'btn-danger',
+          callback: function() {
+            const processingModalMessage = isEbcMeter ?
+              '<div class="text-center">' +
+              '<p>It takes about 5-10 minutes for the first samples to appear.</p>' +
+              '<p>Please note that measurements will be most accurate once the device has reached a stable running temperature.</p>' +
+              '<p>For most accurate emission control, you may wait until the temperature curve flattens.</p>' +
+              '<div class="progress mt-3" style="height: 20px;">' +
+              '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>' +
+              '</div></div>' :
+              '<div class="text-center">' +
+              '<p>It takes a few minutes for the first samples to appear.</p>' +
+              '<p>Please note that samples might be inaccurate until the device has reached running temperature.</p>' +
+              '<div class="progress mt-3" style="height: 20px;">' +
+              '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>' +
+              '</div></div>';
 
-                    const processingModal = bootbox.dialog({
-                        title: 'Initializing New Log...',
-                        message: processingModalMessage,
-                        closeButton: false
-                    });
+            const processingModal = bootbox.dialog({
+              title: 'Initializing New Log...',
+              message: processingModalMessage,
+              closeButton: false
+            });
 
-                    $.ajax({
-                        type: 'post',
-                        url: 'index.php',
-                        data: { exec_new_log: true },
-                        timeout: 40000,
-                        success: function() {
-                            const totalWaitTime = 15000; 
-                            const intervalTime = 150;
-                            let elapsedTime = 0;
-                            const progressBar = processingModal.find('.progress-bar');
+            $.ajax({
+              type: 'post',
+              url: 'index.php',
+              data: { exec_new_log: true },
+              timeout: 40000,
+              success: function() {
+                const totalWaitTime = 15000;
+                const intervalTime = 150;
+                let elapsedTime = 0;
+                const progressBar = processingModal.find('.progress-bar');
 
-                            const progressInterval = setInterval(function() {
-                                elapsedTime += intervalTime;
-                                const percentComplete = Math.min(Math.round((elapsedTime / totalWaitTime) * 100), 100);
-                                progressBar.css('width', percentComplete + '%');
+                const progressInterval = setInterval(function() {
+                  elapsedTime += intervalTime;
+                  const percentComplete = Math.min(Math.round((elapsedTime / totalWaitTime) * 100), 100);
+                  progressBar.css('width', percentComplete + '%');
 
-                                if (percentComplete >= 100) {
-                                    clearInterval(progressInterval);
-                                    window.location.reload();
-                                }
-                            }, intervalTime);
-                        },
-                        error: function() {
-                            processingModal.modal('hide');
-                            bootbox.alert('There was an error starting the new log.');
-                            $(e.target).data('processing', false);
-                        }
-                    });
-                }
-            }
+                  if (percentComplete >= 100) {
+                    clearInterval(progressInterval);
+                    window.location.reload();
+                  }
+                }, intervalTime);
+              },
+              error: function() {
+                processingModal.modal('hide');
+                bootbox.alert('There was an error starting the new log.');
+                $(e.target).data('processing', false);
+              }
+            });
+          }
         }
+      }
     });
-}
+  }
+
   function fetchAndProcessLogFile(logType, elementId) {
     fetch(`../../maintenance_logs/${logType}.log`)
       .then(response => {
@@ -1168,39 +1158,39 @@ function confirmStartNewLog(e) {
       .catch(error => console.error(error));
   }
 
-function addDeleteButtonsToLogs() {
-  document.querySelectorAll('#large-files table tbody, #small-files table tbody').forEach(tableBody => {
-    const rows = Array.from(tableBody.querySelectorAll('tr'));
-    rows.forEach((row, index) => {
-      const downloadLink = row.querySelector('td:last-child a');
-      if (!downloadLink) return;
-      const existingDeleteBtn = row.querySelector('.btn-danger');
-      if (existingDeleteBtn) return;
-      
-      const fileName = downloadLink.getAttribute('href').split('/').pop();
-      const dateText = row.querySelector('td:first-child').textContent;
-      const deleteBtn = document.createElement('button');
-      deleteBtn.type = 'button';
-      deleteBtn.className = 'btn btn-danger ml-2';
-      deleteBtn.innerText = 'Delete';
-      
-      const isNewestLog = rows.every(otherRow => {
-        const otherDateText = otherRow.querySelector('td:first-child').textContent;
-        return dateText >= otherDateText;
+  function addDeleteButtonsToLogs() {
+    document.querySelectorAll('#large-files table tbody, #small-files table tbody').forEach(tableBody => {
+      const rows = Array.from(tableBody.querySelectorAll('tr'));
+      rows.forEach(row => {
+        const downloadLink = row.querySelector('td:last-child a');
+        if (!downloadLink) return;
+        const existingDeleteBtn = row.querySelector('.btn-danger');
+        if (existingDeleteBtn) return;
+
+        const fileName = downloadLink.getAttribute('href').split('/').pop();
+        const dateText = row.querySelector('td:first-child').textContent;
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'btn btn-danger ml-2';
+        deleteBtn.innerText = 'Delete';
+
+        const isNewestLog = rows.every(otherRow => {
+          const otherDateText = otherRow.querySelector('td:first-child').textContent;
+          return dateText >= otherDateText;
+        });
+
+        if (isNewestLog) {
+          deleteBtn.disabled = true;
+          deleteBtn.title = "Cannot delete the most recent log file";
+          deleteBtn.classList.add('disabled');
+        } else {
+          deleteBtn.onclick = () => showDeleteConfirmation(fileName);
+        }
+
+        row.querySelector('td:last-child').appendChild(deleteBtn);
       });
-      
-      if (isNewestLog) {
-        deleteBtn.disabled = true;
-        deleteBtn.title = "Cannot delete the most recent log file";
-        deleteBtn.classList.add('disabled');
-      } else {
-        deleteBtn.onclick = () => showDeleteConfirmation(fileName);
-      }
-      
-      row.querySelector('td:last-child').appendChild(deleteBtn);
     });
-  });
-}
+  }
 
   function showDeleteConfirmation(fileName) {
     const modal = document.getElementById('deleteLogModal') || createDeleteModal();
@@ -1240,21 +1230,26 @@ function addDeleteButtonsToLogs() {
     return document.getElementById('deleteLogModal');
   }
 
-  document.querySelector('button[data-target="#downloadOld"]').addEventListener('click', () => {
-    setTimeout(addDeleteButtonsToLogs, 500);
-  });
+  const downloadOldButton = document.querySelector('button[data-target="#downloadOld"]');
+  if (downloadOldButton) {
+    downloadOldButton.addEventListener('click', () => {
+      setTimeout(addDeleteButtonsToLogs, 500);
+    });
+  }
 
   document.querySelectorAll('#logTabs a[data-toggle="tab"]').forEach(tab => {
     tab.addEventListener('shown.bs.tab', addDeleteButtonsToLogs);
   });
 
-  document.querySelector('#small-files-tab').addEventListener('shown.bs.tab', addDeleteButtonsToLogs);
-
-  document.querySelector('button[data-target="#downloadOld"]').addEventListener('click', () => {
-    setTimeout(addDeleteButtonsToLogs, 500);
-  });
+  const smallFilesTab = document.querySelector('#small-files-tab');
+  if (smallFilesTab) {
+    smallFilesTab.addEventListener('shown.bs.tab', addDeleteButtonsToLogs);
+  }
 
   function startLogFetching() {
+    if (window.logFetchStarted) return;
+    window.logFetchStarted = true;
+
     const logs = [{
       type: 'bcMeter',
       elementId: 'logBcMeter'
@@ -1262,8 +1257,6 @@ function addDeleteButtonsToLogs() {
       type: 'ap_control_loop',
       elementId: 'logApControlLoop'
     }];
-
-   
 
     logs.forEach(log => {
       fetchAndProcessLogFile(log.type, log.elementId);
@@ -1279,13 +1272,18 @@ function addDeleteButtonsToLogs() {
 });
 
 function syncDeviceTime() {
+  const statusDiv = document.getElementById("statusDiv");
+  if (statusDiv) statusDiv.textContent = "Syncing time...";
+
   const browserTime = new Date();
   const browserTimestamp = Math.floor(browserTime.getTime() / 1000);
   const formattedBrowserTime = browserTime.toLocaleString();
+
   if (document.getElementById("datetime_local")) {
-    document.getElementById("datetime_local").innerHTML = "Current time based on your Browser: <br/>" + formattedBrowserTime;
+    document.getElementById("datetime_local").innerHTML =
+      "Current time based on your Browser: <br/>" + formattedBrowserTime;
   }
-  console.log("Time Check")
+
   $.ajax({
     url: "includes/get_device_time.php",
     type: "get",
@@ -1296,28 +1294,33 @@ function syncDeviceTime() {
       const deviceTime = new Date(deviceTimestamp * 1000);
       const formattedDeviceTime = deviceTime.toLocaleString();
       const timeDifference = Math.abs(browserTimestamp - deviceTimestamp);
-      updateTimeDisplays(formattedDeviceTime);
-      if (window.in_hotspot && timeDifference >= 10) {
-        console.log("Time difference detected:", timeDifference, "seconds. Synchronizing...");
 
+      updateTimeDisplays(formattedDeviceTime);
+
+      if (window.in_hotspot && timeDifference >= 10) {
         if (document.getElementById("datetime_note")) {
-          document.getElementById("datetime_note").innerHTML = "Time difference detected. Synchronizing...";
+          document.getElementById("datetime_note").innerHTML =
+            "Time difference detected. Synchronizing...";
         }
         performTimeSync(browserTimestamp, browserTime, deviceTime, timeDifference);
       } else {
         if (document.getElementById("datetime_note")) {
-          document.getElementById("datetime_note").innerHTML = "Device time is correct (difference is less than 10 seconds).";
+          document.getElementById("datetime_note").innerHTML =
+            "Device time is correct (difference is less than 10 seconds).";
         }
-        console.log("Time is synced");
       }
-      if (document.getElementById('hotspotwarning')) {
-        document.getElementById('hotspotwarning').classList.remove('alert-danger');
-        document.getElementById('hotspotwarning').classList.add('alert');
+
+      if (document.getElementById("hotspotwarning")) {
+        document.getElementById("hotspotwarning").classList.remove("alert-danger");
+        document.getElementById("hotspotwarning").classList.add("alert");
       }
+
+      fetchStatus();
     },
-    error: function(xhr, status, error) {
+    error: function() {
       handleSyncError();
-    }
+      fetchStatus();
+    },
   });
 }
 
@@ -1332,19 +1335,29 @@ function updateTimeDisplays(formattedDeviceTime) {
 }
 
 function handleSyncError() {
-  const deviceURL = (window.deviceName !== "" && window.deviceName !== undefined) ? "http://" + window.deviceName : "";
+  const deviceURL =
+    window.deviceName !== "" && window.deviceName !== undefined
+      ? "http://" + window.deviceName
+      : "";
+
   if (document.getElementById("datetime_device")) {
-    document.getElementById("datetime_device").innerHTML = "No connection to bcMeter<br /> Wait a minute to click <a href=\"" + deviceURL + "\">here </a> after WiFi Setup";
+    document.getElementById("datetime_device").innerHTML =
+      'No connection to bcMeter<br /> Wait a minute to click <a href="' +
+      deviceURL +
+      '">here </a> after WiFi Setup';
   }
-  ["datetime_local", "set_time", "datetime_note", "devicetime"].forEach(id => {
+
+  ["datetime_local", "set_time", "datetime_note", "devicetime"].forEach((id) => {
     if (document.getElementById(id)) {
       document.getElementById(id).innerHTML = "";
     }
   });
-  if (document.getElementById('hotspotwarning')) {
-    document.getElementById('hotspotwarning').classList.remove('alert');
-    document.getElementById('hotspotwarning').classList.add('alert-danger');
+
+  if (document.getElementById("hotspotwarning")) {
+    document.getElementById("hotspotwarning").classList.remove("alert");
+    document.getElementById("hotspotwarning").classList.add("alert-danger");
   }
+
   if (window.in_hotspot) {
     syncTimeManually();
   }
@@ -1359,22 +1372,32 @@ function performTimeSync(browserTimestamp, browserTime, deviceTime, timeDifferen
     type: "post",
     data: {
       timestamp: browserTimestamp,
-      show_modal: 1
+      show_modal: 1,
     },
     success: function(response) {
       if (document.getElementById("datetime_note")) {
-        document.getElementById("datetime_note").innerHTML = "Time successfully synchronized!";
+        document.getElementById("datetime_note").innerHTML =
+          "Time successfully synchronized!";
       }
       if (document.getElementById("datetime_device")) {
-        document.getElementById("datetime_device").innerHTML = "Current time set on your bcMeter: " + formattedBrowserTime;
+        document.getElementById("datetime_device").innerHTML =
+          "Current time set on your bcMeter: " + formattedBrowserTime;
       }
-      showTimeSyncSuccessModal(formattedBrowserTime, formattedDeviceTime, timeDifference);
+      showTimeSyncSuccessModal(
+        formattedBrowserTime,
+        formattedDeviceTime,
+        timeDifference
+      );
+
+      fetchStatus();
     },
     error: function() {
       if (document.getElementById("datetime_note")) {
-        document.getElementById("datetime_note").innerHTML = "Failed to synchronize time.";
+        document.getElementById("datetime_note").innerHTML =
+          "Failed to synchronize time.";
       }
-    }
+      fetchStatus();
+    },
   });
 }
 
@@ -1527,12 +1550,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const parentModal = trigger.closest('.modal.show');
 
     if (parentModal.length) {
-        e.preventDefault();
-        const targetModalId = trigger.data('target');
-        parentModal.one('hidden.bs.modal', () => $(targetModalId).modal('show'));
-        parentModal.modal('hide');
+      e.preventDefault();
+      const targetModalId = trigger.data('target');
+      parentModal.one('hidden.bs.modal', () => $(targetModalId).modal('show'));
+      parentModal.modal('hide');
     }
-});
-  setTimeout(syncDeviceTime, 2000);
-  setInterval(syncDeviceTime, 600000);
+  });
+  setTimeout(syncDeviceTime, 6000);
 });

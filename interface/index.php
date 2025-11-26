@@ -3,8 +3,10 @@
 // Start the PHP session
 session_start();
 $_SESSION['valid_session'] = 1;
+session_write_close();  
 header('X-Accel-Buffering: no');
 header("Access-Control-Allow-Origin: *");
+
 
 if (isset($_GET['action']) && $_GET['action'] === 'get_log_files') {
     header('Content-Type: application/json');

@@ -4,13 +4,9 @@ import os
 import time
 import re
 import signal
-import requests
-import uuid
 import json
 from bcMeter_shared import config_json_handler, check_connection, manage_bcmeter_status, show_display, config, setup_logging, get_pi_revision, run_command, send_email
-import importlib
 from datetime import datetime
-import RPi.GPIO as GPIO
 from board import SCL, SDA, I2C
 import busio, smbus
 from sys import argv
@@ -19,7 +15,7 @@ from threading import Thread, Event
 i2c = busio.I2C(SCL, SDA)
 bus = smbus.SMBus(1)
 
-ctrl_lp_ver="0.9.54 2025-05-16"
+ctrl_lp_ver="1.0.0 2025-11-13"
 subprocess.Popen(["sudo", "systemctl", "start", "bcMeter_flask.service"]).communicate()
 devicename = socket.gethostname()
 
@@ -897,9 +893,9 @@ def ap_control_loop():
 		manage_bcmeter_status(action='set', bcMeter_status=4)
 	
 	config = config_json_handler()
-	scan_interval = 10
-	happy_state_check_interval = 30
-	router_check_interval = 60
+	scan_interval = 5
+	happy_state_check_interval = 20
+	router_check_interval = 40
 	last_router_check = 0
 	run_hotspot = config.get('run_hotspot', False)
 	is_ebcMeter = config.get('is_ebcMeter', False)
@@ -982,6 +978,7 @@ def ap_control_loop():
 					manage_wifi(2)
 				
 				current_status = manage_bcmeter_status(action='get', parameter='bcMeter_status')
+				#logger.debug(f"DEBUG Status: {current_status}")
 				
 				if run_hotspot or hostapd_running:
 					current_status = 3 if bcMeter_running else 4
@@ -989,7 +986,9 @@ def ap_control_loop():
 					if bcMeter_running:
 						current_status = 2
 					else:
-						if (manage_bcmeter_status(action='get', parameter='filter_status') > 3) and calibration_time is not None and not is_ebcMeter and current_status not in (5,6):
+						if current_status in (5, 6):
+							pass
+						elif (manage_bcmeter_status(action='get', parameter='filter_status') > 3) and calibration_time is not None and not is_ebcMeter:
 							print("Calibration time ", calibration_time)
 							run_bcMeter_service(f"Starting with status {current_status}")
 							current_status = 2
@@ -998,7 +997,8 @@ def ap_control_loop():
 				elif not is_online and hostapd_running:
 					current_status = 4
 				else:
-					current_status = 0
+					if current_status not in (5, 6):
+						current_status = 0
 				
 				in_hotspot = run_hotspot or hostapd_running
 				
@@ -1044,6 +1044,7 @@ def ap_control_loop():
 	except Exception as e:
 		logger.error(f"Control loop exception: {e}")
 		handle_exit_signal(signal.SIGTERM, None)
+
 
 if not is_wifi_driver_loaded():
 	logger.error("WiFi driver not loaded at startup")

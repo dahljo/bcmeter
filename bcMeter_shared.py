@@ -11,7 +11,7 @@ import platform
 import os
 import shutil
 
-bcMeter_shared_version = "1.0 2025-11-13"
+bcMeter_shared_version = "1.0.2 2026-05-08"
 
 i2c = busio.I2C(SCL, SDA)
 base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'

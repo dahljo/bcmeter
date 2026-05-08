@@ -1,5 +1,5 @@
 <?php
-//interface version 0.95 2025-04-04
+//interface version 0.97 2026-05-08
 // Start the PHP session
 session_start();
 $_SESSION['valid_session'] = 1;
@@ -813,6 +813,44 @@ echo "<script>
     <script>
         // JS to handle confirmation dialogs
         $(document).ready(function() {
+            var piRepoUrl = 'https://github.com/dahljo/bcmeter-pi';
+            var legacyNoticeKey = 'bcMeterLegacyRedesignNoticeDismissed';
+
+            function redesignNoticeDismissed() {
+                try {
+                    return window.localStorage.getItem(legacyNoticeKey) === '1';
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            function dismissRedesignNotice() {
+                try {
+                    window.localStorage.setItem(legacyNoticeKey, '1');
+                } catch (e) {}
+            }
+
+            function showLegacyRedesignNotice() {
+                if (redesignNoticeDismissed()) {
+                    return;
+                }
+
+                bootbox.dialog({
+                    title: 'Redesigned Raspberry Pi version available',
+                    message: [
+                        '<p>This legacy bcMeter Raspberry Pi software remains available for existing installations.</p>',
+                        '<p>The redesigned Raspberry Pi version was built from scratch with a cleaner architecture, better maintainability, and a more reliable setup and update workflow.</p>',
+                        '<p>For new installations or long-term maintenance, use the current Raspberry Pi repository.</p>',
+                        '<p>Questions: <a href="mailto:jd@bcmeter.org">contact jd@bcmeter.org</a>.</p>'
+                    ].join(''),
+                    buttons: {
+                        later: { label: 'Remind me later', className: 'btn-secondary' },
+                        openRepo: { label: 'Open Raspberry Pi repo', className: 'btn-info', callback: function() { window.open(piRepoUrl, '_blank'); } },
+                        dismiss: { label: 'Do not show again', className: 'btn-primary', callback: function() { dismissRedesignNotice(); } }
+                    }
+                });
+            }
+
             var dialogConfigs = {
                 'delete-old-logs': { title: 'Delete old logs?', message: '<p>This cannot be undone.</p>', url: 'includes/status.php?status=deleteOld' },
                 'download-syslog': { title: 'Download Syslog?', message: '<p>Do you want to download the syslog for debugging?</p>', url: 'includes/status.php?status=syslog' },
@@ -827,6 +865,8 @@ echo "<script>
                         ok: { label: "Yes", className: 'btn-danger', callback: function() { window.location.href = dialog.url; } }
                     }
                 });
+            } else {
+                showLegacyRedesignNotice();
             }
             // Logic to handle download button bootbox
             $('#saveGraph').on('click', function(e) {

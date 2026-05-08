@@ -34,7 +34,7 @@ from bcMeter_shared import (
 	apply_dynamic_airflow
 )
 
-bcMeter_version = "1.1.0 2025-11-13"
+bcMeter_version = "1.1.2 2026-05-08"
 base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 logger = setup_logging('bcMeter')

@@ -1,3 +1,9 @@
+## Legacy maintenance notice
+
+This repository contains the legacy Raspberry Pi bcMeter software. Existing installations can keep using it, but for new setups and long-term maintenance use the redesigned Raspberry Pi version: https://github.com/dahljo/bcmeter-pi.
+
+The redesigned version was built from scratch for better maintainability, reliability, and setup/update workflows. Contact jd@bcmeter.org for questions.
+
 ## Thank you for your interest! In this git you find everything you need to build your own bcMeter for non-commercial use as a citizen science device. for commercial use and licencing please contact jd@bcmeter.org.
 
 
@@ -10,7 +16,7 @@ see https://bcmeter.org/wiki/index.php?title=Installation#Alternative:_Manual_Se
 
 1. write raspberry LITE(!) image to micro sd card with the help of the imager (https://www.raspberrypi.com/news/raspberry-pi-imager-imaging-utility/) - use the imager to configure SSH and WiFi BEFORE starting the write process!
 2. bootup raspberry pi and log into it via ssh, download and run install.sh script: 
-wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh && sudo bash install.sh
+wget -N https://raw.githubusercontent.com/dahljo/bcmeter/main/install.sh && sudo bash install.sh
 3. run bcMeter script 
 
 

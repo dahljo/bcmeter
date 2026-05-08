@@ -1,5 +1,5 @@
 #!/bin/bash
-INSTALLER_VERSION="0.90 2025-11-02"
+INSTALLER_VERSION="0.92 2026-05-08"
 
 # Check if /home/bcMeter exists, otherwise default to /home/pi
 BASE_DIR="/home/pi"
@@ -275,7 +275,7 @@ fi
 clone_repo() {
     echo "Fetching latest bcMeter repository..."
 
-    git clone https://github.com/bcmeter/bcmeter.git "$BASE_DIR/bcmeter_tmp" || { echo "Git clone failed"; exit 1; }
+    git clone https://github.com/dahljo/bcmeter.git "$BASE_DIR/bcmeter_tmp" || { echo "Git clone failed"; exit 1; }
 
     [ -d "$BASE_DIR/bcmeter" ] && rm -rf "$BASE_DIR/bcmeter"
     [ -d "$BASE_DIR/interface" ] && rm -rf "$BASE_DIR/interface"

@@ -282,7 +282,7 @@ shell_exec('sudo systemctl daemon-reload');
                 $_SESSION['update_in_progress'] = true;
                 if ($connected) {
                     echo "bcMeter will now update, this may take a few minutes. <br /><br /><pre>";
-                    $cmd = "screen -dmS bcMeterUpdate bash -c 'cd $baseDir && sudo wget -N https://raw.githubusercontent.com/bcmeter/bcmeter/main/install.sh -P $baseDir && sudo bash $baseDir/install.sh update'";
+                    $cmd = "screen -dmS bcMeterUpdate bash -c 'cd $baseDir && sudo wget -N https://raw.githubusercontent.com/dahljo/bcmeter/main/install.sh -P $baseDir && sudo bash $baseDir/install.sh update'";
                     $proc = popen($cmd, 'r');
                     sendOutput('<pre>');
                     while (!feof($proc)) {

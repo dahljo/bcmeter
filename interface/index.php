@@ -3,7 +3,7 @@
 // Start the PHP session
 session_start();
 $_SESSION['valid_session'] = 1;
-session_write_close();  
+session_write_close();
 header('X-Accel-Buffering: no');
 header("Access-Control-Allow-Origin: *");
 
@@ -73,6 +73,11 @@ function getBcMeterConfigValue($bcMeter_variable, $default = null) {
 $is_ebcMeter = getBcMeterConfigValue('is_ebcMeter');
 $is_hotspot = getBcMeterConfigValue('run_hotspot');
 $show_undervoltage_warning = getBcMeterConfigValue('show_undervoltage_warning');
+$legacyNoticeFlag = $baseDir . '/maintenance_logs/legacy_redesign_notice.flag';
+$showLegacyUpdateNotice = file_exists($legacyNoticeFlag);
+if ($showLegacyUpdateNotice) {
+    @unlink($legacyNoticeFlag);
+}
 
 // Get bcMeter version
 $version = '';
@@ -103,7 +108,7 @@ $VERSION = implode('.', array_slice($version_parts, 0, 3));
 if (isset($_POST['conn_submit'])) {
     $wifiFile = $baseDir . '/bcMeter_wifi.json';
     $wifi_ssid = null;
-    
+
     if (trim($_POST['wifi_ssid']) === 'custom-network-selection') {
         $wifi_ssid = trim($_POST['custom_wifi_name']);
     } else {
@@ -119,17 +124,17 @@ if (isset($_POST['conn_submit'])) {
             }
         }
     }
-    
+
     $data = array("wifi_ssid" => $wifi_ssid, "wifi_pwd" => $wifi_pwd);
     file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
-    
+
     // Attempt to trigger a reconnection
     exec('systemctl show --property MainPID --value bcMeter_ap_control_loop.service', $output);
     $pid = isset($output[0]) ? $output[0] : 0;
     if ($pid > 0) {
         posix_kill($pid, 10); // Send SIGUSR1 signal
     }
-    
+
     exit();
 }
 
@@ -170,7 +175,7 @@ $check = checkUpdate();
 
 if (isset($_POST['exec_new_log'])) {
     exec('sudo systemctl restart bcMeter > /dev/null 2>&1 &');
-    exit(); 
+    exit();
 }
 
 foreach ($_POST as $action => $value) {
@@ -348,7 +353,7 @@ echo "<script>
                 <div id='undervoltage-status' class='alert alert-warning'></div>
             <?php endif; ?>
 
-       
+
             <div id="svg-container">
                 <div class="tooltip" style="position: absolute;"></div>
                 <svg id="line-chart"></svg>
@@ -464,9 +469,9 @@ echo "<script>
                                 <form method="post" class="d-block mb-2">
                                     <input type="submit" id="bcMeter_calibration" name="bcMeter_calibration" value="Calibrate Device" class="btn btn-primary btn-block" />
                                 </form>
-                                
+
                                 <button type="button" class="btn btn-primary btn-block mb-2" data-toggle="modal" data-target="#wifisetup">WiFi Setup</button>
-                                
+
                                 <form method="post" class="d-block mb-2">
                                     <input type="submit" id="bcMeter_update" name="bcMeter_update" value="Check for Updates" class="btn btn-primary btn-block" />
                                 </form>
@@ -591,11 +596,11 @@ echo "<script>
                     <ul class="nav nav-tabs" id="configTabs" role="tablist">
                         <?php foreach ($tabs as $type => $title): ?>
                             <li class="nav-item">
-                                <a class="nav-link <?php if ($type === 'session') echo 'active'; ?>" 
-                                   id="<?= $type ?>-tab" 
-                                   data-toggle="tab" 
-                                   href="#<?= $type ?>" 
-                                   role="tab" 
+                                <a class="nav-link <?php if ($type === 'session') echo 'active'; ?>"
+                                   id="<?= $type ?>-tab"
+                                   data-toggle="tab"
+                                   href="#<?= $type ?>"
+                                   role="tab"
                                    aria-controls="<?= $type ?>"> <?= $title ?>
                                 </a>
                             </li>
@@ -615,7 +620,7 @@ echo "<script>
             </div>
         </div>
     </div>
-    
+
     <div class="modal fade" id="scaleModal" tabindex="-1" role="dialog">
         <div class="modal-dialog" role="document">
             <div class="modal-content">
@@ -655,7 +660,7 @@ echo "<script>
             </div>
         </div>
     </div>
-    
+
 
 
 <div class="modal fade" id="wifisetup" tabindex="-1" role="dialog" aria-labelledby="wifiSetupLabel" aria-hidden="true">
@@ -719,6 +724,28 @@ echo "<script>
     </div>
 </div>
 
+<div class="modal fade" id="deleteWifiModal" tabindex="-1" role="dialog" aria-labelledby="deleteWifiModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteWifiModalLabel">Confirm WiFi Deletion</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p><strong>Are you sure you want to delete all saved WiFi credentials?</strong></p>
+                <p class="text-muted">After deletion, it may take up to 5 minutes for the device's hotspot to become available for reconnection.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <form method="POST" action="index.php" style="display: inline;">
+                    <button type="submit" name="reset_wifi_json" class="btn btn-danger">Delete Credentials</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 
 
      <div class="modal fade" id="systemlogs" tabindex="-1" role="dialog" aria-labelledby="systemlogsLabel" aria-hidden="true">
@@ -772,32 +799,6 @@ echo "<script>
 </div>
 
 
-<div class="modal fade" id="deleteWifiModal" tabindex="-1" role="dialog" aria-labelledby="deleteWifiModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="deleteWifiModalLabel">Confirm WiFi Deletion</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p><strong>Are you sure you want to delete all saved WiFi credentials?</strong></p>
-                <p class="text-muted">After deletion, it may take up to 5 minutes for the device's hotspot to become available for reconnection.</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                <form method="POST" action="index.php" style="display: inline;">
-                    <button type="submit" name="reset_wifi_json" class="btn btn-danger">Delete Credentials</button>
-                </form>
-            </div>
-        </div>
-    </div>
-</div>
-
-
-
-
     <script src="js/jquery-3.6.0.min.js"></script>
     <script src="js/bootstrap.min.js"></script>
     <script src="js/bootbox.min.js"></script>
@@ -807,6 +808,8 @@ echo "<script>
     <script>
         var is_hotspot = <?php echo json_encode($is_hotspot); ?>;
         var is_ebcMeter = <?php echo json_encode($is_ebcMeter); ?>;
+        var showLegacyUpdateNotice = <?php echo json_encode($showLegacyUpdateNotice); ?>;
+        var legacySoftwareVersion = <?php echo json_encode($VERSION); ?>;
     </script>
     <script src="js/d3plotting.js"></script>
     <script src="js/interface.js"></script>
@@ -814,11 +817,12 @@ echo "<script>
         // JS to handle confirmation dialogs
         $(document).ready(function() {
             var piRepoUrl = 'https://github.com/dahljo/bcmeter-pi';
-            var legacyNoticeKey = 'bcMeterLegacyRedesignNoticeDismissed';
+            var imageDownloadUrl = 'https://bcmeter.org';
+            var legacyNoticeKey = 'bcMeterLegacyRedesignNoticeDismissedVersion';
 
             function redesignNoticeDismissed() {
                 try {
-                    return window.localStorage.getItem(legacyNoticeKey) === '1';
+                    return window.localStorage.getItem(legacyNoticeKey) === legacySoftwareVersion;
                 } catch (e) {
                     return false;
                 }
@@ -826,25 +830,30 @@ echo "<script>
 
             function dismissRedesignNotice() {
                 try {
-                    window.localStorage.setItem(legacyNoticeKey, '1');
+                    window.localStorage.setItem(legacyNoticeKey, legacySoftwareVersion);
                 } catch (e) {}
             }
 
-            function showLegacyRedesignNotice() {
-                if (redesignNoticeDismissed()) {
+            function showLegacyRedesignNotice(forceAfterUpdate) {
+                if (!forceAfterUpdate && redesignNoticeDismissed()) {
                     return;
                 }
 
+                var message = [
+                    forceAfterUpdate
+                        ? '<p>This legacy bcMeter has just updated from the legacy repository.</p>'
+                        : '<p>This legacy bcMeter Raspberry Pi software remains available for existing installations.</p>',
+                    '<p>The current Raspberry Pi software is the redesigned <strong>bcmeter-pi</strong> version with a cleaner architecture, better maintainability, and a more reliable setup and update workflow.</p>',
+                    '<p>For new installations or long-term maintenance, use the current Raspberry Pi repository. Complete ready-to-flash Raspberry Pi images can be downloaded from <a href="' + imageDownloadUrl + '" target="_blank" rel="noopener">bcmeter.org</a>.</p>',
+                    '<p>Questions: <a href="mailto:jd@bcmeter.org">contact jd@bcmeter.org</a>.</p>'
+                ].join('');
+
                 bootbox.dialog({
-                    title: 'Redesigned Raspberry Pi version available',
-                    message: [
-                        '<p>This legacy bcMeter Raspberry Pi software remains available for existing installations.</p>',
-                        '<p>The redesigned Raspberry Pi version was built from scratch with a cleaner architecture, better maintainability, and a more reliable setup and update workflow.</p>',
-                        '<p>For new installations or long-term maintenance, use the current Raspberry Pi repository.</p>',
-                        '<p>Questions: <a href="mailto:jd@bcmeter.org">contact jd@bcmeter.org</a>.</p>'
-                    ].join(''),
+                    title: forceAfterUpdate ? 'Legacy bcMeter updated' : 'Redesigned Raspberry Pi version available',
+                    message: message,
                     buttons: {
                         later: { label: 'Remind me later', className: 'btn-secondary' },
+                        openImage: { label: 'Open bcmeter.org', className: 'btn-info', callback: function() { window.open(imageDownloadUrl, '_blank'); } },
                         openRepo: { label: 'Open Raspberry Pi repo', className: 'btn-info', callback: function() { window.open(piRepoUrl, '_blank'); } },
                         dismiss: { label: 'Do not show again', className: 'btn-primary', callback: function() { dismissRedesignNotice(); } }
                     }
@@ -866,7 +875,7 @@ echo "<script>
                     }
                 });
             } else {
-                showLegacyRedesignNotice();
+                showLegacyRedesignNotice(showLegacyUpdateNotice);
             }
             // Logic to handle download button bootbox
             $('#saveGraph').on('click', function(e) {

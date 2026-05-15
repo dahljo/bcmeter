@@ -29,9 +29,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initInterface() {
+    setupWifiControls();
     setupDeviceControlListeners();
     setupTabSwitching();
-    setupWifiControls();
     setupModalEvents();
     loadSampleTimeConfig();
   }
@@ -126,7 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
       $('.wifi-pwd-field-exist').hide();
       $('.wifi-pwd-field').show();
     });
-    $('#saveWifiSettings').click(function(e) {
+$('#saveWifiSettings').click(function(e) {
       e.preventDefault();
       const ssid = $('#js-wifi-dropdown').val();
       let finalSsid = ssid === 'custom-network-selection' ? $('#custom_ssid').val() : ssid;
@@ -157,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
               message: `
                       <div class="text-center">
                           <p>The device is now attempting to connect to the WiFi network.<br>
-                          This may take up to 60 seconds.</p>
+                          This will take about 2 Minutes.</p>
                           <div class="progress mt-3" style="height: 20px;">
                               <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%"></div>
                           </div>
@@ -170,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             const progressBar = progressModal.find('.progress-bar');
-            const totalTime = 75000, step = 300;
+            const totalTime = 120000, step = 300;
             let elapsed = 0;
             const interval = setInterval(() => {
               elapsed += step;
@@ -229,7 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function setupWifiControls() {
+function setupWifiControls() {
     const wifiDropdown = document.getElementById('js-wifi-dropdown');
     const customNetworkInput = document.getElementById('custom-network-input');
 
@@ -245,8 +245,31 @@ document.addEventListener('DOMContentLoaded', () => {
         customNetworkInput.style.display = 'block';
       }
       $('#refreshWifi').click(fetchWifiNetworks);
-      fetchWifiNetworks();
+      fetchWifiNetworks(); // Initial fetch
     }
+  }
+
+  function fetchWifiNetworks() {
+    $('.loading-available-networks').show();
+
+    $.getJSON('includes/wlan_list.php', function(networks) {
+      window.availableNetworks = networks;
+      const dropdown = $('#js-wifi-dropdown');
+
+      dropdown.find('option:not(:first):not([value="custom-network-selection"])').remove();
+
+      dropdown.append($('<option></option>').val('custom-network-selection').text('Custom Network Selection...'));
+
+      networks.forEach(network => {
+        if (network !== window.currentWifiSsid) {
+          dropdown.append($('<option></option>').val(network).text(network));
+        }
+      });
+
+      updatePasswordFieldVisibility(window.currentWifiSsid);
+
+      $('.loading-available-networks').hide();
+    });
   }
 
   function setupModalEvents() {
@@ -768,28 +791,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function fetchWifiNetworks() {
-    $('.loading-available-networks').show();
 
-    $.getJSON('includes/wlan_list.php', function(networks) {
-      window.availableNetworks = networks;
-      const dropdown = $('#js-wifi-dropdown');
-
-      dropdown.find('option:not(:first):not([value="custom-network-selection"])').remove();
-
-      networks.forEach(network => {
-        if (network !== window.currentWifiSsid) {
-          dropdown.append($('<option></option>').val(network).text(network));
-        }
-      });
-
-      updatePasswordFieldVisibility(window.currentWifiSsid);
-
-      $('.loading-available-networks').hide();
-    });
-  }
-
-  function updatePasswordFieldVisibility(selectedNetwork) {
+function updatePasswordFieldVisibility(selectedNetwork) {
     const isInRange = window.availableNetworks?.includes(selectedNetwork);
     const hasStoredPassword = window.currentWifiSsid === selectedNetwork;
 
@@ -906,27 +909,93 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function confirmCalibration(e) {
-    e.preventDefault();
-    bootbox.dialog({
-      title: 'Calibrate bcMeter?',
-      message: "<p>Calibrate only with new filterpaper. Avoid direct sunlight. Continue? </p>",
-      size: 'medium',
-      buttons: {
-        cancel: {
-          label: "No",
-          className: 'btn-success'
-        },
-        ok: {
-          label: "Yes",
-          className: 'btn-danger',
-          callback: function() {
-            window.location.href = 'includes/status.php?status=calibration';
-          }
+function confirmCalibration(e) {
+  e.preventDefault();
+  bootbox.dialog({
+    title: 'Calibrate bcMeter?',
+    message: "<p>Calibrate only with new filterpaper. Avoid direct sunlight. Continue? </p>",
+    size: 'medium',
+    buttons: {
+      cancel: {
+        label: "No",
+        className: 'btn-success'
+      },
+      ok: {
+        label: "Yes",
+        className: 'btn-danger',
+        callback: function() {
+          startCalibrationProcess();
         }
       }
+    }
+  });
+}
+
+let calibrationPollInterval = null;
+
+function startCalibrationProcess() {
+  createCalibrationModal();
+  $('#calibrationStatusModal').modal('show');
+  $('#calibration-status-message').text('Sending command to device...');
+
+  $.post('includes/calibration_handler.php', { action: 'start' })
+    .done(function(response) {
+      if (response.status === 'started') {
+        $('#calibration-status-message').text('Stopping logger and starting calibration routine...');
+        calibrationPollInterval = setInterval(pollCalibrationStatus, 3000);
+      } else {
+        showFinalCalibrationStatus('Error: Failed to start calibration handler.', 'bg-danger');
+      }
+    })
+    .fail(function() {
+      showFinalCalibrationStatus('Error: Communication failed when trying to start calibration.', 'bg-danger');
     });
+}
+
+
+function pollCalibrationStatus() {
+  $.getJSON('includes/calibration_handler.php', { action: 'status' })
+    .done(function(data) {
+      const messageEl = $('#calibration-status-message');
+      const progressEl = $('#calibration-progress-bar');
+      const titleEl = $('#calibrationStatusModalLabel');
+
+      if (data.message) {
+        messageEl.text(data.message);
+
+        if (data.message.includes("Starting LED calibration")) {
+            titleEl.text("Calibration Running");
+            titleEl.parent().removeClass('bg-warning').addClass('bg-info');
+        }
+      }
+
+      if (data.status === 'complete') {
+        progressEl.css('width', '100%').text('100%');
+        clearInterval(calibrationPollInterval);
+        showFinalCalibrationStatus('Calibration complete. You can now start logging.', 'bg-success', true);
+      } else if (data.status === 'error') {
+        progressEl.removeClass('bg-info').addClass('bg-danger');
+        clearInterval(calibrationPollInterval);
+        showFinalCalibrationStatus('Error detected: ' + data.message, 'bg-danger', true);
+      } else {
+        let current = parseFloat(progressEl[0].style.width) || 10;
+        let next = current >= 90 ? 10 : current + 2;
+        progressEl.css('width', next + '%').text(Math.round(next) + '%');
+      }
+    })
+    .fail(function() {
+      console.log("Poll failed, retrying...");
+    });
+}
+function showFinalCalibrationStatus(message, headerClass, showFooter = false) {
+  const modal = $('#calibrationStatusModal');
+  modal.find('.modal-header').removeClass('bg-warning bg-danger bg-success').addClass(headerClass);
+  modal.find('.modal-title').text(headerClass === 'bg-success' ? 'Calibration Successful' : 'Calibration Failed');
+  $('#calibration-status-message').html(message);
+  if (showFooter) {
+    $('#calibration-modal-footer').show();
   }
+}
 
   function confirmUpdate(e) {
     e.preventDefault();
@@ -1198,6 +1267,33 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('delete-log-filepath').value = fileName;
     $('#deleteLogModal').modal('show');
   }
+
+function createCalibrationModal() {
+  if (document.getElementById('calibrationStatusModal')) return;
+  const modalHtml = `
+  <div class="modal fade" id="calibrationStatusModal" tabindex="-1" role="dialog" aria-labelledby="calibrationStatusModalLabel" aria-hidden="true" data-backdrop="static" data-keyboard="false">
+      <div class="modal-dialog" role="document">
+          <div class="modal-content">
+              <div class="modal-header bg-warning text-dark">
+                  <h5 class="modal-title" id="calibrationStatusModalLabel">Calibration in Progress</h5>
+              </div>
+              <div class="modal-body text-center">
+                  <p>The device is now performing calibration.</p>
+                  <p><strong>Calibrating... Please wait.</strong></p>
+                  <div class="progress mt-3" style="height: 25px;">
+                      <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;" id="calibration-progress-bar">0%</div>
+                  </div>
+                  <p class="mt-3 text-muted" id="calibration-status-message">Initializing...</p>
+              </div>
+              <div class="modal-footer" id="calibration-modal-footer" style="display:none;">
+                  <button type="button" class="btn btn-primary" data-dismiss="modal" onclick="window.location.reload();">Close and Reload</button>
+              </div>
+          </div>
+      </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
 
   function createDeleteModal() {
     const modalHtml = `

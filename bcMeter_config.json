@@ -39,7 +39,7 @@
         "value": false,
         "description": "Disable the LED",
         "type": "boolean",
-        "parameter": "administration"
+        "parameter": "device"
     },
     "filter_scattering_factor": {
         "value": 1.39,
@@ -117,7 +117,7 @@
         "value": 100,
         "description": "880nm IR LED Brightness",
         "type": "number",
-        "parameter": "device"
+        "parameter": "hidden"
     },
 
     "get_location": {
@@ -139,13 +139,13 @@
         "value": false,
         "description": "bcMeter is provided with a display",
         "type": "boolean",
-        "parameter": "device"
+        "parameter": "hidden"
     },
     "enable_wifi": {
         "value": true,
         "description": "Disable for use with LAN.",
         "type": "boolean",
-        "parameter": "device"
+        "parameter": "hidden"
     },
     "is_ebcMeter": {
         "value": false,
@@ -193,7 +193,7 @@
     "value": false,
     "description": "Enable 12V power output on the device",
     "type": "boolean",
-    "parameter": "device"
+    "parameter": "hidden"
 },
     "spi_vref": {
     "value": 4.096,
@@ -208,6 +208,22 @@
     "type": "integer",
     "parameter": "hidden"
 }
+,
+    "disable_led": {
+    "value": false,
+    "description": "Disable blinking LED",
+    "type": "boolean",
+    "parameter": "device"
+},
+    "iot_enable": {
+    "value": false,
+    "description": "bcMeter has 4G/IOT connectivity",
+    "type": "boolean",
+    "parameter": "hidden"
+}
+
+
+
 
 
 

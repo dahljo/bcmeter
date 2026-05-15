@@ -13,20 +13,27 @@ if (empty($_POST['hostname'])) {
     exit;
 }
 
-$newHostname = preg_replace('/[^a-zA-Z0-9\-]/', '', trim($_POST['hostname']));
-if ($newHostname === '') {
+$newHostname = trim($_POST['hostname']);
+if (!preg_match('/^[a-zA-Z0-9-]{1,63}$/', $newHostname)) {
     http_response_code(400);
-    echo json_encode(['error' => 'Invalid hostname']);
+    echo json_encode(['error' => 'Invalid hostname format']);
     exit;
 }
 
-exec("sudo hostnamectl set-hostname " . escapeshellarg($newHostname) . " > /dev/null 2>&1", $output, $returnCode);
+$errors = [];
 
-if ($returnCode === 0) {
-    file_put_contents('/etc/hostname', $newHostname . PHP_EOL);
-    exec("sudo sed -i 's/127.0.1.1.*/127.0.1.1 $newHostname/' /etc/hosts");
+exec('sudo raspi-config nonint do_hostname ' . escapeshellarg($newHostname), $output, $returnCode);
+
+if ($returnCode !== 0) {
+    $errors[] = "Failed to set system hostname (Exit code: $returnCode)";
+    http_response_code(500);
+}
+
+exec("sudo sed -i 's/127.0.1.1.*/127.0.1.1 " . escapeshellarg($newHostname) . "/' /etc/hosts");
+
+if (empty($errors)) {
     echo json_encode(['success' => true, 'hostname' => $newHostname]);
 } else {
-    http_response_code(500);
-    echo json_encode(['error' => 'Failed to set hostname']);
+    echo json_encode(['success' => false, 'error' => implode(', ', $errors)]);
 }
+?>

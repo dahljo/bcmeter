@@ -24,12 +24,12 @@ if (isset($_GET['status']) && $_GET['status'] === 'syslog') {
     $hostname = gethostname();
     $zipFilePath = '/tmp/syslog_and_maintenance_logs_' . $hostname . '_' . $timestamp . '.zip';
     $additionalSyslog = file_exists('/var/log/syslog.1') ? '/var/log/syslog.1' : '';
-    
+
     $zipCommand = "sudo zip -j $zipFilePath /var/log/syslog $baseDir/maintenance_logs/* $additionalSyslog";
     shell_exec($zipCommand);
 
     if (file_exists($zipFilePath)) {
-        while (ob_get_level()) ob_end_clean(); 
+        while (ob_get_level()) ob_end_clean();
         header('Content-Description: File Transfer');
         header('Content-Type: application/zip');
         header('Content-Disposition: attachment; filename=' . basename($zipFilePath));
@@ -106,7 +106,7 @@ function getPID() {
     $version_parts = explode('.', $version);
     $VERSION = implode('.', array_slice($version_parts, 0, 3));
     $grep = shell_exec('ps -eo pid,lstart,cmd | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3');
-    $numbers = preg_replace('/^\s+| python3 \/home\/pi\/bcMeter.py/', "", $grep);
+    $numbers = preg_replace('/^\s+| .*python3 .*bcMeter.py/', "", $grep);
     $numbers = explode(" ", $numbers);
     $PID = $numbers[0] ?? '';
     $STARTED = !empty($numbers[1]) ? implode(" ", array_slice($numbers, 1)) : '';
@@ -184,45 +184,6 @@ shell_exec('sudo systemctl daemon-reload');
 
     switch($status) {
 
-        case 'change_hostname':
-            if (isset($_GET['new_hostname'])) {
-                $new_hostname = $_GET['new_hostname'];
-                $success = true;
-                $errors = [];
-                if (!preg_match('/^[a-zA-Z0-9-]{1,63}$/', $new_hostname)) die("Invalid hostname format");
-                $setHostname = 'sudo raspi-config nonint do_hostname '. escapeshellarg($new_hostname);
-                exec($setHostname, $output, $returnCode);
-                if ($returnCode !== 0) {
-                    $success = false;
-                    $errors[] = "Failed to set hostname (exit code: $returnCode)";
-                }
-                $hostapd_conf = '/etc/hostapd/hostapd.conf';
-                $sedCommand = sprintf("sudo sed -i.backup 's/^ssid=.*/ssid=%s/' %s", escapeshellarg($new_hostname), escapeshellarg($hostapd_conf));
-                exec($sedCommand, $output, $sedReturn);
-                if ($sedReturn === 0) {
-                    $grepCommand = sprintf("sudo grep -q '^ssid=%s$' %s", escapeshellarg($new_hostname), escapeshellarg($hostapd_conf));
-                    exec($grepCommand, $output, $grepReturn);
-                    if ($grepReturn === 0) {
-                        echo "<div class='success'>✓ Hostname will change to '$new_hostname' and WiFi SSID will be updated on next reboot.</div>";
-                        error_log("Successfully updated hostname and SSID to $new_hostname");
-                    } else {
-                        $errors[] = "WiFi SSID update verification failed";
-                        exec("sudo mv ${hostapd_conf}.backup $hostapd_conf");
-                    }
-                } else {
-                    $errors[] = "Failed to update WiFi SSID in hostapd config";
-                }
-                if (!empty($errors)) {
-                    echo "<div class='error'>× Some operations failed:</div><ul>";
-                    foreach ($errors as $error) {
-                        echo "<li>$error</li>";
-                        error_log("Hostname change error: $error");
-                    }
-                    echo "</ul>";
-                }
-            }
-            echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 5000);</script>";
-            break;
 
         case 'debug':
             echo "Debug mode activated";
@@ -265,12 +226,12 @@ shell_exec('sudo systemctl daemon-reload');
         case 'shutdown':
             echo "bcMeter will now shutdown<br />You may disconnect the power source in about 20 seconds.<br /><br /><pre>";
             exec('sudo shutdown now');
-            echo "</pre><script>setTimeout(function(){window.location.replace('/interface/index.php');}, 10000);</script>";
+
             break;
 
         case 'debug':
             echo "debug log<br /><br /><pre>";
-            $cmd = 'sudo python3 ' . $baseDir . '/bcMeter.py debug';
+            $cmd = 'sudo ' . $baseDir . '/venv/bin/python3 ' . $baseDir . '/bcMeter.py debug';;
             while (@ ob_end_flush());
             $proc = popen($cmd, 'r');
             echo '<pre>';
@@ -301,7 +262,7 @@ shell_exec('sudo systemctl daemon-reload');
             }
             break;
 
-       
+
         case 'calibration':
             echo 'Starting calibration... Takes a minute<br>';
             flush();
@@ -309,7 +270,7 @@ shell_exec('sudo systemctl daemon-reload');
             executeCommand($cmd1);
             flush();
             sleep(2);
-            $cmd2 = "sudo python3 -u $baseDir/bcMeter.py cal";
+            $cmd2 = "sudo $baseDir/venv/bin/python3 -u $baseDir/bcMeter.py cal";
             executeCommand($cmd2);
             flush();
             echo "Calibration complete. You may return to interface. ";

@@ -3,6 +3,7 @@ import os
 import re
 import signal
 import socket
+import shutil
 import subprocess
 import sys
 import typing
@@ -17,7 +18,6 @@ import pigpio
 import RPi.GPIO as GPIO
 import smbus
 import spidev
-from scipy.ndimage import median_filter
 
 from bcMeter_shared import (
 	config_json_handler,
@@ -31,10 +31,16 @@ from bcMeter_shared import (
 	send_email,
 	update_config,
 	filter_values_ona,
-	apply_dynamic_airflow
+	apply_dynamic_airflow,
+	can_send_mail,
+	get_session_flag,
+	set_session_flag
 )
 
-bcMeter_version = "1.1.2 2026-05-08"
+sps30_available = False
+sps30_sensor = None
+
+bcMeter_version = "1.1.5 2026-05-15"
 base_dir = '/home/bcmeter' if os.path.isdir('/home/bcmeter') else '/home/bcMeter' if os.path.isdir('/home/bcMeter') else '/home/pi'
 
 logger = setup_logging('bcMeter')
@@ -45,6 +51,31 @@ logger.debug(config)
 logger.debug(f"bcMeter Version {bcMeter_version}")
 bus = smbus.SMBus(1)
 i2c_lock = Lock()
+
+import bcMeter_shared
+bcMeter_shared.i2c_lock = i2c_lock
+
+try:
+	from sps30_i2c import SPS30
+	_sps = SPS30(bus=1, i2c_lock=i2c_lock)
+	_sps.start()
+	sleep(1)
+	for _ in range(5):
+		if _sps.data_ready():
+			sps30_available = True
+			sps30_sensor = _sps
+			break
+		sleep(0.5)
+	if not sps30_available:
+		_sps.stop()
+		_sps.close()
+except Exception as e:
+	if debug:
+		print(f"SPS30 init failed: {e}")
+	sps30_available = False
+
+if sps30_available:
+	logger.info("SPS30 PM sensor detected and initialized")
 
 NUM_CHANNELS = config.get('num_channels', 1)
 LED_880NM_PIN = 26
@@ -81,6 +112,8 @@ twelvevolt_duty = config.get('twelvevolt_duty', 20)
 automatic_airflow_control = config.get('automatic_airflow_control', False)
 spi_vref=config.get('spi_vref', 4.096)
 
+iot_enable=config.get('iot_enable', False)
+
 bc_data_history = {
 	'unfiltered': {wl: [] for wl in WAVELENGTH_ORDER},
 	'filtered': {wl: [] for wl in WAVELENGTH_ORDER},
@@ -89,87 +122,96 @@ bc_data_history = {
 current_measured_airflow_lpm = 0.0
 desired_airflow_in_lpm = float(str(config.get('airflow_per_minute', 0.1)).replace(',', '.'))
 
-def filter_bc_values():
-	global bc_data_history, is_ebcMeter, WAVELENGTH_ORDER
-	kernel = 3 if is_ebcMeter else 5
-	for wl in WAVELENGTH_ORDER:
-		unfiltered_data = bc_data_history['unfiltered'][wl]
-		if not unfiltered_data:
-			bc_data_history['filtered'][wl] = []
-			continue
+_bc_filter_state = {}
 
-		if len(unfiltered_data) >= kernel:
-			filtered_bc = median_filter(unfiltered_data, size=kernel)
-			bc_data_history['filtered'][wl] = [int(val) for val in filtered_bc]
-		else:
-			bc_data_history['filtered'][wl] = [int(val) for val in unfiltered_data]
+def filter_bc_values():
+	global bc_data_history, is_ebcMeter, WAVELENGTH_ORDER, _bc_filter_state
+	kernel = 3 if is_ebcMeter else 5
+	state = _bc_filter_state
+	if state.get('kernel') != kernel or not state.get('windows'):
+		state['kernel'] = kernel
+		state['windows'] = {wl: deque(maxlen=kernel) for wl in WAVELENGTH_ORDER}
+		state['processed'] = {wl: 0 for wl in WAVELENGTH_ORDER}
+		for wl in WAVELENGTH_ORDER:
+			bc_data_history['filtered'][wl] = []
+	for wl in WAVELENGTH_ORDER:
+		unfiltered = bc_data_history['unfiltered'][wl]
+		processed = state['processed'].get(wl, 0)
+		if processed > len(unfiltered):
+			processed = 0
+			state['windows'][wl].clear()
+			bc_data_history['filtered'][wl] = []
+		window = state['windows'][wl]
+		for v in unfiltered[processed:]:
+			window.append(v)
+			med = numpy.median(list(window))
+			bc_data_history['filtered'][wl].append(float(med) if is_ebcMeter else int(med))
+		state['processed'][wl] = len(unfiltered)
 
 
 class ADS8344:
-    START_BIT = 0x80
-    SINGLE_END = 0x04
-    CLOCK_INTERNAL = 0x02
-    CHANNELS = {
-        0: 0x00, 1: 0x04, 2: 0x01, 3: 0x05,
-        4: 0x02, 5: 0x06, 6: 0x03, 7: 0x07
-    }
+	START_BIT = 0x80
+	SINGLE_END = 0x04
+	CLOCK_INTERNAL = 0x02
+	CHANNELS = {
+		0: 0x00, 1: 0x04, 2: 0x01, 3: 0x05,
+		4: 0x02, 5: 0x06, 6: 0x03, 7: 0x07
+	}
 
-    def __init__(self, bus=0, device=0, vref=spi_vref, busy_pin=None):
-        self.spi = spidev.SpiDev()
-        self.busy_pin = busy_pin
-        try:
-            self.spi.open(bus, device)
-            self.spi.max_speed_hz = 1000000 
-            self.spi.mode = 0
-            self.vref = vref
-            if self.busy_pin is not None:
-                GPIO.setup(self.busy_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            self.initialized = True
-        except Exception as e:
-            logger.error(f"Failed to initialize SPI: {e}")
-            self.initialized = False
+	def __init__(self, bus=0, device=0, vref=spi_vref, busy_pin=None):
+		self.spi = spidev.SpiDev()
+		self.busy_pin = busy_pin
+		try:
+			self.spi.open(bus, device)
+			self.spi.max_speed_hz = 1000000
+			self.spi.mode = 0
+			self.vref = vref
+			if self.busy_pin is not None:
+				GPIO.setup(self.busy_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+			self.initialized = True
+		except Exception as e:
+			logger.error(f"Failed to initialize SPI: {e}")
+			self.initialized = False
 
-    def close(self):
-        if hasattr(self, 'spi') and self.spi is not None:
-            self.spi.close()
+	def close(self):
+		if hasattr(self, 'spi') and self.spi is not None:
+			self.spi.close()
 
-    def read_channel(self, channel):
-        if not self.initialized:
-            return -1, None
-        try:
-            channel_bits = (self.CHANNELS[channel] & 0x7) << 4
-            cmd = self.START_BIT | self.SINGLE_END | channel_bits | self.CLOCK_INTERNAL
-            self.spi.writebytes([cmd])
+	def read_channel(self, channel):
+		if not self.initialized:
+			return -1, None
+		try:
+			channel_bits = (self.CHANNELS[channel] & 0x7) << 4
+			cmd = self.START_BIT | self.SINGLE_END | channel_bits | self.CLOCK_INTERNAL
+			self.spi.writebytes([cmd])
 
-            if self.busy_pin is not None:
-                timeout_start = time()
-                while GPIO.input(self.busy_pin) == GPIO.LOW:
-                    if time() - timeout_start > 0.002:
-                        break
-            else:
-                sleep(0.00005) 
+			if self.busy_pin is not None:
+				while GPIO.input(self.busy_pin) == GPIO.LOW:
+					pass
 
-            result = self.spi.readbytes(3)
-            value = (result[0] << 9) | (result[1] << 1) | (result[2] >> 7)
-            voltage = (value / 65536.0) * self.vref
-            return voltage, result
-        except Exception as e:
-            logger.error(f"SPI read error: {e}")
-            return -1, None
+			result = self.spi.readbytes(3)
+			value = (result[0] << 9) | (result[1] << 1) | (result[2] >> 7)
+			voltage = (value / 65536.0) * self.vref
+			return voltage, result
+		except Exception as e:
+			logger.error(f"SPI read error: {e}")
+			return -1, None
 
-    def read_all_channels(self):
-        if not self.initialized:
-            return {}
-        results = {}
-        try:
-            for ch in self.CHANNELS.keys():
-                voltage, _ = self.read_channel(ch)
-                if voltage != -1:
-                    results[f"CH{ch}"] = voltage
-            return results
-        except Exception as e:
-            logger.error(f"SPI batch read error: {e}")
-            return {}
+	def read_all_channels(self):
+		if not self.initialized:
+			return {}
+		results = {}
+		try:
+			for ch in self.CHANNELS.keys():
+				voltage, _ = self.read_channel(ch)
+				if voltage != -1:
+					results[f"CH{ch}"] = voltage
+			return results
+		except Exception as e:
+			logger.error(f"SPI batch read error: {e}")
+			return {}
+
+
 
 
 if airflow_type == 9:
@@ -253,14 +295,14 @@ def gradual_shutdown_12v(steps=20, step_delay=0.25):
 			if not pi.connected:
 				logger.warning("pigpio disconnected during 12V shutdown.")
 				break
-			
+
 			reduced_duty = max(0, int(current_duty - (step_size * (i + 1))))
 			pi.set_PWM_dutycycle(TWELVEVOLT_PIN, reduced_duty)
 			sleep(step_delay)
-		
+
 		if pi.connected:
 			pi.set_PWM_dutycycle(TWELVEVOLT_PIN, 0)
-		
+
 		logger.debug("12V power ramp-down complete or was interrupted.")
 	except Exception as e:
 		logger.error(f"Error during 12V gradual shutdown: {e}")
@@ -269,79 +311,94 @@ def gradual_shutdown_12v(steps=20, step_delay=0.25):
 				pi.set_PWM_dutycycle(TWELVEVOLT_PIN, 0)
 		except:
 			pass
-			
+
 def shutdown(reason, shutdown_code=None):
-    global reverse_dutycycle, housekeeping_thread, airflow_control_thread, sampling_thread, TWELVEVOLT_ENABLE
-    global spi_adc, use_spi
-    stop_event.set()
-    change_blinking_pattern.set()
-    print(f"Quitting: {reason}")
-    logger.debug(f"Shutdown initiated: {reason}")
-    
-    show_display("Goodbye", 0, True)
-    if reason == "SIGINT" or reason == "SIGTERM":
-        show_display("Turn off bcMeter", 1, True)
-    else:
-        show_display(f"{reason}", 1, True)
-    show_display("", 2, True)
+	global reverse_dutycycle, housekeeping_thread, airflow_control_thread, sampling_thread, TWELVEVOLT_ENABLE
+	global spi_adc, use_spi, sps30_sensor, sps30_available
+	stop_event.set()
+	change_blinking_pattern.set()
+	print(f"Quitting: {reason}")
+	logger.debug(f"Shutdown initiated: {reason}")
 
-    if use_spi and spi_adc is not None:
-        try:
-            spi_adc.close()
-            logger.debug("SPI ADC connection closed")
-        except Exception as e:
-            logger.error(f"Error closing SPI ADC: {e}")
+	if sps30_available and sps30_sensor:
+		try:
+			sps30_sensor.stop()
+			sps30_sensor.close()
+		except Exception:
+			pass
 
-    if reason != "Already running":
-        try:
-            if 'pi' in globals() and pi.connected:
-                if TWELVEVOLT_ENABLE:
-                     gradual_shutdown_12v()
-                     sleep(1)
-                if reverse_dutycycle is False:
-                    try:
-                        pi.set_PWM_dutycycle(PUMP_PIN, 0)
-                    except:
-                        pass
-                else:
-                    try:
-                        pi.set_PWM_dutycycle(PUMP_PIN, PUMP_PWM_RANGE)
-                    except:
-                        pass
-                pi.stop()
-                logger.debug("pigpio connection stopped")
-                try:
-                    subprocess.run(["sudo", "killall", "pigpiod"], check=False, timeout=2)
-                    logger.debug("pigpiod process terminated")
-                except subprocess.TimeoutExpired:
-                    logger.warning("Timeout while trying to kill pigpiod")
-        except Exception as e:
-            logger.error(f"Error stopping pigpio: {e}")
+	try:
+		if _archive_logger is not None:
+			_archive_logger.close()
+		if _current_logger is not None:
+			_current_logger.close()
+	except Exception:
+		pass
 
-    from threading import current_thread
-    current_thread_id = current_thread().ident
-    threads_to_join = []
-    if sampling_thread and sampling_thread.is_alive() and sampling_thread.ident != current_thread_id:
-        threads_to_join.append(sampling_thread)
-    if housekeeping_thread and housekeeping_thread.is_alive() and housekeeping_thread.ident != current_thread_id:
-        threads_to_join.append(housekeeping_thread)
-    if airflow_control_thread and airflow_control_thread.is_alive() and airflow_control_thread.ident != current_thread_id:
-        threads_to_join.append(airflow_control_thread)
-    for thread in threads_to_join:
-        thread.join(timeout=1)
-        if thread.is_alive():
-            logger.warning(f"Thread {thread.name} didn't terminate within timeout")
+	show_display("Goodbye", 0, True)
+	if reason == "SIGINT" or reason == "SIGTERM":
+		show_display("Turn off bcMeter", 1, True)
+	else:
+		show_display(f"{reason}", 1, True)
+	show_display("", 2, True)
 
-    if shutdown_code is None:
-        shutdown_code = 5
-    manage_bcmeter_status(action='set', bcMeter_status=shutdown_code)
+	if use_spi and spi_adc is not None:
+		try:
+			spi_adc.close()
+			logger.debug("SPI ADC connection closed")
+		except Exception as e:
+			logger.error(f"Error closing SPI ADC: {e}")
 
-    try:
-        GPIO.cleanup()
-        logger.debug("GPIO cleanup completed")
-    except Exception as e:
-        logger.error(f"Error during GPIO cleanup: {e}")
-    sys.exit(0)
+	if reason != "Already running":
+		try:
+			if 'pi' in globals() and pi.connected:
+				if TWELVEVOLT_ENABLE:
+					 gradual_shutdown_12v()
+					 sleep(1)
+				if reverse_dutycycle is False:
+					try:
+						pi.set_PWM_dutycycle(PUMP_PIN, 0)
+					except:
+						pass
+				else:
+					try:
+						pi.set_PWM_dutycycle(PUMP_PIN, PUMP_PWM_RANGE)
+					except:
+						pass
+				pi.stop()
+				logger.debug("pigpio connection stopped")
+				try:
+					subprocess.run(["sudo", "killall", "pigpiod"], check=False, timeout=2)
+					logger.debug("pigpiod process terminated")
+				except subprocess.TimeoutExpired:
+					logger.warning("Timeout while trying to kill pigpiod")
+		except Exception as e:
+			logger.error(f"Error stopping pigpio: {e}")
+
+	from threading import current_thread
+	current_thread_id = current_thread().ident
+	threads_to_join = []
+	if sampling_thread and sampling_thread.is_alive() and sampling_thread.ident != current_thread_id:
+		threads_to_join.append(sampling_thread)
+	if housekeeping_thread and housekeeping_thread.is_alive() and housekeeping_thread.ident != current_thread_id:
+		threads_to_join.append(housekeeping_thread)
+	if airflow_control_thread and airflow_control_thread.is_alive() and airflow_control_thread.ident != current_thread_id:
+		threads_to_join.append(airflow_control_thread)
+	for thread in threads_to_join:
+		thread.join(timeout=1)
+		if thread.is_alive():
+			logger.warning(f"Thread {thread.name} didn't terminate within timeout")
+
+	if shutdown_code is None:
+		shutdown_code = 5
+	manage_bcmeter_status(action='set', bcMeter_status=shutdown_code)
+
+	try:
+		GPIO.cleanup()
+		logger.debug("GPIO cleanup completed")
+	except Exception as e:
+		logger.error(f"Error during GPIO cleanup: {e}")
+	sys.exit(0)
 
 cmd = ['ps aux | grep bcMeter.py | grep -Fv grep | grep -Fv www-data | grep -Fv sudo | grep -Fiv screen | grep python3']
 process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -439,11 +496,7 @@ if not airflow_only:
 	except Exception as e:
 		logger.error("Error: %s", e)
 		shutdown("PWM initialization failed", 6)
-try:
-	from scipy.ndimage import median_filter
-except ImportError:
-	logger.error("Update bcMeter!")
-	shutdown("Update needed for scipy",6)
+
 try:
 	sht = adafruit_sht4x.SHT4x(i2c)
 	sht.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
@@ -571,6 +624,7 @@ def calibrate_sens_ref():
 	def measure_long():
 		return read_alternating_spi(10) if use_spi else read_adc(sample_time=10)
 
+
 	def auto_adjust(wl, pin, limit, dc):
 		logger.debug(f"{wl}: Starting duty search at {dc}")
 		last_safe_dc = None
@@ -583,10 +637,11 @@ def calibrate_sens_ref():
 			print(f"{wl}: sens={sens:.3f}, ref={ref:.3f}, duty={dc}")
 			too_bright = sens >= limit or ref >= limit
 			if too_bright:
-				new_dc = max(0, dc - 10)
+				new_dc = max(0, dc - 20)
 				logger.debug(f"{wl}: too bright → decreasing {dc}→{new_dc}")
 				dc = new_dc
 				update_config(variable=f"led_duty_cycle_{wl}", value=dc, description=f"LED duty cycle {wl}", type="number", parameter="administration")
+				config[f"led_duty_cycle_{wl}"] = int(dc)
 				continue
 			last_safe_dc = dc
 			if dc < 255:
@@ -603,8 +658,8 @@ def calibrate_sens_ref():
 				logger.debug(f"{wl}: too dim → increasing {dc}→{next_dc}")
 				dc = next_dc
 				update_config(variable=f"led_duty_cycle_{wl}", value=dc, description=f"LED duty cycle {wl}", type="number", parameter="administration")
+				config[f"led_duty_cycle_{wl}"] = int(dc)
 			else:
-				
 				logger.debug(f"{wl}: reached duty=255, checking minimum brightness…")
 				set_pwm_duty_cycle(pin, int(config.get(f"led_duty_cycle_{wl}", led_brightness_legacy)))
 				sleep(0.1)
@@ -615,7 +670,6 @@ def calibrate_sens_ref():
 					logger.debug(f"{wl}: LED too dim at max duty (sens={sens:.3f}, ref={ref:.3f}) → shutting down")
 					shutdown("LED too dim", 6)
 				logger.debug(f"{wl}: Using duty=255")
-
 				return 255
 
 	correction_output = []
@@ -623,13 +677,16 @@ def calibrate_sens_ref():
 	if use_spi:
 		limit = 3.8
 		active_wls = WAVELENGTH_ORDER[:NUM_CHANNELS]
+
+		final_dc = {}
 		for wl in active_wls:
 			pin = CHANNELS_CONFIG[wl]['pin']
 			start_dc = int(config.get(f"led_duty_cycle_{wl}", led_duty_cycle_880))
-			auto_adjust(wl, pin, limit, start_dc)
+			final_dc[wl] = auto_adjust(wl, pin, limit, start_dc)
+
 		for wl in active_wls:
 			pin = CHANNELS_CONFIG[wl]['pin']
-			dc = int(config.get(f"led_duty_cycle_{wl}", led_duty_cycle_880))
+			dc = int(final_dc.get(wl, config.get(f"led_duty_cycle_{wl}", led_duty_cycle_880)))
 			logger.debug(f"{wl}: Taking long measurement at duty={dc}")
 			set_pwm_duty_cycle(pin, dc)
 			sleep(0.1)
@@ -647,12 +704,24 @@ def calibrate_sens_ref():
 		wl = "880nm"
 		limit = 1.85
 		start_dc = led_duty_cycle_880
-		auto_adjust(wl, LED_880NM_PIN, limit, start_dc)
-		dc = int(config.get("led_duty_cycle_880nm", start_dc))
-		logger.debug(f"{wl}: Taking long measurement at duty={dc}")
-		set_pwm_duty_cycle(LED_880NM_PIN, dc)
+		dc = auto_adjust(wl, LED_880NM_PIN, limit, start_dc)
+		dc = int(dc)
+		dc_cfg = int(config.get("led_duty_cycle_880nm", dc))
+
+		logger.debug(f"{wl}: Taking long measurement at duty={dc_cfg}")
+		set_pwm_duty_cycle(LED_880NM_PIN, dc_cfg)
 		sleep(0.1)
 		sens, ref = measure_long()
+		if (sens > limit) or (ref > limit):
+			logger.debug("Refining duty cycle...")
+			dc = int(config.get("led_duty_cycle_880nm", start_dc))
+			dc = auto_adjust(wl, LED_880NM_PIN, limit, dc)
+			dc = int(dc)
+			logger.debug(f"{wl}: Re-Taking long measurement at duty={dc}")
+			set_pwm_duty_cycle(LED_880NM_PIN, dc)
+			sleep(0.1)
+			sens, ref = measure_long()
+
 		set_pwm_duty_cycle(LED_880NM_PIN, 0)
 		logger.debug(f"{wl}: long sens={sens:.3f}, ref={ref:.3f}")
 		print(f"{wl}: long sens={sens:.3f}, ref={ref:.3f}")
@@ -672,6 +741,7 @@ def calibrate_sens_ref():
 	for line in correction_output:
 		print(line)
 		logger.info(line)
+
 
 
 def find_adc():
@@ -699,20 +769,19 @@ def read_i2c_adc_channel(channel):
 
 	with i2c_lock:
 		if adc_rate == MCP342X_CONFIG_SPS_240_12BIT:
-			conversion_time = 1.0 / 240
+			max_conv_time = 1.0 / 240
 			N = 12
+			read_bytes = 3
 		elif adc_rate == MCP342X_CONFIG_SPS_60_14BIT:
-			conversion_time = 1.0 / 60
+			max_conv_time = 1.0 / 60
 			N = 14
+			read_bytes = 3
 		else:
-			conversion_time = 1.0 / 15
+			max_conv_time = 1.0 / 15
 			N = 16
+			read_bytes = 3
 
-		config_byte = (MCP342X_CONFIG_READY |
-					   channel |
-					   MCP342X_CONFIG_MODE_ONESHOT |
-					   adc_rate |
-					   adc_gain)
+		config_byte = (MCP342X_CONFIG_READY | channel | MCP342X_CONFIG_MODE_ONESHOT | adc_rate | adc_gain)
 
 		try:
 			bus.write_byte(MCP342X_DEFAULT_ADDRESS, config_byte)
@@ -720,21 +789,29 @@ def read_i2c_adc_channel(channel):
 			logger.error(f"I2C write error on channel {channel}: {e}")
 			return None
 
-		sleep(conversion_time * 1.4)
+		sleep(max_conv_time * 1.1)
+
+		timeout = max_conv_time * 3
+		start = time()
+		while (time() - start) < timeout:
+			try:
+				data = bus.read_i2c_block_data(MCP342X_DEFAULT_ADDRESS, 0x00, read_bytes)
+				if not (data[-1] & MCP342X_CONFIG_READY):
+					break
+				sleep(0.002)
+			except OSError:
+				sleep(0.005)
+		else:
+			return None
 
 		try:
-			data = bus.read_i2c_block_data(MCP342X_DEFAULT_ADDRESS, 0x00, 2)
 			raw_value = (data[0] << 8) | data[1]
-
-			if raw_value >= 32768:
-				raw_value -= 65536
-
-			voltage = (2 * VOLTAGE_REFERENCE * raw_value) / (2 ** N)
-
+			if raw_value >= (1 << (N - 1)):
+				raw_value -= (1 << N)
+			voltage = (2 * VOLTAGE_REFERENCE * raw_value) / (1 << N)
 			return round(voltage, 5)
-
-		except OSError as e:
-			logger.error(f"I2C read error on channel {channel}: {e}")
+		except Exception as e:
+			logger.error(f"I2C conversion error on channel {channel}: {e}")
 			return None
 
 class SamplingSession:
@@ -754,7 +831,7 @@ def calculate_airflow(samples_to_take=25):
 		if use_spi and spi_adc is not None:
 			for _ in range(samples_to_take):
 				if stop_event.is_set(): break
-				v, _ = spi_adc.read_channel(2) 
+				v, _ = spi_adc.read_channel(2)
 				if v != -1:
 					airflow_sum += v
 					airflow_count += 1
@@ -1057,119 +1134,225 @@ def read_adc(sample_time=None):
 
 	return avg_ch1, avg_ch2
 
+
+
+class CSVBufferedAppender:
+	def __init__(self, filepath, flush_interval_seconds=30):
+		self.filepath = filepath
+		self.flush_interval_seconds = flush_interval_seconds
+		self._last_flush_ts = time()
+		Path(os.path.dirname(filepath)).mkdir(parents=True, exist_ok=True)
+		self._f = open(filepath, "a", buffering=1)
+
+	def write_line(self, line):
+		self._f.write(line + "\n")
+		now_ts = time()
+		if (now_ts - self._last_flush_ts) >= self.flush_interval_seconds:
+			try:
+				self._f.flush()
+			except Exception:
+				pass
+			self._last_flush_ts = now_ts
+
+	def close(self):
+		try:
+			self._f.flush()
+		except Exception:
+			pass
+		try:
+			self._f.close()
+		except Exception:
+			pass
+
+
+
 def write_log_with_updated_bc(logFileName, base_dir, active_wavelengths):
-	global bc_data_history, is_ebcMeter, CHANNELS_CONFIG
-
-	unit = "ug" if is_ebcMeter else "ng"
-
-	header_parts = ["bcmDate", "bcmTime"]
+	global bc_data_history, is_ebcMeter, _archive_logger, _current_logger, sps30_available
+	if not bc_data_history.get('all_log_data'):
+		return
+	log_entry = bc_data_history['all_log_data'][-1]
+	log_list = [log_entry['common']['date'], log_entry['common']['time']]
 	for wl in active_wavelengths:
-		header_parts.extend([
-			f"bcmRef_{wl}", f"bcmSen_{wl}", f"bcmATN_{wl}",
-			f"BC{unit}m3_unfiltered_{wl}", f"BC{unit}m3_{wl}"
+		w_data = log_entry['wavelengths'].get(wl, {})
+		log_list.extend([
+			w_data.get('ref', 0),
+			w_data.get('sen', 0),
+			w_data.get('atn', 0),
+			w_data.get('bc_unfiltered', 0),
+			w_data.get('bc', 0)
 		])
-	header_parts.extend([
-		"relativeLoad", "AAE", "Temperature", "notice", "sampleDuration",
-		"sht_humidity", "airflow"
+	log_list.extend([
+		log_entry['common'].get('relativeLoad', 0),
+		log_entry['common'].get('aae', -1),
+		log_entry['common'].get('temp', 0),
+		log_entry['common'].get('notice', ''),
+		log_entry['common'].get('duration', 0),
+		log_entry['common'].get('humidity', 0),
+		log_entry['common'].get('airflow', 0)
 	])
-	header = ";".join(header_parts)
+	if sps30_available:
+		log_list.extend([
+			log_entry['common'].get('pm25', 0),
+			log_entry['common'].get('pm10', 0)
+		])
+	line = ";".join(map(str, log_list))
+	if _archive_logger is None or _archive_logger.filepath != (base_dir + "/logs/" + logFileName):
+		_archive_logger = CSVBufferedAppender(base_dir + "/logs/" + logFileName, flush_interval_seconds=30)
+	if _current_logger is None or _current_logger.filepath != (base_dir + "/logs/log_current.csv"):
+		_current_logger = CSVBufferedAppender(base_dir + "/logs/log_current.csv", flush_interval_seconds=30)
+	_archive_logger.write_line(line)
+	_current_logger.write_line(line)
 
-	with open(f"{base_dir}/logs/{logFileName}", "w") as log:
-		log.write(header + "\n\n")
-		for i, log_entry_dict in enumerate(bc_data_history['all_log_data']):
-			# Update the filtered 'bc' value for all wavelengths for this historical entry
-			for wl in active_wavelengths:
-				if i < len(bc_data_history['filtered'].get(wl, [])):
-					log_entry_dict['wavelengths'].setdefault(wl, {})['bc'] = bc_data_history['filtered'][wl][i]
 
-			log_list = [log_entry_dict['common']['date'], log_entry_dict['common']['time']]
-			for wl in active_wavelengths:
-				w_data = log_entry_dict['wavelengths'].get(wl, {})
-				log_list.extend([
-					w_data.get('ref', 0), w_data.get('sen', 0), w_data.get('atn', 0),
-					w_data.get('bc_unfiltered', 0), w_data.get('bc', 0)
-				])
-			log_list.extend([
-				log_entry_dict['common'].get('relativeLoad', 0),
-				log_entry_dict['common'].get('aae', -1),
-				log_entry_dict['common'].get('temp', 0),
-				log_entry_dict['common'].get('notice', ''),
-				log_entry_dict['common'].get('duration', 0),
-				log_entry_dict['common'].get('humidity', 0),
-				log_entry_dict['common'].get('airflow', 0)
-			])
-			log_string = ";".join(map(str, log_list))
-			log.write(log_string + "\n")
 
-	with open(f"{base_dir}/logs/log_current.csv", "w") as temp_log:
-		temp_log.write(header + "\n\n")
-		for i, log_entry_dict in enumerate(bc_data_history['all_log_data']):
-			# Update the filtered 'bc' value for all wavelengths for this historical entry
-			for wl in active_wavelengths:
-				if i < len(bc_data_history['filtered'].get(wl, [])):
-					log_entry_dict['wavelengths'].setdefault(wl, {})['bc'] = bc_data_history['filtered'][wl][i]
 
-			log_list = [log_entry_dict['common']['date'], log_entry_dict['common']['time']]
-			for wl in active_wavelengths:
-				w_data = log_entry_dict['wavelengths'].get(wl, {})
-				log_list.extend([
-					w_data.get('ref', 0), w_data.get('sen', 0), w_data.get('atn', 0),
-					w_data.get('bc_unfiltered', 0), w_data.get('bc', 0)
-				])
-			log_list.extend([
-				log_entry_dict['common'].get('relativeLoad', 0),
-				log_entry_dict['common'].get('aae', -1),
-				log_entry_dict['common'].get('temp', 0),
-				log_entry_dict['common'].get('notice', ''),
-				log_entry_dict['common'].get('duration', 0),
-				log_entry_dict['common'].get('humidity', 0),
-				log_entry_dict['common'].get('airflow', 0)
-			])
-			log_string = ";".join(map(str, log_list))
-			temp_log.write(log_string + "\n")
+_archive_logger = None
+_current_logger = None
 
+
+def sync_logs_to_bootfs():
+	sync_jobs = [
+		{
+			"src": os.path.join(base_dir, "logs"),
+			"dest_suffix": "logs/data/",
+			"exclude": {"log_current.csv"}
+		},
+		{
+			"src": os.path.join(base_dir, "maintenance_logs"),
+			"dest_suffix": "logs/maintenance/",
+			"exclude": set()
+		}
+	]
+
+	min_free_mb = 50
+
+	try:
+		boot_mp = None
+		if os.path.ismount("/boot/firmware"):
+			boot_mp = "/boot/firmware"
+		elif os.path.ismount("/boot"):
+			boot_mp = "/boot"
+		else:
+			return
+
+		total, used, free = shutil.disk_usage(boot_mp)
+		free_mb = free // (2**20)
+
+		if free_mb < min_free_mb:
+			if debug:
+				try:
+					logger.warning(f"Sync Skipped: Low space on {boot_mp} ({free_mb} MB free).")
+				except:
+					pass
+			return
+	except Exception as e:
+		try:
+			logger.error(f"Sync error checking disk space: {e}")
+		except:
+			pass
+		return
+
+	for job in sync_jobs:
+		src_dir = job["src"]
+		dest_dir = os.path.join(boot_mp, job["dest_suffix"])
+		excludes = set(job["exclude"])
+
+		if not os.path.exists(src_dir):
+			continue
+
+		try:
+			if not os.path.exists(dest_dir):
+				os.makedirs(dest_dir, exist_ok=True)
+
+			for root, dirs, files in os.walk(src_dir):
+				rel_path = os.path.relpath(root, src_dir)
+				target_path = os.path.join(dest_dir, rel_path)
+
+				if not os.path.exists(target_path):
+					os.makedirs(target_path, exist_ok=True)
+
+				for file in files:
+					if file in excludes:
+						continue
+
+					s_file = os.path.join(root, file)
+					d_file = os.path.join(target_path, file)
+
+					should_copy = False
+					try:
+						if not os.path.exists(d_file):
+							should_copy = True
+						else:
+							s_stat = os.stat(s_file)
+							d_stat = os.stat(d_file)
+
+							if s_stat.st_size != d_stat.st_size:
+								should_copy = True
+							elif abs(s_stat.st_mtime - d_stat.st_mtime) > 2:
+								should_copy = True
+
+						if should_copy:
+							shutil.copy2(s_file, d_file)
+					except OSError as e:
+						try:
+							logger.error(f"File copy error {file}: {e}")
+						except:
+							pass
+		except Exception as e:
+			try:
+				logger.error(f"Sync iteration error for {src_dir}: {e}")
+			except:
+				pass
+
+	if debug:
+		try:
+			logger.debug("Sync to boot partition completed (Python native).")
+		except:
+			pass
 
 
 def read_alternating_spi(duration, chunk_duration=0.5):
-    global spi_adc
-    
-    samples_needed = int(duration * 20) 
-    if samples_needed < 10: samples_needed = 10
-    
-    def get_batch(channel, count):
-        vals = []
-        spi_adc.read_channel(channel)
-        sleep(0.002)
-        
-        for _ in range(count):
-            if stop_event.is_set(): break
-            v, _ = spi_adc.read_channel(channel)
-            if v != -1:
-                vals.append(v)
-            sleep(0.001) 
-            
-        if not vals: return 0
-        vals.sort()
-        trim = int(len(vals) * 0.2)
-        if trim > 0:
-            vals = vals[trim:-trim]
-        return sum(vals) / len(vals)
+	global spi_adc
 
-    end_time = time() + duration
-    
-    sens_batch = []
-    ref_batch = []
-    
-    while time() < end_time:
-        if stop_event.is_set(): break
-        sens_batch.append(get_batch(0, 10))
-        ref_batch.append(get_batch(1, 10))
-        
-    avg_sens = sum(sens_batch) / len(sens_batch) if sens_batch else 0
-    avg_ref = sum(ref_batch) / len(ref_batch) if ref_batch else 0
-    
-    return avg_sens, avg_ref
+	def get_batch(channel, count):
+		vals = 0.0
+		valid_count = 0
 
+		for _ in range(count):
+			if stop_event.is_set(): break
+			v, _ = spi_adc.read_channel(channel)
+			if v != -1:
+				vals += v
+				valid_count += 1
+
+		if valid_count == 0: return 0
+		return vals / valid_count
+
+	end_time = time() + duration
+
+	sens_batch = []
+	ref_batch = []
+
+	while time() < end_time:
+		if stop_event.is_set(): break
+		sens_batch.append(get_batch(0, 100))
+		ref_batch.append(get_batch(1, 100))
+
+	avg_sens = sum(sens_batch) / len(sens_batch) if sens_batch else 0
+	avg_ref = sum(ref_batch) / len(ref_batch) if ref_batch else 0
+
+	return avg_sens, avg_ref
+
+
+def calculate_loading_correction_weingartner(atn, f=1.2):
+	if atn <= 10:
+		return 1.0
+
+	term1 = (1.0 / f) - 1.0
+	term2 = (numpy.log(atn) - numpy.log(10)) / (numpy.log(50) - numpy.log(10))
+	r_val = (term1 * term2) + 1.0
+
+	return max(r_val, 0.1)
 
 def bcmeter_main(stop_event):
 	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, desired_airflow_in_lpm
@@ -1188,38 +1371,78 @@ def bcmeter_main(stop_event):
 
 	now = datetime.now().strftime("%H:%M:%S")
 	logFileName = f"{today}_{now.replace(':','')}.csv"
-	last_filter_mail_time = 0
 	active_wavelengths = WAVELENGTH_ORDER[:1] if is_ebcMeter or NUM_CHANNELS == 1 else WAVELENGTH_ORDER[:NUM_CHANNELS]
 	if not use_spi:
 		active_wavelengths = WAVELENGTH_ORDER[:1]
-	
+
 	unit = "ug" if is_ebcMeter else "ng"
 
 	header_parts = ["bcmDate", "bcmTime"]
 	for wl in active_wavelengths:
 		header_parts.extend([f"bcmRef_{wl}", f"bcmSen_{wl}", f"bcmATN_{wl}", f"BC{unit}m3_unfiltered_{wl}", f"BC{unit}m3_{wl}"])
 	header_parts.extend(["relativeLoad", "AAE", "Temperature", "notice", "sampleDuration", "sht_humidity", "airflow"])
+	if sps30_available:
+		header_parts.extend(["PM2.5", "PM10"])
 	header = ";".join(header_parts)
-	
+
 	new_log_message = f"Started log {today} {now} {bcMeter_version} {logFileName}"
 	print(new_log_message)
 	logger.debug(new_log_message)
 	createLog(logFileName, header)
 	manage_bcmeter_status(action='set', bcMeter_status=1)
-	
+
+	if not airflow_only:
+		show_display("Priming...", False, 0)
+		sens_correction_default = float(str(config.get('sens_correction', 1)).replace(',', '.'))
+		ref_correction_default = float(str(config.get('ref_correction', 1)).replace(',', '.'))
+		led_brightness_legacy = int(config.get('led_brightness', False))
+		led_duty_cycle_880nm = int(config.get('led_duty_cycle_880nm', led_brightness_legacy)) if not led_brightness_legacy else led_brightness_legacy
+		led_duty_cycle_settings = {
+			'880nm': led_duty_cycle_880nm,
+			'520nm': int(config.get('led_duty_cycle_520nm', led_duty_cycle_880nm)),
+			'370nm': int(config.get('led_duty_cycle_370nm', led_duty_cycle_880nm)),
+		}
+
+		for wavelength in active_wavelengths:
+			led_pin = CHANNELS_CONFIG[wavelength]['pin']
+			duty = led_duty_cycle_settings[wavelength]
+
+			set_pwm_duty_cycle(led_pin, duty)
+			sleep(0.2)
+
+			if use_spi:
+				m_val, r_val = read_alternating_spi(10)
+			else:
+				m_val, r_val = read_adc(sample_time=10)
+
+			set_pwm_duty_cycle(led_pin, 0)
+
+			sens_c = float(str(config.get(f"sens_correction_{wavelength}", sens_correction_default)).replace(',', '.'))
+			ref_c = float(str(config.get(f"ref_correction_{wavelength}", ref_correction_default)).replace(',', '.'))
+
+			m_final = m_val * sens_c
+			r_final = r_val * ref_c
+
+			if r_final == 0: r_final = 1
+			if m_final == 0: m_final = 1
+
+			initial_atn = round((numpy.log(m_final / r_final) * -100), 5)
+			last_run_values[wavelength]['atn'] = initial_atn
+
 	write_log = False
 
 	while True:
 		if stop_event.is_set():
 			logger.debug("Main sampling thread received stop signal")
 			return
-		
+
 		device_specific_correction_factor = float(str(config.get('device_specific_correction_factor', 1)).replace(',', '.'))
 		filter_scattering_factor = float(str(config.get('filter_scattering_factor', 1.39)).replace(',', '.'))
+		shadowing_factor = float(str(config.get('shadowing_factor', 1.2)).replace(',', '.'))
 		sample_time = int(config.get('sample_time', 300))
 		sens_correction_default = float(str(config.get('sens_correction', 1)).replace(',', '.'))
 		ref_correction_default = float(str(config.get('ref_correction', 1)).replace(',', '.'))
-		
+
 		led_brightness_legacy = int(config.get('led_brightness', False))
 		led_duty_cycle_880nm = int(config.get('led_duty_cycle_880nm', led_brightness_legacy)) if not led_brightness_legacy else led_brightness_legacy
 		print(f"LED 880 duty: {led_duty_cycle_880nm}")
@@ -1232,48 +1455,67 @@ def bcmeter_main(stop_event):
 
 		start = time()
 		samples_taken += 1
-		
+
 		log_entry = {'common': {}, 'wavelengths': {}}
 		raw_sensor_data_chunks = {wl: {'main': [], 'ref': []} for wl in active_wavelengths}
+		sample_temp = None
+		sample_humidity = None
+		sample_pm25 = None
+		sample_pm10 = None
 
-		# Loop for the total sample_time, taking 10-second chunks from each channel
 		while (time() - start) < sample_time:
-			# Iterate in 370, 520, 880 order
 			for wavelength in reversed(active_wavelengths):
 				if stop_event.is_set() or (time() - start) >= sample_time:
 					break
-				
+
 				led_pin = CHANNELS_CONFIG[wavelength]['pin']
 				duty_cycle = led_duty_cycle_settings[wavelength]
 				set_pwm_duty_cycle(led_pin, duty_cycle)
-				sleep(0.1) # Brief pause for LED to stabilize
+				sleep(0.1)
 
 				if use_spi:
 					main_val, ref_val = read_alternating_spi(10)
 				else:
 					main_val, ref_val = read_adc(sample_time=10)
-				
+
 				raw_sensor_data_chunks[wavelength]['main'].append(main_val)
 				raw_sensor_data_chunks[wavelength]['ref'].append(ref_val)
 
 				set_pwm_duty_cycle(led_pin, 0)
-			
+
 			if stop_event.is_set():
 				break
-		
-		# Average the collected chunks for final calculation
+
+		sample_temp = get_temperature()
+		sample_humidity = sht_humidity if 'sht_humidity' in globals() else 0
+
+		if sps30_available and sps30_sensor:
+			try:
+				pm_samples = []
+				for _ in range(10):
+					with i2c_lock:
+						if sps30_sensor.data_ready():
+							pm_data = sps30_sensor.read()
+							pm_samples.append(pm_data)
+					sleep(0.1)
+				if pm_samples:
+					sample_pm25 = sum(d['pm2.5'] for d in pm_samples) / len(pm_samples)
+					sample_pm10 = sum(d['pm10'] for d in pm_samples) / len(pm_samples)
+			except Exception as e:
+				logger.warning(f"SPS30 read error: {e}")
+
 		raw_sensor_data = {}
 		for wavelength in active_wavelengths:
 			main_chunks = raw_sensor_data_chunks[wavelength]['main']
 			ref_chunks = raw_sensor_data_chunks[wavelength]['ref']
-			
+
 			avg_main = sum(main_chunks) / len(main_chunks) if main_chunks else 0
 			avg_ref = sum(ref_chunks) / len(ref_chunks) if ref_chunks else 0
-			
+
 			raw_sensor_data[wavelength] = {'main': avg_main, 'ref': avg_ref}
 
 		delay = time() - start
-		
+
 		if airflow_sensor and current_measured_airflow_lpm > 0:
 			volume_air_per_sample = (delay / 60) * current_measured_airflow_lpm
 			airflow_per_minute = current_measured_airflow_lpm
@@ -1286,14 +1528,14 @@ def bcmeter_main(stop_event):
 
 		absorption_coeffs = {}
 		total_attenuation_coeff = 0
-		bc_unfiltered_primary = 0 
+		bc_unfiltered_primary = 0
 
 		for wavelength in active_wavelengths:
 			wl_config = CHANNELS_CONFIG[wavelength]
-			
+
 			sens_c = float(str(config.get(f"sens_correction_{wavelength}", sens_correction_default)).replace(',', '.'))
 			ref_c = float(str(config.get(f"ref_correction_{wavelength}", ref_correction_default)).replace(',', '.'))
-			
+
 			main_sensor_value = raw_sensor_data[wavelength]['main'] * sens_c
 			reference_sensor_value = raw_sensor_data[wavelength]['ref'] * ref_c
 
@@ -1302,11 +1544,13 @@ def bcmeter_main(stop_event):
 
 			attenuation_current = round((numpy.log(main_sensor_value / reference_sensor_value) * -100), 5)
 			attenuation_last_run = last_run_values[wavelength]['atn']
-			
+
+			loading_correction_r = calculate_loading_correction_weingartner(attenuation_current, shadowing_factor)
+
 			attenuation_coeff = sample_spot_areasize * ((attenuation_current - attenuation_last_run) / 100) / volume_air_per_sample if volume_air_per_sample > 0 else 0
-			absorption_coeff = attenuation_coeff / filter_scattering_factor
+			absorption_coeff = attenuation_coeff / (filter_scattering_factor * loading_correction_r)
 			absorption_coeffs[wavelength] = absorption_coeff
-			
+
 			if wavelength == '880nm':
 				total_attenuation_coeff = attenuation_coeff
 
@@ -1316,48 +1560,46 @@ def bcmeter_main(stop_event):
 			except Exception as e:
 				bc_unfiltered = 1 if not is_ebcMeter else 0.001
 				logger.error(f"Invalid BC calculation for {wavelength}: {e}")
-			
+
 			if wavelength == '880nm':
 				bc_unfiltered_primary = bc_unfiltered
 
 				quotient = main_sensor_value / reference_sensor_value
 				filter_status = next((5 - i for i, t in enumerate([0.8, 0.7, 0.6, 0.4, 0.2]) if quotient > t), 0)
 				manage_bcmeter_status(action='set', filter_status=filter_status)
-				
-				if config.get('filter_status_mail', False) and filter_status < 3 and (time() - last_filter_mail_time > 7200):
+
+				if config.get('filter_status_mail', False) and filter_status < 3:
 					send_email("Filter")
-					last_filter_mail_time = time()
 
 			last_run_values[wavelength]['atn'] = attenuation_current
 			log_entry['wavelengths'][wavelength] = {'sen': main_sensor_value, 'ref': reference_sensor_value, 'atn': attenuation_current, 'bc_unfiltered': bc_unfiltered, 'bc': 0}
 
-		# Append all new unfiltered values to our main history.
 		for wavelength in active_wavelengths:
 			unfiltered_val = log_entry['wavelengths'].get(wavelength, {}).get('bc_unfiltered', 0)
 			bc_data_history['unfiltered'][wavelength].append(unfiltered_val)
 
-		# Run the filter on all channels.
 		filter_bc_values()
 
-		# Update the 'bc' (filtered) value in the current log_entry for all wavelengths
 		for wl in active_wavelengths:
 			if bc_data_history['filtered'][wl]:
 				log_entry['wavelengths'][wl]['bc'] = bc_data_history['filtered'][wl][-1]
-			else: # Fallback if filtering didn't run
+			else:
 				log_entry['wavelengths'][wl]['bc'] = log_entry['wavelengths'][wl]['bc_unfiltered']
 
 		aae_value = calculate_aae(absorption_coeffs) if len(active_wavelengths) > 1 else -1
-		
+
 		log_entry['common'] = {
 			'date': datetime.now().strftime('%d-%m-%y'),
 			'time': datetime.now().strftime('%H:%M:%S'),
 			'relativeLoad': total_attenuation_coeff,
 			'aae': aae_value,
-			'temp': round(get_temperature(), 1),
+			'temp': round(sample_temp, 1) if sample_temp else round(get_temperature(), 1),
 			'notice': notice,
 			'duration': round(delay, 1),
-			'humidity': round(sht_humidity, 1) if 'sht_humidity' in globals() else 0,
-			'airflow': round(airflow_per_minute, 3)
+			'humidity': round(sample_humidity, 1) if sample_humidity else 0,
+			'airflow': round(airflow_per_minute, 3),
+			'pm25': round(sample_pm25, 2) if sample_pm25 else 0.0,
+			'pm10': round(sample_pm10, 2) if sample_pm10 else 0.0
 		}
 		notice = ""
 
@@ -1366,29 +1608,28 @@ def bcmeter_main(stop_event):
 			(datetime.now() - session_running_since).total_seconds() >= 15 * 60 or
 			write_log
 		) and samples_taken >= 3
-		
+
 		if is_ebcMeter:
 			should_log = (samples_taken > 3 and bc_unfiltered_primary > 0) or write_log
-		
+
 		should_log = True if debug else should_log
 
 		if should_log and not stop_event.is_set():
 			write_log = True
 			bc_data_history['all_log_data'].append(log_entry)
-			
+
 			write_log_with_updated_bc(logFileName, base_dir, active_wavelengths)
-			
+
 			valid_bc_values = [val for val in bc_data_history['filtered']['880nm'] if val > 0]
 			recent_bc_values = valid_bc_values[-12:]
 			average = sum(recent_bc_values) / len(recent_bc_values) if recent_bc_values else 0
-			
+
 			if samples_taken > 15 and average > 0:
 				show_display(f"{int(average)} {unit}/m3 avg", False, 0)
 			else:
 				show_display("Sampling...", False, 0)
 
-
-
+		sync_logs_to_bootfs()
 
 def check_service_running(service_name):
 	try:
@@ -1404,14 +1645,15 @@ def get_temperature():
 			temperature_current = round(TemperatureSensor(channel=5).get_temperature_in_milli_celsius()/1000, 2)
 		elif sht40_i2c:
 			with i2c_lock:
-				sensor = adafruit_sht4x.SHT4x(i2c)
-				temperature_samples = []
-				humidity_samples = []
-				for i in range(20):
-					temperature_samples.append(sensor.temperature)
-					humidity_samples.append(sensor.relative_humidity)
-				temperature_current = sum(temperature_samples) / 20
-				sht_humidity = sum(humidity_samples) / 20
+				temp_samples = []
+				hum_samples = []
+				for _ in range(10):
+					t, h = sht.measurements
+					temp_samples.append(t)
+					hum_samples.append(h)
+				temperature_current = sum(temp_samples) / 10
+				sht_humidity = sum(hum_samples) / 10
+			sleep(0.01)
 		else:
 			logger.warning("No temperature sensor detected, using fallback value")
 			return last_valid_temperature if 'last_valid_temperature' in globals() else 1
@@ -1428,41 +1670,47 @@ def get_temperature():
 			notice += f"TempErr({temperature_error_count})-"
 		return last_valid_temperature if 'last_valid_temperature' in globals() else 1
 
+
 def housekeeping(stop_event):
-	"""
-	Manages housekeeping tasks like temperature control and display updates.
-	Airflow control is now in its own thread.
-	"""
 	global temperature_to_keep, session_running_since, ds18b20, config, temperature_current, TWELVEVOLT_ENABLE, notice
-	
+
 	if debug:
 		print("[DEBUG] Housekeeping thread started.")
+
 	TWELVEVOLT_IS_ENABLED = False
+
 	while not stop_event.is_set():
 		config = config_json_handler()
-		
-		
+
+		is_online = check_connection()
 		send_log_by_mail = config.get('send_log_by_mail', False)
-		if send_log_by_mail:
+
+		email_password = config.get('email_service_password', 'email_service_password')
+		mail_to = config.get('mail_logs_to', "your@email.address")
+
+		credentials_valid = (
+			email_password != "email_service_password" and
+			email_password != "" and
+			mail_to.split(",")[0] != "your@email.address"
+		)
+
+		if is_online and credentials_valid and send_log_by_mail:
+			if not get_session_flag("onboarding_sent"):
+				if send_email("Onboarding"):
+					set_session_flag("onboarding_sent")
+
 			mail_sending_interval_hours = float(str(config.get('mail_sending_interval', 24)).replace(',', '.'))
 			interval_seconds = mail_sending_interval_hours * 3600
-			
-			if (time() - last_email_time) >= interval_seconds:
-				logger.debug(f"Email interval of {mail_sending_interval_hours} hours reached. Attempting to send log.")
-				if check_connection():
-					send_email("Log") 
-					last_email_time = time()
-				else:
-					logger.warning("Offline, cannot send periodic email log.")
 
-
-
+			if can_send_mail("Log", interval_seconds):
+				send_email("Log")
 
 		now = datetime.now()
 		time_diff = now - session_running_since
 		hours, remainder = divmod(time_diff.seconds, 3600)
 		minutes, seconds = divmod(remainder, 60)
 		show_display(f"Running: {hours:02d}:{minutes:02d}", 1, False)
+
 		twelvevolt_duty = int(config.get('twelvevolt_duty', 20))
 		if TWELVEVOLT_ENABLE:
 			if not TWELVEVOLT_IS_ENABLED:
@@ -1470,41 +1718,40 @@ def housekeeping(stop_event):
 				sleep(2)
 				TWELVEVOLT_IS_ENABLED = True
 				print("12V Power is on, powering pump")
-				for duty in range(0, twelvevolt_duty, int(twelvevolt_duty/5)):  
+				for duty in range(0, twelvevolt_duty, int(twelvevolt_duty/5)):
 					pi.set_PWM_dutycycle(TWELVEVOLT_PIN, duty)
 					sleep(0.1)
 			twelvevolt_duty = int(config.get('twelvevolt_duty', 20))
 			pi.set_PWM_dutycycle(TWELVEVOLT_PIN, twelvevolt_duty)
-		# Handle temperature measurement and control
+
 		try:
 			temperature_current = get_temperature()
-			#if debug: print(f"[DEBUG] Housekeeping: Current temperature is {temperature_current:.2f}°C.")
 		except Exception as e:
 			logger.error(f"Unexpected error in temperature handling: {str(e)}")
 			temperature_current = temperature_current if 'temperature_current' in locals() else 1
 			notice += "TempFail-"
 
 		heating = config.get('heating', False)
-		if heating and temperature_current != 1: # Skip if temp reading failed
+		if heating and temperature_current != 1:
 			if debug: print(f"[DEBUG] Housekeeping: Heating is ON. Target: {temperature_to_keep}°C.")
 			if temperature_current < temperature_to_keep:
-				GPIO.output(1, GPIO.HIGH) # Heater ON
+				GPIO.output(1, GPIO.HIGH)
 				GPIO.output(23, GPIO.HIGH)
 				if debug: print("[DEBUG] Housekeeping: Temperature below target. Turning heater ON.")
 			else:
-				GPIO.output(1, GPIO.LOW) # Heater OFF
+				GPIO.output(1, GPIO.LOW)
 				GPIO.output(23, GPIO.LOW)
 				if debug: print("[DEBUG] Housekeeping: Temperature at or above target. Turning heater OFF.")
 
 		sleep(2)
-		
+
 	if debug:
 		print("[DEBUG] Housekeeping thread stopped.")
 
 
 def blink_led(pattern, change_blinking_pattern):
 	if debug:
-		return 
+		return
 	while not change_blinking_pattern.is_set():
 		blink_duration = 0.5 if pattern != 555 else 3
 		GPIO.output(MONOLED_PIN, GPIO.HIGH)
@@ -1514,7 +1761,7 @@ def blink_led(pattern, change_blinking_pattern):
 
 def airflow_by_voltage(voltage,sensor_type):
 	global airflow_sensor_bias
-	
+
 	corrected_voltage = voltage + airflow_sensor_bias
 	#if debug: print(f"[DEBUG] Airflow calc: voltage={voltage:.4f}, bias={airflow_sensor_bias:.4f}, corrected_v={corrected_voltage:.4f}")
 
@@ -1523,7 +1770,7 @@ def airflow_by_voltage(voltage,sensor_type):
 	elif (sensor_type == 1) :
 		table = {0.50:0, 0.511:0.010, 0.8:0.055, 0.9:0.09, 1.34:0.19, 1.855:0.39, 1.96:0.46, 2.0:0.487, 2.024:0.504}
 	else:
-		return 0 
+		return 0
 
 	if corrected_voltage in table:
 		return table[corrected_voltage]
@@ -1537,13 +1784,13 @@ def airflow_by_voltage(voltage,sensor_type):
 		# Linear interpolation
 		lower_voltage = max(v for v in voltages if v <= corrected_voltage)
 		upper_voltage = min(v for v in voltages if v >= corrected_voltage)
-		
+
 		if lower_voltage == upper_voltage:
 			return table[lower_voltage]
 
 		lower_value = table[lower_voltage]
 		upper_value = table[upper_voltage]
-		
+
 		interpolated_value = lower_value + (corrected_voltage - lower_voltage) * (upper_value - lower_value) / (upper_voltage - lower_voltage)
 		return interpolated_value
 
@@ -1583,11 +1830,11 @@ if __name__ == '__main__':
 			if not find_mcp_address():
 				shutdown("I2C ADC initialization failed", 6)
 
-		airflow_sensor_bias = 0 
+		airflow_sensor_bias = 0
 		if not calibration and airflow_type < 9:
 			try:
 				if debug: print("[DEBUG] __main__: Calling calibrate_airflow_sensor_bias...")
-				bias_voltage = calibrate_airflow_sensor_bias()
+				bias_voltage = calibrate_airflow_sensor_bias() if not disable_pump_control else 0.5
 				if debug: print(f"[DEBUG] __main__: calibrate_airflow_sensor_bias returned. Bias voltage: {bias_voltage}")
 			except Exception as e:
 				logger.error(f"Error reading airflow sensor bias: {e}")

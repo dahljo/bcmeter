@@ -99,11 +99,11 @@ function updateCurrentLogsFunction() {
     clearInterval(updateCurrentLogs);
     updateCurrentLogs = null;
   }
-  
+
   if (isViewingMostRecentFile()) {
     const sampleTimeSeconds = window.configSampleTime || 300;
     const interval = Math.max(5000, Math.min(sampleTimeSeconds * 500, 60000));
-    
+
     updateCurrentLogs = setInterval(() => {
       if (isViewingMostRecentFile()) {
         const mostRecentFile = getMostRecentLogFile();
@@ -351,15 +351,15 @@ if (applyScaleBtn) {
         resetBtn.addEventListener('click', () => {
             const currentPeakText = document.getElementById('peak-value').textContent;
             const currentPeakValue = parseFloat(currentPeakText);
-            
+
             if (!isNaN(currentPeakValue)) {
                 resetPeakThreshold = currentPeakValue;
             }
-            
+
             document.getElementById('peak-value').innerHTML = '-';
             resetBtn.style.display = 'none';
         });
-    }     
+    }
   if (resetZoom) {
     resetZoom.removeEventListener("click", handleResetZoom);
     resetZoom.addEventListener("click", handleResetZoom);
@@ -473,7 +473,7 @@ async function combineAllLogs() {
         render();
         return;
     }
-    
+
     const modal = bootbox.dialog({
         title: 'Combining Logs...',
         message: `
@@ -496,7 +496,7 @@ async function combineAllLogs() {
     for (let i = 0; i < filesToProcess.length; i++) {
         const file = filesToProcess[i];
         updateProgress(i + 1, filesToProcess.length);
-        
+
         try {
             const rawData = await d3.dsv(';', logPath + file);
             if (!rawData || rawData.length === 0) continue;
@@ -518,7 +518,7 @@ async function combineAllLogs() {
             console.error(`Failed to load or process ${file}:`, error);
         }
     }
-    
+
     modal.find('#combine-progress-text').text('Finalizing...');
     modal.find('#combine-progress-bar').css('width', '100%');
 
@@ -592,7 +592,7 @@ function updateAverageDisplay(len) {
     }
 
     // ALL SUBSEQUENT CALCULATIONS USE 'dataForCalculations'
-    
+
     // --- Dynamic Average Calculation ---
     const targetDurationSeconds = window.is_ebcMeter ? 300 : 3600;
     const timeWindowMinutes = targetDurationSeconds / 60;
@@ -620,7 +620,7 @@ function updateAverageDisplay(len) {
     } else {
         dynamicAvgValueEl.innerHTML = `<small class="text-muted">Calculating...</small>`;
     }
-    
+
     // --- Total Average Calculation ---
     const allValues = dataForCalculations.map(d => +d[sourceColumn]).filter(val => !isNaN(val));
     const avgAll = allValues.length > 0 ? Math.round(d3.mean(allValues)) : 0;
@@ -881,7 +881,7 @@ function plotChart(skipTransition = false) {
     // 4. Create SVG Groups and Static Elements
     const g = svg.selectAll('.container').data([null]).join("g").attr('class', 'container').attr("transform", `translate(${margin.left}, ${margin.top})`);
     g.selectAll(".clipPath").data([null]).join("clipPath").attr("id", "rectClipPath").append("rect").attr("width", innerWidth).attr("height", innerHeight);
-    
+
     const xAxisG = g.selectAll('.x-axis').data([null]).join('g').attr('class', 'x-axis');
     const yAxisG = g.selectAll('.y-axis').data([null]).join('g').attr('class', 'y-axis');
     const yAxisG2 = g.selectAll('.y-axis2').data([null]).join('g').attr('class', 'y-axis2');
@@ -894,7 +894,7 @@ function plotChart(skipTransition = false) {
 
     // This function will draw/redraw axes, grid, and data lines
     function redraw() {
-        const y1Ticks = yScale.ticks(9); 
+        const y1Ticks = yScale.ticks(9);
         g.selectAll('.grid-line-horizontal').remove();
         g.insert('g', ':first-child').attr('class', 'grid').selectAll('.grid-line-horizontal').data(y1Ticks).join('line')
             .attr('class', 'grid-line-horizontal').attr('x1', 0).attr('x2', innerWidth).attr('y1', d => yScale(d)).attr('y2', d => yScale(d))
@@ -903,11 +903,11 @@ function plotChart(skipTransition = false) {
         yAxisG.call(d3.axisLeft(yScale).tickValues(y1Ticks).tickSize(0).tickPadding(8));
         yAxisG2.attr("transform", `translate(${innerWidth}, 0)`).call(d3.axisRight(yScale2).ticks(9).tickSize(0).tickPadding(8));
         yAxisG3.attr("transform", `translate(${innerWidth + 70}, 0)`).call(d3.axisRight(yScale3).ticks(9).tickSize(0).tickPadding(8));
-        
+
         const timeFormat = d3.timeFormat("%H:%M:%S");
         xAxisG.attr("transform", `translate(0, ${innerHeight})`).call(d3.axisBottom(xScale).tickSize(-innerHeight).tickPadding(15).tickFormat(timeFormat));
         g.selectAll(".domain").remove();
-        
+
         g.select('.line-chart').datum(filteredData).attr('d', lineGenerator);
         g.select('.line-chart2').datum(isHidden ? [] : filteredData).attr('d', lineGenerator2);
         g.select('.line-chart3').datum(isHidden3 ? [] : filteredData).attr('d', lineGenerator3);
@@ -924,20 +924,188 @@ function plotChart(skipTransition = false) {
     g.selectAll(".hover-line").data([null]).join("line").attr("class", "hover-line").attr("stroke", "lightgrey").attr("stroke-dasharray", "4,2").attr("stroke-width", 1).attr("y1", 0).attr("y2", innerHeight).style("display", "none");
     setupTooltip();
 
-    const zoomed = (event) => {
-        const transform = event.transform;
-        xScale.domain(transform.rescaleX(originalXScale).domain());
-        yScale.domain(transform.rescaleY(originalYScale).domain());
-        yScale2.domain(transform.rescaleY(originalYScale2).domain());
-        yScale3.domain(transform.rescaleY(originalYScale3).domain());
-        redraw();
-    }
+    let isDragging = false, isBoxSelect = false, dragStartX = 0, dragStartY = 0;
+    let startXDomain = null, startYDomain = null, startY2Domain = null, startY3Domain = null;
+    let touchStartDist = 0, touchStartCenter = null, isTouchPan = false, isPinching = false;
 
-    const zoomBehavior = d3.zoom().scaleExtent([0.5, 20]).translateExtent([[0, 0], [innerWidth, innerHeight]]).on("zoom", zoomed);
-    const zoomRect = g.selectAll(".zoom-rect").data([null]);
-    zoomRect.enter().append("rect").attr("class", "zoom-rect").attr("width", innerWidth).attr("height", innerHeight)
-        .style("fill", "none").style("pointer-events", "all").merge(zoomRect).call(zoomBehavior)
-        .on("pointerenter pointermove", pointermoved).on("pointerleave", pointerleft);
+    const getTouchDist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const getTouchCenter = (t, node) => {
+        const svgNode = svg.node();
+        const rect = svgNode.getBoundingClientRect();
+        const scaleX = width / rect.width, scaleY = height / rect.height;
+        const cx = (t[0].clientX + t[1].clientX) / 2, cy = (t[0].clientY + t[1].clientY) / 2;
+        return [(cx - rect.left) * scaleX - margin.left, (cy - rect.top) * scaleY - margin.top];
+    };
+
+    const selectionBox = g.selectAll(".selection-box").data([null]).join("rect")
+        .attr("class", "selection-box")
+        .attr("fill", "rgba(100, 149, 237, 0.2)")
+        .attr("stroke", "#6495ED")
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "4,2")
+        .style("display", "none");
+
+    const zoomRectSel = g.selectAll(".zoom-rect").data([null]).join("rect")
+        .attr("class", "zoom-rect")
+        .attr("width", innerWidth)
+        .attr("height", innerHeight)
+        .style("fill", "none")
+        .style("pointer-events", "all")
+        .style("cursor", "crosshair")
+        .style("touch-action", "pinch-zoom");
+
+    zoomRectSel.on("touchstart", null).on("touchmove", null).on("touchend", null).on("touchcancel", null);
+
+    const zoomRectNode = zoomRectSel.node();
+
+    const touchStartHandler = (event) => {
+        if (event.touches.length !== 1) return;
+        event.preventDefault();
+        isTouchPan = true;
+        const rect = svg.node().getBoundingClientRect();
+        const scaleX = width / rect.width, scaleY = height / rect.height;
+        dragStartX = (event.touches[0].clientX - rect.left) * scaleX - margin.left;
+        dragStartY = (event.touches[0].clientY - rect.top) * scaleY - margin.top;
+        startXDomain = xScale.domain().slice();
+        startYDomain = yScale.domain().slice();
+        startY2Domain = yScale2.domain().slice();
+        startY3Domain = yScale3.domain().slice();
+        d3.select(".d3-tooltip").style("display", "none");
+    };
+
+    const touchMoveHandler = (event) => {
+        if (!isTouchPan || event.touches.length !== 1) return;
+        event.preventDefault();
+        const rect = svg.node().getBoundingClientRect();
+        const scaleX = width / rect.width, scaleY = height / rect.height;
+        const tx = (event.touches[0].clientX - rect.left) * scaleX - margin.left;
+        const ty = (event.touches[0].clientY - rect.top) * scaleY - margin.top;
+        const dx = tx - dragStartX, dy = ty - dragStartY;
+
+        const pxToX = (startXDomain[1] - startXDomain[0]) / innerWidth;
+        const pxToY = (startYDomain[1] - startYDomain[0]) / innerHeight;
+
+        xScale.domain([startXDomain[0] - dx * pxToX, startXDomain[1] - dx * pxToX]);
+        yScale.domain([startYDomain[0] + dy * pxToY, startYDomain[1] + dy * pxToY]);
+
+        const pxToY2 = (startY2Domain[1] - startY2Domain[0]) / innerHeight;
+        const pxToY3 = (startY3Domain[1] - startY3Domain[0]) / innerHeight;
+
+        yScale2.domain([startY2Domain[0] + dy * pxToY2, startY2Domain[1] + dy * pxToY2]);
+        yScale3.domain([startY3Domain[0] + dy * pxToY3, startY3Domain[1] + dy * pxToY3]);
+
+        redraw();
+    };
+
+    const touchEndHandler = () => { isTouchPan = false; };
+
+    zoomRectNode.addEventListener("touchstart", touchStartHandler, { passive: false });
+    zoomRectNode.addEventListener("touchmove", touchMoveHandler, { passive: false });
+    zoomRectNode.addEventListener("touchend", touchEndHandler);
+    zoomRectNode.addEventListener("touchcancel", touchEndHandler);
+
+    zoomRectSel
+        .on("mousedown", function(event) {
+            event.preventDefault();
+            const [mx, my] = d3.pointer(event, this);
+            dragStartX = mx;
+            dragStartY = my;
+            startXDomain = xScale.domain().slice();
+            startYDomain = yScale.domain().slice();
+            startY2Domain = yScale2.domain().slice();
+            startY3Domain = yScale3.domain().slice();
+
+            if (event.shiftKey) {
+                isDragging = true;
+                isBoxSelect = false;
+                d3.select(this).style("cursor", "grabbing");
+            } else {
+                isBoxSelect = true;
+                isDragging = false;
+                selectionBox.attr("x", mx).attr("y", my).attr("width", 0).attr("height", 0).style("display", null);
+            }
+            d3.select(".d3-tooltip").style("display", "none");
+        })
+        .on("mousemove", function(event) {
+            const [mx, my] = d3.pointer(event, this);
+
+            if (isBoxSelect) {
+                const x = Math.min(dragStartX, mx), y = Math.min(dragStartY, my);
+                const w = Math.abs(mx - dragStartX), h = Math.abs(my - dragStartY);
+                selectionBox.attr("x", x).attr("y", y).attr("width", w).attr("height", h);
+            } else if (isDragging) {
+                const dx = mx - dragStartX, dy = my - dragStartY;
+                const xRange = startXDomain[1] - startXDomain[0];
+                const yRange = startYDomain[1] - startYDomain[0];
+                const pxToX = xRange / innerWidth, pxToY = yRange / innerHeight;
+
+                xScale.domain([startXDomain[0] - dx * pxToX, startXDomain[1] - dx * pxToX]);
+                yScale.domain([startYDomain[0] + dy * pxToY, startYDomain[1] + dy * pxToY]);
+
+                const y2Range = startY2Domain[1] - startY2Domain[0];
+                const y3Range = startY3Domain[1] - startY3Domain[0];
+                yScale2.domain([startY2Domain[0] + dy * (y2Range / innerHeight), startY2Domain[1] + dy * (y2Range / innerHeight)]);
+                yScale3.domain([startY3Domain[0] + dy * (y3Range / innerHeight), startY3Domain[1] + dy * (y3Range / innerHeight)]);
+                redraw();
+            } else {
+                pointermoved(event);
+            }
+        })
+        .on("mouseup mouseleave", function(event) {
+            if (isBoxSelect) {
+                const [mx, my] = d3.pointer(event, this);
+                const x1 = Math.min(dragStartX, mx), x2 = Math.max(dragStartX, mx);
+                const y1 = Math.min(dragStartY, my), y2 = Math.max(dragStartY, my);
+
+                if (x2 - x1 > 10 && y2 - y1 > 10) {
+                    const newXDomain = [xScale.invert(x1), xScale.invert(x2)];
+                    const newYDomain = [yScale.invert(y2), yScale.invert(y1)];
+                    const yRatio = (startYDomain[1] - startYDomain[0]) / (newYDomain[1] - newYDomain[0]);
+                    const y2Mid = (startY2Domain[0] + startY2Domain[1]) / 2;
+                    const y3Mid = (startY3Domain[0] + startY3Domain[1]) / 2;
+                    const y2HalfRange = (startY2Domain[1] - startY2Domain[0]) / 2 / yRatio;
+                    const y3HalfRange = (startY3Domain[1] - startY3Domain[0]) / 2 / yRatio;
+
+                    xScale.domain(newXDomain);
+                    yScale.domain(newYDomain);
+                    yScale2.domain([y2Mid - y2HalfRange, y2Mid + y2HalfRange]);
+                    yScale3.domain([y3Mid - y3HalfRange, y3Mid + y3HalfRange]);
+                    redraw();
+                }
+                selectionBox.style("display", "none");
+            }
+            isDragging = false;
+            isBoxSelect = false;
+            d3.select(this).style("cursor", "crosshair");
+        })
+        .on("wheel", function(event) {
+            event.preventDefault();
+            const [mx, my] = d3.pointer(event, this);
+            const factor = event.deltaY > 0 ? 1.15 : 0.87;
+
+            const xDomain = xScale.domain(), yDomain = yScale.domain();
+            const xPos = xScale.invert(mx), yPos = yScale.invert(my);
+
+            const newXDomain = [xPos - (xPos - xDomain[0]) * factor, xPos + (xDomain[1] - xPos) * factor];
+            const newYDomain = [yPos - (yPos - yDomain[0]) * factor, yPos + (yDomain[1] - yPos) * factor];
+
+            xScale.domain(newXDomain);
+            yScale.domain(newYDomain);
+
+            const y2Domain = yScale2.domain(), y3Domain = yScale3.domain();
+            const y2Pos = yScale2.invert(my), y3Pos = yScale3.invert(my);
+            yScale2.domain([y2Pos - (y2Pos - y2Domain[0]) * factor, y2Pos + (y2Domain[1] - y2Pos) * factor]);
+            yScale3.domain([y3Pos - (y3Pos - y3Domain[0]) * factor, y3Pos + (y3Domain[1] - y3Pos) * factor]);
+            redraw();
+        })
+        .on("dblclick", function() {
+            xScale.domain(originalXScale.domain());
+            yScale.domain(originalYScale.domain());
+            yScale2.domain(originalYScale2.domain());
+            yScale3.domain(originalYScale3.domain());
+            redraw();
+        })
+        .on("pointerenter", pointermoved).on("pointerleave", pointerleft);
 }
 const formatDateTooltip = date => d3.timeFormat("%d-%m-%Y %H:%M:%S")(date);
 const formatValueTooltip = value => d3.format(".2f")(value);

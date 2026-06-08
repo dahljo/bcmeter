@@ -6,7 +6,7 @@ For new setups and long-term maintenance, use the redesigned Raspberry Pi versio
 
 The redesigned version was built from scratch for better maintainability, reliability, and setup/update workflows. Complete ready-to-flash Raspberry Pi images are available from https://bcmeter.org. Contact jd@bcmeter.org for questions.
 
-## Thank you for your interest! In this git you find everything you need to build your own bcMeter for non-commercial use as a citizen science device. for commercial use and licencing please contact jd@bcmeter.org.
+## Thank you for your interest! This repository contains everything you need to build your own bcMeter (DIY) — freely available for private, educational and research use under CC BY-NC 4.0. For commercial use and licensing, please contact jd@bcmeter.org.
 
 
 ## Recommended software setup:

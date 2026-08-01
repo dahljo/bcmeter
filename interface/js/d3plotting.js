@@ -62,7 +62,6 @@ let COLUMN_ALIASES = {
 };
 
 const CSV_PATTERN_REGEX = /^\d{2}-\d{2}-\d{2}_\d{6}\.csv$/, logPath = '../../logs/';
-window.is_ebcMeter = typeof is_ebcMeter !== 'undefined' && is_ebcMeter === true;
 window.logFiles = [], window.current_file = '', window.configSampleTime = null;
 
 const width = 1100;
@@ -254,7 +253,7 @@ function initializeColumnData() {
     combineLogs.columns = [], data.columns = [];
     let storedState = localStorage.getItem('y2AxisHidden');
     if (storedState === null) {
-        isHidden = !window.is_ebcMeter;
+        isHidden = true;
         localStorage.setItem('y2AxisHidden', isHidden.toString());
     } else {
         isHidden = storedState === 'true';
@@ -557,9 +556,7 @@ function updateAverageDisplay(len) {
     }
 
     // --- Column and Unit Determination ---
-    const preferredOrder = window.is_ebcMeter ?
-        ["BCugm3_unfiltered", "BCugm3_unfiltered_880nm", "BCugm3_880nm", "BCngm3_880nm", "BCngm3"] :
-        ["BCngm3", "BCugm3", "BCngm3_880nm", "BCugm3_880nm"];
+    const preferredOrder = ["BCngm3", "BCugm3", "BCngm3_880nm", "BCugm3_880nm"];
     const sourceColumn = preferredOrder.find(col => allBCColumns.includes(col)) || allBCColumns[0];
 
     if (!sourceColumn) {
@@ -594,7 +591,7 @@ function updateAverageDisplay(len) {
     // ALL SUBSEQUENT CALCULATIONS USE 'dataForCalculations'
 
     // --- Dynamic Average Calculation ---
-    const targetDurationSeconds = window.is_ebcMeter ? 300 : 3600;
+    const targetDurationSeconds = 3600;
     const timeWindowMinutes = targetDurationSeconds / 60;
     document.getElementById("dynamic-avg-label").textContent = `Average (Last ~${timeWindowMinutes} Min)`;
     let numSamplesToAverage = 0;
@@ -656,9 +653,7 @@ function updateAverageDisplay(len) {
 const findBCColumn = () => {
   if (!data || !Array.isArray(data) || !data.length || !data.columns) return null;
 
-  const preferredColumns = window.is_ebcMeter
-    ? ["BCugm3_unfiltered_880nm", "BCugm3_unfiltered","BCugm3"]
-    : ["BCngm3", "BCugm3_unfiltered"];
+  const preferredColumns = ["BCngm3", "BCugm3_unfiltered"];
 
   const foundColumn = preferredColumns.find(col => data.columns.includes(col));
 
@@ -728,12 +723,6 @@ function setYAxis() {
   let [yDataMin2, yDataMax2] = d3.extent(filteredDataForExtent, yValueScale2);
   let [yDataMin3, yDataMax3] = d3.extent(filteredDataForExtent, yValueScale3);
 
-  if (window.is_ebcMeter && yColumn && yColumn.includes('BC')) {
-    const defaultMin = -200, defaultMax = 200;
-    yDataMin = Math.min(yDataMin ?? defaultMin, defaultMin);
-    yDataMax = Math.max(yDataMax ?? defaultMax, defaultMax);
-  }
-
   yRange = [
     yMin === '' ? (yDataMin ?? -100) : Number(yMin),
     yMax === '' ? (yDataMax ?? 100) : Number(yMax)
@@ -771,7 +760,7 @@ function drawGrid() {
 
   g.append("line").attr("class", "grid-line").attr("x1", middleX).attr("y1", 0).attr("x2", middleX).attr("y2", innerHeight).attr("stroke", "lightgrey").attr("stroke-width", 1);
   g.append("text").attr("class", "no-data-message").attr("x", middleX).attr("y", innerHeight + 25).attr("text-anchor", "middle").style("font-size", "12px").text("Nothing to show yet");
-const duration = window.is_ebcMeter ? "5" : "15";
+const duration = "15";
 const warmupMessage = `Device warming up ~${duration} minutes before showing samples...`;
 
 g.append("text")
@@ -1236,9 +1225,7 @@ function render() {
 
         // FIX: Improved auto-selection for a more useful default view.
         if (!yColumn || !displayColumns.includes(yColumn)) {
-            const y1Order = window.is_ebcMeter
-                ? ["BCugm3_880nm", "BCugm3", "BCngm3_880nm", "BCngm3"]
-                : ["BCngm3_880nm", "BCngm3", "BCugm3_880nm", "BCugm3"];
+            const y1Order = ["BCngm3_880nm", "BCngm3", "BCugm3_880nm", "BCugm3"];
             yColumn = y1Order.find(col => displayColumns.includes(col))
                 || displayColumns.find(col => col.toLowerCase().startsWith('bc'))
                 || displayColumns[0] || null;
@@ -1399,13 +1386,7 @@ function dataFile(file, isCombineLogsSelected = false, callback = null) {
       const processedData = newData;
       processedData.columns = filteredHeaders;
 
-      const bcColumn = window.is_ebcMeter
-        ? (headers.includes("BCugm3_unfiltered")
-            ? "BCugm3_unfiltered"
-            : headers.includes("BCugm3")
-            ? "BCugm3"
-            : null)
-        : (headers.includes("BCngm3_unfiltered")
+      const bcColumn = (headers.includes("BCngm3_unfiltered")
             ? "BCngm3_unfiltered"
             : headers.includes("BCngm3")
             ? "BCngm3"
@@ -1469,19 +1450,11 @@ function dataFile(file, isCombineLogsSelected = false, callback = null) {
                 btn.textContent = percentage + " %";
 
                 let cls;
-                if (!window.is_ebcMeter) {
-                  if (ratio > 0.8) cls = "btn-success";
-                  else if (ratio > 0.7) cls = "btn-warning";
-                  else if (ratio > 0.55) cls = "btn-danger";
-                  else if (ratio > 0.45) cls = "btn-secondary";
-                  else cls = "btn-dark";
-                } else {
-                  if (ratio <= 0.1) cls = "btn-dark";
-                  else if (ratio <= 0.2) cls = "btn-secondary";
-                  else if (ratio <= 0.25) cls = "btn-danger";
-                  else if (ratio <= 0.4) cls = "btn-warning";
-                  else cls = "btn-success";
-                }
+                if (ratio > 0.8) cls = "btn-success";
+                else if (ratio > 0.7) cls = "btn-warning";
+                else if (ratio > 0.55) cls = "btn-danger";
+                else if (ratio > 0.45) cls = "btn-secondary";
+                else cls = "btn-dark";
 
                 btn.className = "btn btn-sm " + cls;
               }

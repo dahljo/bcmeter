@@ -133,7 +133,7 @@ class WifiManager:
 		try:
 			with open(self.credentials_file, "w") as f:
 				f.write('{\n\t"wifi_ssid": "",\n\t"wifi_pwd": ""\n}')
-			os.chmod(self.credentials_file, 0o777)
+			os.chmod(self.credentials_file, 0o660)
 		except Exception:
 			pass
 		logger.debug("Reset WiFi Configs")
@@ -576,7 +576,6 @@ def manage_wifi(checkpoint=None):
 	manage_wifi_guard_until = now + 8
 
 	config = config_json_handler()
-	is_ebcMeter = config.get("is_ebcMeter", False)
 	run_hotspot_flag = config.get("run_hotspot", False)
 	min_signal_percent = int(config.get("min_wifi_signal_percent", 20))
 	sm = ServiceManager()
@@ -608,7 +607,7 @@ def manage_wifi(checkpoint=None):
 		if active_connection_name("wlan0") == AP_CON_NAME:
 			stop_access_point("connected")
 		if not bcMeter_running and manage_bcmeter_status(action="get", parameter="bcMeter_status") not in (5, 6):
-			if manage_bcmeter_status(action="get", parameter="filter_status") > 3 and not is_ebcMeter:
+			if manage_bcmeter_status(action="get", parameter="filter_status") > 3:
 				run_bcMeter_service("Online")
 		in_happy_state = True
 		return
@@ -687,7 +686,7 @@ def manage_wifi(checkpoint=None):
 		connection_retries = 0
 		wifi_recovery_attempts = 0
 		if not bcMeter_running and manage_bcmeter_status(action="get", parameter="bcMeter_status") not in (5, 6):
-			if manage_bcmeter_status(action="get", parameter="filter_status") > 3 and not is_ebcMeter:
+			if manage_bcmeter_status(action="get", parameter="filter_status") > 3:
 				run_bcMeter_service("Stable WiFi")
 		in_happy_state = True
 		return
@@ -720,7 +719,6 @@ def ap_control_loop():
 	router_check_interval = 40
 	last_router_check = 0
 	run_hotspot_flag = config.get("run_hotspot", False)
-	is_ebcMeter = config.get("is_ebcMeter", False)
 	was_offline = True
 	router_reachable = False
 
@@ -762,7 +760,6 @@ def ap_control_loop():
 				is_online = check_connection()
 				bcMeter_running = sm.check_running("bcMeter")
 				ap_active = active_connection_name("wlan0") == AP_CON_NAME
-				is_ebcMeter = config.get("is_ebcMeter", False)
 				current_network = wm.get_current_network()
 				wifi_ssid, _ = wm.get_credentials()
 				current_time = time.time()
@@ -812,7 +809,7 @@ def ap_control_loop():
 					else:
 						if current_status in (5, 6):
 							pass
-						elif (manage_bcmeter_status(action="get", parameter="filter_status") > 3) and calibration_time is not None and not is_ebcMeter:
+						elif (manage_bcmeter_status(action="get", parameter="filter_status") > 3) and calibration_time is not None:
 							run_bcMeter_service(f"Status {current_status}")
 							current_status = 2
 						else:
@@ -838,7 +835,7 @@ def ap_control_loop():
 				if not is_online and not run_hotspot_flag:
 					uptime = get_uptime() if time_synced else keep_hotspot_alive_without_successful_connection - 1
 					if uptime >= keep_hotspot_alive_without_successful_connection:
-						if not (is_ebcMeter or bcMeter_running):
+						if not bcMeter_running:
 							show_display("No Config", False, 0)
 							if not ap_active:
 								setup_access_point()

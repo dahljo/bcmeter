@@ -412,8 +412,7 @@ function setupWifiControls() {
 
   function updateStatus(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot) {
     window.deviceName = deviceName;
-    if (status != -1 && (!calibrationTime || (filterStatus !== null && filterStatus < 2)) &&
-      (!window.is_ebcMeter || (window.is_ebcMeter && filterStatus === 0))) {
+    if (status != -1 && (!calibrationTime || (filterStatus !== null && filterStatus < 2))) {
       showWarningModal(calibrationTime, filterStatus);
     }
     console.log(status, deviceName, creationTimeString, calibrationTime, filterStatus, in_hotspot);
@@ -1103,7 +1102,6 @@ function showFinalCalibrationStatus(message, headerClass, showFooter = false) {
     if ($(e.target).data('processing')) return;
     $(e.target).data('processing', true);
 
-    const isEbcMeter = typeof window.is_ebcMeter !== 'undefined' && window.is_ebcMeter === true;
     const messageText = "<p>This will start a new log. It takes a few moments for the new chart to appear.</p>";
 
     bootbox.dialog({
@@ -1122,15 +1120,7 @@ function showFinalCalibrationStatus(message, headerClass, showFooter = false) {
           label: "Yes, Start New Log",
           className: 'btn-danger',
           callback: function() {
-            const processingModalMessage = isEbcMeter ?
-              '<div class="text-center">' +
-              '<p>It takes about 5-10 minutes for the first samples to appear.</p>' +
-              '<p>Please note that measurements will be most accurate once the device has reached a stable running temperature.</p>' +
-              '<p>For most accurate emission control, you may wait until the temperature curve flattens.</p>' +
-              '<div class="progress mt-3" style="height: 20px;">' +
-              '<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>' +
-              '</div></div>' :
-              '<div class="text-center">' +
+            const processingModalMessage = '<div class="text-center">' +
               '<p>It takes a few minutes for the first samples to appear.</p>' +
               '<p>Please note that samples might be inaccurate until the device has reached running temperature.</p>' +
               '<div class="progress mt-3" style="height: 20px;">' +

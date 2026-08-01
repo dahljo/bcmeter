@@ -101,7 +101,6 @@ airflow_sensor = config.get('airflow_sensor', False)
 pump_dutycycle = int(config.get('pump_dutycycle', 20))
 reverse_dutycycle = config.get('reverse_dutycycle', False)
 sample_spot_diameter = float(str(config.get('sample_spot_diameter', 0.4)).replace(',', '.'))
-is_ebcMeter = config.get('is_ebcMeter', False)
 mail_logs_to = config.get('mail_logs_to', "")
 send_log_by_mail = config.get('send_log_by_mail', False)
 filter_status_mail = config.get('filter_status_mail', False)
@@ -125,8 +124,8 @@ desired_airflow_in_lpm = float(str(config.get('airflow_per_minute', 0.1)).replac
 _bc_filter_state = {}
 
 def filter_bc_values():
-	global bc_data_history, is_ebcMeter, WAVELENGTH_ORDER, _bc_filter_state
-	kernel = 3 if is_ebcMeter else 5
+	global bc_data_history, WAVELENGTH_ORDER, _bc_filter_state
+	kernel = 5
 	state = _bc_filter_state
 	if state.get('kernel') != kernel or not state.get('windows'):
 		state['kernel'] = kernel
@@ -145,7 +144,7 @@ def filter_bc_values():
 		for v in unfiltered[processed:]:
 			window.append(v)
 			med = numpy.median(list(window))
-			bc_data_history['filtered'][wl].append(float(med) if is_ebcMeter else int(med))
+			bc_data_history['filtered'][wl].append(int(med))
 		state['processed'][wl] = len(unfiltered)
 
 
@@ -1167,7 +1166,7 @@ class CSVBufferedAppender:
 
 
 def write_log_with_updated_bc(logFileName, base_dir, active_wavelengths):
-	global bc_data_history, is_ebcMeter, _archive_logger, _current_logger, sps30_available
+	global bc_data_history, _archive_logger, _current_logger, sps30_available
 	if not bc_data_history.get('all_log_data'):
 		return
 	log_entry = bc_data_history['all_log_data'][-1]
@@ -1358,7 +1357,7 @@ def bcmeter_main(stop_event):
 	global housekeeping_thread, airflow_sensor, temperature_to_keep, airflow_sensor_bias, desired_airflow_in_lpm
 	global session_running_since, ds18b20, config, temperature_current, sht_humidity
 	global TWELVEVOLT_ENABLE, notice
-	global use_spi, spi_adc, bc_data_history, is_ebcMeter, NUM_CHANNELS, CHANNELS_CONFIG, WAVELENGTH_ORDER, debug
+	global use_spi, spi_adc, bc_data_history, NUM_CHANNELS, CHANNELS_CONFIG, WAVELENGTH_ORDER, debug
 	global current_measured_airflow_lpm
 
 	if airflow_only:
@@ -1371,11 +1370,11 @@ def bcmeter_main(stop_event):
 
 	now = datetime.now().strftime("%H:%M:%S")
 	logFileName = f"{today}_{now.replace(':','')}.csv"
-	active_wavelengths = WAVELENGTH_ORDER[:1] if is_ebcMeter or NUM_CHANNELS == 1 else WAVELENGTH_ORDER[:NUM_CHANNELS]
+	active_wavelengths = WAVELENGTH_ORDER[:1] if NUM_CHANNELS == 1 else WAVELENGTH_ORDER[:NUM_CHANNELS]
 	if not use_spi:
 		active_wavelengths = WAVELENGTH_ORDER[:1]
 
-	unit = "ug" if is_ebcMeter else "ng"
+	unit = "ng"
 
 	header_parts = ["bcmDate", "bcmTime"]
 	for wl in active_wavelengths:
@@ -1556,9 +1555,8 @@ def bcmeter_main(stop_event):
 
 			try:
 				bc_unfiltered = int((absorption_coeff / wl_config['sigma']) * device_specific_correction_factor)
-				if is_ebcMeter: bc_unfiltered /= 1000
 			except Exception as e:
-				bc_unfiltered = 1 if not is_ebcMeter else 0.001
+				bc_unfiltered = 1
 				logger.error(f"Invalid BC calculation for {wavelength}: {e}")
 
 			if wavelength == '880nm':
@@ -1608,9 +1606,6 @@ def bcmeter_main(stop_event):
 			(datetime.now() - session_running_since).total_seconds() >= 15 * 60 or
 			write_log
 		) and samples_taken >= 3
-
-		if is_ebcMeter:
-			should_log = (samples_taken > 3 and bc_unfiltered_primary > 0) or write_log
 
 		should_log = True if debug else should_log
 

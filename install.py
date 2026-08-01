@@ -661,6 +661,13 @@ def main():
 	log("=" * 50)
 	configure_network_manager(mode)
 	run_cmd(f"chmod -R 777 {BASE_DIR}", shell=True, ignore_error=True)
+	for secret_file in (BASE_DIR / "bcMeter_config.json", BASE_DIR / "bcMeter_wifi.json"):
+		if secret_file.exists():
+			run_cmd(
+				f"chown {app_user}:www-data {secret_file} && chmod 0660 {secret_file}",
+				shell=True,
+				ignore_error=True,
+			)
 	if is_chroot_mode(mode):
 		return
 

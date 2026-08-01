@@ -70,7 +70,6 @@ function getBcMeterConfigValue($bcMeter_variable, $default = null) {
 }
 
 // Get configuration values
-$is_ebcMeter = getBcMeterConfigValue('is_ebcMeter');
 $is_hotspot = getBcMeterConfigValue('run_hotspot');
 $show_undervoltage_warning = getBcMeterConfigValue('show_undervoltage_warning');
 $legacyNoticeFlag = $baseDir . '/maintenance_logs/legacy_redesign_notice.flag';
@@ -127,6 +126,7 @@ if (isset($_POST['conn_submit'])) {
 
     $data = array("wifi_ssid" => $wifi_ssid, "wifi_pwd" => $wifi_pwd);
     file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
+    @chmod($wifiFile, 0660);
 
     // Attempt to trigger a reconnection
     exec('systemctl show --property MainPID --value bcMeter_ap_control_loop.service', $output);
@@ -143,6 +143,7 @@ if (isset($_POST['reset_wifi_json'])) {
     $wifiFile = $baseDir . '/bcMeter_wifi.json';
     $data = array("wifi_ssid" => "", "wifi_pwd" => "");
     file_put_contents($wifiFile, json_encode($data, JSON_PRETTY_PRINT));
+    @chmod($wifiFile, 0660);
 }
 
 
@@ -316,10 +317,6 @@ echo "<script>
 
     <div class="page-container">
         <div id="dashboard-view">
-        <?php if ($is_ebcMeter === true): ?>
-            <p class="text-center text-muted font-weight-bold mt-2">direct emission control</p>
-        <?php endif; ?>
-
 <div class="averages-wrapper">
     <div class="status-section">
         <div id="statusDiv" class="status-div">Status: Ready</div>
@@ -762,12 +759,12 @@ echo "<script>
                     <div class="card">
                         <div class="card-header" id="headingBcMeter">
                             <h5 class="mb-0">
-                                <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#collapseBcMeter" aria-expanded="true" aria-controls="collapseBcMeter">
+                                <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#collapseLogger" aria-expanded="true" aria-controls="collapseLogger">
                                     bcMeter.log
                                 </button>
                             </h5>
                         </div>
-                        <div id="collapseBcMeter" class="collapse show" aria-labelledby="headingBcMeter" data-parent="#logAccordion">
+                        <div id="collapseLogger" class="collapse show" aria-labelledby="headingBcMeter" data-parent="#logAccordion">
                             <div class="card-body log-box" id="logBcMeter">
                                 Loading log...
                             </div>
@@ -807,7 +804,6 @@ echo "<script>
     <script src="js/bootstrap-slider.min.js"></script>
     <script>
         var is_hotspot = <?php echo json_encode($is_hotspot); ?>;
-        var is_ebcMeter = <?php echo json_encode($is_ebcMeter); ?>;
         var showLegacyUpdateNotice = <?php echo json_encode($showLegacyUpdateNotice); ?>;
         var legacySoftwareVersion = <?php echo json_encode($VERSION); ?>;
     </script>

@@ -447,20 +447,6 @@ def save_config_to_json(key, value=None, description=None, parameter_type=None, 
 	with open(base_dir + '/bcMeter_config.json', 'w') as json_file:
 		json.dump(full_config, json_file, indent=4)
 
-def update_ssid_in_hostapd_conf(revert=False):
-	target_ssid = "ebcMeter" if not revert else "bcMeter"
-	if shutil.which("nmcli"):
-		try:
-			subprocess.run(["nmcli", "con", "modify", "bcMeter-ap", "wifi.ssid", target_ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-		except Exception:
-			pass
-
-is_ebcMeter = config.get('is_ebcMeter', False)
-if is_ebcMeter:
-	update_ssid_in_hostapd_conf()
-else:
-	update_ssid_in_hostapd_conf(revert=True)
-
 def get_bcmeter_start_time():
 	try:
 		result = subprocess.run(['systemctl', 'show', 'bcMeter', '--property=ActiveEnterTimestamp'], stdout=subprocess.PIPE, text=True, check=True)
@@ -731,9 +717,6 @@ def adjust_airflow_dynamically(bc_concentration, af_sensor_type):
 
 def apply_dynamic_airflow(bc_concentration, config, override_airflow_flag, logger, af_sensor_type=1):
 	if bc_concentration <= 0:
-		return override_airflow_flag, None
-	is_ebcMeter = config.get('is_ebcMeter', False)
-	if is_ebcMeter:
 		return override_airflow_flag, None
 	if not hasattr(apply_dynamic_airflow, 'samples'):
 		apply_dynamic_airflow.samples = []

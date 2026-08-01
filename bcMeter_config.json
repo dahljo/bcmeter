@@ -147,12 +147,6 @@
         "type": "boolean",
         "parameter": "hidden"
     },
-    "is_ebcMeter": {
-        "value": false,
-        "description": "Use the device for direct emission measurement",
-        "type": "boolean",
-        "parameter": "administration"
-    },
     "send_log_by_mail": {
         "value": false,
         "description": "Periodically receive log files by mail.",
